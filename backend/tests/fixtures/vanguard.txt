@@ -1,0 +1,8 @@
+Holdings as of April 18, 2026
+
+Fund                                             Shares         Price         Total
+Vanguard Total Stock Market Index (VTI)         200.0000      $245.32     $49,064.00
+Vanguard Total Bond Market Index (BND)           75.0000       $72.45      $5,433.75
+Vanguard Total International Stock (VXUS)       150.0000       $62.18      $9,327.00
+
+Cash balance: $523.44

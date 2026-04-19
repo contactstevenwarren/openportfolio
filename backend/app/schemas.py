@@ -32,3 +32,7 @@ class ExtractionResult(BaseModel):
     # the review UI can show which provider produced the extraction.
     model: str
     extracted_at: datetime
+
+
+class ExtractRequest(BaseModel):
+    text: str

@@ -1,0 +1,8 @@
+Schwab Brokerage - Position Summary
+As of 04/18/2026
+
+Symbol     Qty           Price         Value          Cost Basis
+SPY        100           $555.30       $55,530.00     $48,000.00
+QQQ         50           $495.75       $24,787.50     $21,200.00
+GLD         40           $185.20       $7,408.00      $7,100.00
+BTC-USD      0.5      $65,000.00       $32,500.00     $30,000.00
