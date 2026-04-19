@@ -102,6 +102,20 @@ def test_extract_preserves_confidence_and_cost_basis(azure_configured: None) -> 
     assert by_ticker["BTC-USD"].confidence == 0.95
 
 
+def test_extract_preserves_market_value(azure_configured: None) -> None:
+    # Vanguard paste has no cost basis column, so market_value is the only
+    # usable dollar figure -- exercises the fallback path the allocation
+    # engine will rely on in M2.3.
+    text, llm_json = _load("vanguard")
+    with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
+        result = extract_positions(text)
+
+    by_ticker = {p.ticker: p for p in result.positions}
+    assert by_ticker["VTI"].market_value == 49064.00
+    assert by_ticker["VTI"].cost_basis is None
+    assert by_ticker["BND"].market_value == 5433.75
+
+
 def test_extract_passes_azure_credentials(azure_configured: None) -> None:
     settings.azure_api_key = "test-key"
     settings.azure_api_base = "https://test.openai.azure.com"

@@ -11,6 +11,7 @@ from app.schemas import ExtractedPosition
 from app.validation import (
     annotate,
     validate_cost_basis,
+    validate_market_value,
     validate_position,
     validate_shares,
     validate_source_span,
@@ -86,6 +87,21 @@ def test_implausible_cost_basis_flagged() -> None:
     assert any("plausibility" in e for e in validate_cost_basis(1e11))
 
 
+# --- market_value ---------------------------------------------------------
+
+
+def test_null_market_value_ok() -> None:
+    assert validate_market_value(None) == []
+
+
+def test_negative_market_value_rejected() -> None:
+    assert any(">= 0" in e for e in validate_market_value(-1))
+
+
+def test_implausible_market_value_flagged() -> None:
+    assert any("plausibility" in e for e in validate_market_value(1e11))
+
+
 # --- source_span ----------------------------------------------------------
 
 
@@ -114,10 +130,11 @@ def test_invalid_position_collects_all_errors() -> None:
         ticker="bad!",
         shares=-1,
         cost_basis=-5,
+        market_value=-10,
         source_span="acct 999999999",
     )
     errors = validate_position(p)
-    assert len(errors) == 4
+    assert len(errors) == 5
 
 
 def test_confidence_outside_range_rejected_at_parse_time() -> None:

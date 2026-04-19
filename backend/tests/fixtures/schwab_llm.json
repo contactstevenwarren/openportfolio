@@ -4,6 +4,7 @@
       "ticker": "SPY",
       "shares": 100.0,
       "cost_basis": 48000.0,
+      "market_value": 55530.00,
       "confidence": 0.98,
       "source_span": "SPY        100           $555.30       $55,530.00     $48,000.00"
     },
@@ -11,6 +12,7 @@
       "ticker": "QQQ",
       "shares": 50.0,
       "cost_basis": 21200.0,
+      "market_value": 24787.50,
       "confidence": 0.98,
       "source_span": "QQQ         50           $495.75       $24,787.50     $21,200.00"
     },
@@ -18,6 +20,7 @@
       "ticker": "GLD",
       "shares": 40.0,
       "cost_basis": 7100.0,
+      "market_value": 7408.00,
       "confidence": 0.98,
       "source_span": "GLD         40           $185.20       $7,408.00      $7,100.00"
     },
@@ -25,6 +28,7 @@
       "ticker": "BTC-USD",
       "shares": 0.5,
       "cost_basis": 30000.0,
+      "market_value": 32500.00,
       "confidence": 0.95,
       "source_span": "BTC-USD      0.5      $65,000.00       $32,500.00     $30,000.00"
     }

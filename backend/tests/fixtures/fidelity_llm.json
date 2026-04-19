@@ -4,6 +4,7 @@
       "ticker": "VTI",
       "shares": 120.0,
       "cost_basis": 22000.0,
+      "market_value": 29438.40,
       "confidence": 0.98,
       "source_span": "VTI      Vanguard Total Stock Mkt ETF      120.000     $245.32       $29,438.40      $22,000.00"
     },
@@ -11,6 +12,7 @@
       "ticker": "VXUS",
       "shares": 85.0,
       "cost_basis": 4800.0,
+      "market_value": 5285.30,
       "confidence": 0.98,
       "source_span": "VXUS     Vanguard Total Intl Stock ETF      85.000     $62.18         $5,285.30       $4,800.00"
     },
@@ -18,6 +20,7 @@
       "ticker": "BND",
       "shares": 50.0,
       "cost_basis": 3700.0,
+      "market_value": 3622.50,
       "confidence": 0.97,
       "source_span": "BND      Vanguard Total Bond Market ETF     50.000     $72.45         $3,622.50       $3,700.00"
     },
@@ -25,6 +28,7 @@
       "ticker": "aapl",
       "shares": 100.0,
       "cost_basis": 15500.0,
+      "market_value": 18950.00,
       "confidence": 0.85,
       "source_span": "AAPL     Apple Inc                         100.000     $189.50       $18,950.00      $15,500.00"
     }
