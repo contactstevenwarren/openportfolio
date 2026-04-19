@@ -10,11 +10,22 @@ class Settings(BaseSettings):
     # LLM provider config. Azure OpenAI is the v0.1 default (GPT-5.4
     # deployment); Ollama arrives in M5. LiteLLM addresses Azure as
     # "azure/<deployment_name>".
+    # "azure" | "ollama". Azure is the v0.1 default; Ollama is the local
+    # alternative (roadmap §3 "pluggable LLM providers"). v0.2 adds
+    # Anthropic / OpenAI-direct / Gemini.
     llm_provider: str = "azure"
     azure_api_key: str = ""
     azure_api_base: str = ""
     azure_api_version: str = ""
     azure_deployment_name: str = ""
+
+    # Ollama local-LLM settings. `llm_model` is the model tag (e.g.
+    # "llama3.1", "qwen2.5-coder"); LiteLLM addresses it as
+    # "ollama/<model>". `ollama_api_base` points at the running daemon
+    # -- defaults to Docker Desktop's host-to-container shortcut so the
+    # FastAPI container can reach a daemon on the Mac host.
+    llm_model: str = "llama3.1"
+    ollama_api_base: str = "http://host.docker.internal:11434"
 
     # yfinance look-through is authoritative in the roadmap but Yahoo's
     # own taxonomy ("US Stocks", "Bonds") doesn't line up with our

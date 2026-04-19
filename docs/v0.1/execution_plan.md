@@ -116,14 +116,17 @@ Goal: paste positions from one account, confirm, see a single-ring sunburst colo
 - Frontend: hero screen now shows 5-number summary strip + 3-ring interactive sunburst (asset → sub → sector/region) + drill-down side panel.
 - **Acceptance gate (roadmap §4):** user answers "what fraction is cash?" in <5 seconds without hovering. If sunburst fails, evaluate treemap fallback before M5.
 
-### M5 — Ship-ready: Ollama, exports, backups, CI
+### M5 — Ship-ready: Ollama, paste scrub, export, README
 
 - `backend/app/llm.py`: Ollama adapter path as v0.1 local alternative (`LLM_PROVIDER=ollama`, `LLM_MODEL=llama3.1` etc.). Azure remains the default.
 - Client-side paste scrub: strip ≥6 consecutive digits that aren't plausible share counts before `/api/extract`.
-- `GET /api/export` → full JSON export of accounts, positions, classifications, snapshots.
-- Nightly cron in Fly → JSON snapshot pushed to Tigris bucket (risk #9 mitigation). Acceptable to defer if Tigris not set up; document in `README.md`.
-- `.github/workflows/test.yml`: run backend pytest on every push. Deploy already wired in `.github/workflows/fly-deploy.yml`.
-- README update covering setup, admin-token flow, LLM provider config.
+- `GET /api/export` → full JSON export of accounts, positions, classifications, snapshots. Manual backup mechanism for v0.1 (risk #9).
+- README covering setup, admin-token flow, LLM provider config, manual backup workflow.
+
+**Deferred to later phases:**
+- Nightly Tigris backup cron (roadmap §5: v1.0 "Harden"). `/api/export` covers the manual case.
+- `.github/workflows/test.yml` (roadmap §5: v0.2 "infra polish"). Local `./scripts/docker-test.sh` covers the dev loop; Fly deploy workflow stays.
+- yfinance taxonomy normalization (roadmap §5: v0.2). Adapter is wired + gated; flip one config flag after normalization lands.
 
 ### Acceptance (v0.1 "done")
 
@@ -155,10 +158,11 @@ From roadmap §4: maintainer pastes 6 accounts in <3 min, adds non-brokerage ass
 - [x] **M4 look-through** — `backend/app/lookthrough.py` resolves breakdown in order: 24h SQLite cache (`fund_holdings` table) → yfinance (stubbed, gated behind `settings.lookthrough_yfinance_enabled`, OFF by default until M5 normalizes Yahoo's taxonomy) → `data/lookthrough.yaml` (12 funds). yfinance dep added to `pyproject.toml`.
 - [x] **M4 allocation full** — `allocation.aggregate` rewritten as a 3-ring engine (asset_class → sub_class → sector for equity / region for non-equity) plus `FiveNumberSummary` (net_worth, cash_pct, us_equity_pct, intl_equity_pct, alts_pct) computed in the same pass. `AllocationSlice.children` + `AllocationResult.summary` land on the schema. `backend/tests/test_portfolios.py` pins math for all-VTI, 60/40, and a 9-position real-world mix with synthetics.
 - [x] **M4 hero 3-ring** — `/` now has 5-number summary strip up top, 3-ring ECharts sunburst with click-to-drill side panel, breakdown table below. Every number wrapped in `<Provenance>`. Next.js build green; live docker smoke test confirms 3-ring payload shape + summary percentages (60k VTI / 40k BND / 650k REALESTATE → us_equity 8.0%, alts 86.7%).
-- [ ] **M5 Ollama** — Ollama adapter path in `llm.py`.
-- [ ] **M5 scrub + export** — client-side paste scrubbing + `GET /api/export`.
-- [ ] **M5 backup + CI** — nightly Tigris snapshot + `.github/workflows/test.yml` + README update.
-- [ ] **M5 acceptance** — run roadmap §4 end-to-end (6 accounts <3min, non-brokerage <2min, cash % in <5s).
+- [x] **M5 Ollama** — `llm._provider_config()` now dispatches on `settings.llm_provider` (azure | ollama), model string becomes `ollama/<LLM_MODEL>` with `OLLAMA_API_BASE` routed to LiteLLM. 2 new tests (missing model + kwargs passthrough); no Azure kwargs leak.
+- [x] **M5 scrub + export** — `frontend/app/lib/scrub.ts` replaces `\b\d{6,}(?!\.\d)\b` runs with `[REDACTED]` before every `/api/extract` POST; `/paste` surfaces the redaction count. `GET /api/export` (admin-token guarded) dumps accounts + positions + provenance + snapshots; excludes the yfinance cache + source-controlled YAMLs. 4 new endpoint tests.
+- [x] **M5 README** — `README.md` covers setup, local/docker workflow, Fly deploy, Azure + Ollama config, data-file editing, manual backup via `/api/export`. `.env.example` checked in.
+- [ ] **M5 acceptance** — run roadmap §4 end-to-end (6 accounts <3min, non-brokerage <2min, cash % in <5s). *Requires real maintainer paste data + Azure quota; gated on M5 PR merge + redeploy.*
+- **Deferred** (roadmap §5): nightly Tigris snapshot → v1.0; GitHub Actions CI + yfinance normalization → v0.2.
 
 ---
 

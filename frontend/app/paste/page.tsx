@@ -14,6 +14,7 @@ import {
   type ExtractedPosition,
 } from '../lib/api';
 import { Provenance } from '../lib/provenance';
+import { scrubPaste } from '../lib/scrub';
 
 export default function PastePage() {
   const [text, setText] = useState('');
@@ -41,11 +42,18 @@ export default function PastePage() {
     if (!text.trim()) return;
     setBusy(true);
     setStatus(null);
+    const { text: scrubbed, redactions } = scrubPaste(text);
     try {
-      const result = await api.extract(text);
+      const result = await api.extract(scrubbed);
       const sorted = [...result.positions].sort((a, b) => a.confidence - b.confidence);
       setRows(sorted);
       setSelected(new Set(sorted.map((_, i) => i)));
+      if (redactions > 0) {
+        setStatus({
+          kind: 'ok',
+          message: `Redacted ${redactions} digit run(s) of 6+ before sending (account numbers, SSNs, etc.).`,
+        });
+      }
     } catch (e) {
       setStatus({ kind: 'err', message: `Extract failed: ${(e as Error).message}` });
       setRows([]);

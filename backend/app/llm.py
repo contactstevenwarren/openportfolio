@@ -76,29 +76,49 @@ class LLMNotConfiguredError(RuntimeError):
     """Raised when required LLM provider settings are missing."""
 
 
-def _model_string() -> str:
-    if settings.llm_provider != "azure":
-        raise LLMNotConfiguredError(
-            f"llm_provider={settings.llm_provider!r} not supported in v0.1 (azure only)"
-        )
-    if not settings.azure_deployment_name:
-        raise LLMNotConfiguredError("AZURE_DEPLOYMENT_NAME not configured")
-    return f"azure/{settings.azure_deployment_name}"
+SUPPORTED_PROVIDERS = ("azure", "ollama")
+
+
+def _provider_config() -> tuple[str, dict[str, str]]:
+    """Resolve the LiteLLM model string + per-provider kwargs.
+
+    Kwargs go into ``litellm.completion`` alongside ``model`` and the
+    response_format. Returning them here keeps the adapter table-driven
+    -- v0.2 adds Anthropic / OpenAI-direct / Gemini by extending this
+    branch, not the call site.
+    """
+    provider = settings.llm_provider
+    if provider == "azure":
+        if not settings.azure_deployment_name:
+            raise LLMNotConfiguredError("AZURE_DEPLOYMENT_NAME not configured")
+        model = f"azure/{settings.azure_deployment_name}"
+        return model, {
+            "api_key": settings.azure_api_key,
+            "api_base": settings.azure_api_base,
+            "api_version": settings.azure_api_version,
+        }
+    if provider == "ollama":
+        if not settings.llm_model:
+            raise LLMNotConfiguredError("LLM_MODEL not configured for ollama")
+        model = f"ollama/{settings.llm_model}"
+        return model, {"api_base": settings.ollama_api_base}
+    raise LLMNotConfiguredError(
+        f"llm_provider={provider!r} not supported in v0.1 "
+        f"(pick one of {SUPPORTED_PROVIDERS})"
+    )
 
 
 def extract_positions(text: str) -> ExtractionResult:
     """Send paste text to the configured LLM, parse + validate the response."""
-    model = _model_string()
+    model, kwargs = _provider_config()
     response = litellm.completion(
         model=model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": text},
         ],
-        api_key=settings.azure_api_key,
-        api_base=settings.azure_api_base,
-        api_version=settings.azure_api_version,
         response_format={"type": "json_schema", "json_schema": _JSON_SCHEMA},
+        **kwargs,
     )
     content = response.choices[0].message.content
     raw = json.loads(content)
