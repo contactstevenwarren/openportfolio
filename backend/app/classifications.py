@@ -1,19 +1,23 @@
-"""YAML-backed ticker classifications (docs/architecture.md classification and look-through).
+"""YAML + user-override ticker classifications (docs/architecture.md classification and look-through).
 
-YAML is the source of truth in v0.1. The `classifications` DB table stays
-empty until M3 introduces user overrides, at which point user rows take
-precedence over the YAML baseline.
+YAML is the baseline source of truth. DB rows in the ``classifications``
+table with ``source='user'`` override the YAML at aggregation time --
+see ``load_user_classifications`` below. ``classify()`` is pure
+dict-lookup against the merged YAML + user dict; the v0.1 "synthetic
+prefix" convention is gone as of v0.1.5 M4. Existing
+``PREFIX:suffix`` positions are migrated to per-ticker user rows on
+startup via ``migrate_synthetic_positions``.
 
-Synthetic tickers (M3 manual entry for non-brokerage assets) use prefixes
-like ``REALESTATE:123Main`` or ``CRYPTO:solana``. They don't belong in the
-YAML -- ``classify()`` resolves them by prefix after the exact-match
-lookup fails.
+The ``source`` carried on each ``ClassificationEntry`` is surfaced on
+the allocation response so the sunburst hover can show "classified as:
+us_tips (your override)".
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+from sqlalchemy.orm import Session
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_PATH = REPO_ROOT / "data" / "classifications.yaml"
@@ -26,13 +30,21 @@ class ClassificationEntry:
     sub_class: str | None = None
     sector: str | None = None
     region: str | None = None
+    # "yaml" = bundled baseline, "user" = DB override, "prefix" = synthetic
+    # fallback from _SYNTHETIC_PREFIXES. The allocation endpoint exposes
+    # this per ticker so the sunburst hover can show provenance for the
+    # classification routing (not just the position's numbers).
+    source: str = "yaml"
 
 
-# Prefix-based classification for synthetic tickers entered through the
-# /manual form. The frontend form emits these prefixes; anything matching
-# here bypasses the YAML lookup. Keys are uppercased before compare so
-# ``realestate:123main`` resolves the same as ``REALESTATE:123Main``.
-_SYNTHETIC_PREFIXES: dict[str, ClassificationEntry] = {
+# Legacy prefix→classification table used ONLY by
+# ``migrate_synthetic_positions`` to convert existing v0.1 synthetic
+# ticker positions (e.g. ``REALESTATE:house``) into per-ticker
+# Classification rows at startup. Not consulted by ``classify()`` --
+# v0.1.5 M4 moved classification routing entirely onto the YAML +
+# Classification table. Delete this dict once all known installs have
+# run the migration at least once (roadmap v1.0 hardening).
+_LEGACY_SYNTHETIC_PREFIXES: dict[str, ClassificationEntry] = {
     "REALESTATE": ClassificationEntry(
         ticker="REALESTATE",
         asset_class="real_estate",
@@ -123,8 +135,78 @@ def load_classifications(path: Path = DEFAULT_PATH) -> dict[str, ClassificationE
             sub_class=attrs.get("sub_class"),
             sector=attrs.get("sector"),
             region=attrs.get("region"),
+            source="yaml",
         )
     return entries
+
+
+def load_user_classifications(db: Session) -> dict[str, ClassificationEntry]:
+    """Pull every row from the ``classifications`` DB table.
+
+    Every row has ``source='user'`` in v0.1.5 (either explicit user
+    edits via /classifications or the one-shot migration of synthetic
+    prefix positions). Caller merges this dict over the YAML baseline
+    so user rows win.
+    """
+    from .models import Classification as DbClassification
+
+    rows = db.query(DbClassification).all()
+    return {
+        r.ticker: ClassificationEntry(
+            ticker=r.ticker,
+            asset_class=r.asset_class,
+            sub_class=r.sub_class,
+            sector=r.sector,
+            region=r.region,
+            source=r.source,
+        )
+        for r in rows
+    }
+
+
+def migrate_synthetic_positions(db: Session) -> int:
+    """One-shot: turn every existing ``PREFIX:suffix`` position into a
+    user Classification row, then the prefix fallback can disappear.
+
+    Idempotent -- rows that already have a Classification are skipped,
+    so it's safe to call on every startup. Returns the count of new
+    Classification rows created (handy for logs and tests).
+
+    Runs at startup because v0.1.5 drops the prefix-based fallback in
+    ``classify()``; without this migration, existing synthetic-ticker
+    positions (e.g. ``REALESTATE:house``) would become unclassified
+    after the upgrade.
+    """
+    from .models import Classification as DbClassification
+    from .models import Position
+
+    created = 0
+    seen: set[str] = set()
+    positions = db.query(Position).filter(Position.ticker.contains(":")).all()
+    for p in positions:
+        if p.ticker in seen:
+            continue
+        seen.add(p.ticker)
+        if db.get(DbClassification, p.ticker) is not None:
+            continue
+        prefix = p.ticker.split(":", 1)[0].upper()
+        legacy = _LEGACY_SYNTHETIC_PREFIXES.get(prefix)
+        if legacy is None:
+            continue  # unknown prefix -> let aggregation flag it unclassified
+        db.add(
+            DbClassification(
+                ticker=p.ticker,
+                asset_class=legacy.asset_class,
+                sub_class=legacy.sub_class,
+                sector=legacy.sector,
+                region=legacy.region,
+                source="user",
+            )
+        )
+        created += 1
+    if created:
+        db.commit()
+    return created
 
 
 def classify(
@@ -132,17 +214,9 @@ def classify(
 ) -> ClassificationEntry | None:
     """Resolve a ticker to a ClassificationEntry.
 
-    Exact YAML match wins. Otherwise, if the ticker is synthetic
-    (``PREFIX:rest``), we map the prefix to a canned entry and return a
-    copy with the real ticker attached so downstream code can still
-    group by ticker label when needed.
+    v0.1.5 model: exact match against the merged YAML + user DB dict.
+    Synthetic prefix fallback is gone (``migrate_synthetic_positions``
+    at startup converts existing ``PREFIX:suffix`` positions into
+    per-ticker user rows so their ticker is now a direct lookup hit).
     """
-    exact = entries.get(ticker)
-    if exact is not None:
-        return exact
-    if ":" in ticker:
-        prefix = ticker.split(":", 1)[0].upper()
-        synth = _SYNTHETIC_PREFIXES.get(prefix)
-        if synth is not None:
-            return replace(synth, ticker=ticker)
-    return None
+    return entries.get(ticker)

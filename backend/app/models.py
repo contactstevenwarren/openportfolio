@@ -79,7 +79,14 @@ class Provenance(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     entity_type: Mapped[str] = mapped_column(String(50), index=True)
+    # Numeric-PK entities (Position, Account) populate entity_id.
+    # String-PK entities (Classification, keyed by ticker) populate
+    # entity_key. Exactly one is non-null per row. entity_id stays
+    # non-nullable with a sentinel 0 for string-PK rows so existing
+    # SQLite databases don't need a backfill migration -- readers
+    # should branch on entity_type.
     entity_id: Mapped[int] = mapped_column(Integer, index=True)
+    entity_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     field: Mapped[str] = mapped_column(String(50))
     # source = "paste:fidelity-2026-04-18" | "manual" | "yfinance:2026-04-18" | "yaml:v0.1" | ...
     source: Mapped[str] = mapped_column(String(200))

@@ -1,50 +1,30 @@
 'use client';
 
-// Manual entry for non-brokerage assets (v0.1 Foundation in-scope).
-// Turns a short form into a committed Position with source="manual" and a
-// synthetic ticker like REALESTATE:123Main so the classifier picks it up
-// without a YAML edit.
+// Manual entry for non-brokerage assets (v0.1.5 M4 rewrite).
+//
+// The v0.1 "synthetic prefix" convention (REALESTATE:123Main,
+// CRYPTO:solana, ...) is gone: each manual entry now carries its own
+// classification, written as a user Classification row in the same
+// transaction as the Position. The user picks asset_class from the
+// taxonomy endpoint and types sub_class freely. Ticker collisions are
+// resolved by the server with an auto-suffix and echoed back in the
+// commit response.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { api, type Account } from '../lib/api';
-
-// Mirrors the backend synthetic prefix table in
-// backend/app/classifications.py. Keep in sync when either side changes.
-type AssetKind =
-  | 'REALESTATE'
-  | 'GOLD'
-  | 'SILVER'
-  | 'CRYPTO'
-  | 'PRIVATE'
-  | 'HSA_CASH'
-  | 'CASH'
-  | 'TREASURY'
-  | 'TIPS'
-  | 'CD'
-  | 'ESPP';
-
-const KIND_LABELS: Record<AssetKind, string> = {
-  REALESTATE: 'Real estate',
-  GOLD: 'Gold',
-  SILVER: 'Silver',
-  CRYPTO: 'Crypto (non-ticker)',
-  PRIVATE: 'Private holding',
-  HSA_CASH: 'HSA cash sleeve',
-  CASH: 'Cash (checking, savings, brokerage sweep)',
-  TREASURY: 'Treasury note / bill (held directly)',
-  TIPS: 'TIPS (TreasuryDirect)',
-  CD: 'CD (FDIC-insured)',
-  ESPP: 'Employer stock (ESPP / RSU)',
-};
+import { api, type Account, type TaxonomyOption } from '../lib/api';
 
 export default function ManualPage() {
-  const [kind, setKind] = useState<AssetKind>('REALESTATE');
   const [label, setLabel] = useState('');
+  const [assetClass, setAssetClass] = useState('real_estate');
+  const [subClass, setSubClass] = useState('');
+  const [sector, setSector] = useState('');
+  const [region, setRegion] = useState('');
   const [marketValue, setMarketValue] = useState('');
   const [costBasis, setCostBasis] = useState('');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountId, setAccountId] = useState<number | null>(null);
+  const [taxonomy, setTaxonomy] = useState<TaxonomyOption[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
 
@@ -53,17 +33,22 @@ export default function ManualPage() {
       .accounts()
       .then(setAccounts)
       .catch(() => {
-        // Token not set yet; form still usable, commit will surface the error.
+        // Token may not be set yet; form still usable, commit will surface the error.
       });
+    api
+      .taxonomy()
+      .then((t) => setTaxonomy(t.asset_classes))
+      .catch(() => {});
   }, []);
+
+  const proposedTicker = useMemo(() => slug(label), [label]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!label.trim() || !marketValue) return;
+    if (!label.trim() || !marketValue || !assetClass) return;
     setBusy(true);
     setStatus(null);
 
-    const ticker = `${kind}:${slug(label)}`;
     const mv = Number(marketValue);
     const cb = costBasis ? Number(costBasis) : null;
 
@@ -73,22 +58,36 @@ export default function ManualPage() {
         source: 'manual',
         positions: [
           {
-            ticker,
+            ticker: proposedTicker,
             shares: 1.0,
             cost_basis: cb,
             market_value: mv,
             confidence: 1.0,
             source_span: '',
+            classification: {
+              asset_class: assetClass,
+              sub_class: subClass.trim() || null,
+              sector: sector.trim() || null,
+              region: region.trim() || null,
+            },
           },
         ],
       });
+      const finalTicker = result.tickers[0];
+      const suffixNote =
+        finalTicker !== proposedTicker
+          ? ` (ticker auto-suffixed from "${proposedTicker}" to avoid collision)`
+          : '';
       setStatus({
         kind: 'ok',
-        message: `Saved ${ticker} ($${mv.toLocaleString()}) to account #${result.account_id}.`,
+        message: `Saved ${finalTicker} ($${mv.toLocaleString()}) to account #${result.account_id}.${suffixNote}`,
       });
       setLabel('');
       setMarketValue('');
       setCostBasis('');
+      setSubClass('');
+      setSector('');
+      setRegion('');
     } catch (e) {
       setStatus({ kind: 'err', message: (e as Error).message });
     } finally {
@@ -100,8 +99,9 @@ export default function ManualPage() {
     <main style={{ padding: '2rem', maxWidth: 720, margin: '0 auto' }}>
       <h1>Manual entry</h1>
       <p style={{ color: '#555' }}>
-        For non-brokerage assets: real estate, gold, crypto held outside an exchange,
-        private holdings, HSA cash sleeves. Stored with source=manual.
+        For non-brokerage assets: real estate, gold, crypto held off an exchange, private
+        holdings, HSA cash sleeves, checking accounts. You classify it yourself — the
+        sunburst places it immediately.
       </p>
 
       <form
@@ -117,51 +117,65 @@ export default function ManualPage() {
           margin: '1rem 0',
         }}
       >
-        <label style={field}>
-          <span style={fieldLabel}>Asset type</span>
-          <select
-            value={kind}
-            onChange={(e) => setKind(e.target.value as AssetKind)}
-            style={input}
-          >
-            {Object.entries(KIND_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label style={field}>
-          <span style={fieldLabel}>Account</span>
-          <select
-            value={accountId ?? ''}
-            onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
-            style={input}
-          >
-            <option value="">
-              {accounts.length === 0 ? 'Default (auto-create)' : 'Default (auto-create if none)'}
-            </option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                #{a.id} {a.label} ({a.type})
-              </option>
-            ))}
-          </select>
-        </label>
-
         <label style={{ ...field, gridColumn: '1 / -1' }}>
-          <span style={fieldLabel}>Label (becomes ticker suffix, e.g. "123Main")</span>
+          <span style={fieldLabel}>Label (becomes the ticker)</span>
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="123Main, physical-bar, solana, etc."
+            placeholder="123 Main St, physical-bar, solana..."
             style={input}
             required
           />
           <span style={{ fontSize: '0.8rem', color: '#888' }}>
-            Ticker will be <code>{`${kind}:${slug(label || '<label>')}`}</code>
+            Ticker will be <code>{proposedTicker || '<label>'}</code>
+            {label && ' (server appends -2, -3 if it collides)'}
           </span>
+        </label>
+
+        <label style={field}>
+          <span style={fieldLabel}>Asset class</span>
+          <select
+            value={assetClass}
+            onChange={(e) => setAssetClass(e.target.value)}
+            style={input}
+            required
+          >
+            {taxonomy.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={field}>
+          <span style={fieldLabel}>Sub-class (free text)</span>
+          <input
+            value={subClass}
+            onChange={(e) => setSubClass(e.target.value)}
+            placeholder="direct, gold, wine, hsa_cash..."
+            style={input}
+          />
+        </label>
+
+        <label style={field}>
+          <span style={fieldLabel}>Sector (optional)</span>
+          <input
+            value={sector}
+            onChange={(e) => setSector(e.target.value)}
+            placeholder="real_estate, technology..."
+            style={input}
+          />
+        </label>
+
+        <label style={field}>
+          <span style={fieldLabel}>Region (optional)</span>
+          <input
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            placeholder="US, intl_developed, global..."
+            style={input}
+          />
         </label>
 
         <label style={field}>
@@ -191,8 +205,29 @@ export default function ManualPage() {
           />
         </label>
 
+        <label style={{ ...field, gridColumn: '1 / -1' }}>
+          <span style={fieldLabel}>Account</span>
+          <select
+            value={accountId ?? ''}
+            onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
+            style={input}
+          >
+            <option value="">
+              {accounts.length === 0 ? 'Default (auto-create)' : 'Default (auto-create if none)'}
+            </option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                #{a.id} {a.label} ({a.type})
+              </option>
+            ))}
+          </select>
+        </label>
+
         <div style={{ gridColumn: '1 / -1' }}>
-          <button type="submit" disabled={busy || !label.trim() || !marketValue}>
+          <button
+            type="submit"
+            disabled={busy || !label.trim() || !marketValue || !assetClass}
+          >
             {busy ? 'Working...' : 'Save asset'}
           </button>
         </div>
@@ -213,14 +248,16 @@ export default function ManualPage() {
       )}
 
       <p style={{ color: '#777', fontSize: '0.85rem' }}>
-        Need to edit or delete an existing entry? See <a href="/positions">/positions</a>.
+        Want to reclassify later? Edit any ticker on{' '}
+        <a href="/classifications">/classifications</a>. Edit or delete entries on{' '}
+        <a href="/positions">/positions</a>.
       </p>
     </main>
   );
 }
 
 function slug(s: string): string {
-  return s.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'item';
+  return s.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'item';
 }
 
 const field = { display: 'flex', flexDirection: 'column', gap: 4 } as const;

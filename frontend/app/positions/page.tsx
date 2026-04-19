@@ -1,22 +1,34 @@
 'use client';
 
-// Committed positions list with inline edit + delete (M3). Primary use
-// case: HSA cash/invested split via user override and trimming mistakes
-// from a paste commit.
+// Committed positions list with inline edit, filters, and batch delete
+// (v0.1.5 M5). Primary use case after a paste commit: skim, fix a few
+// wrong values, delete anything the LLM hallucinated. Filter by
+// account / source / date range narrows the view; batch checkbox +
+// "Delete selected" makes cleanup fast without N confirm dialogs.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { api, type Position } from '../lib/api';
+import { api, type Account, type Position } from '../lib/api';
 import { Provenance } from '../lib/provenance';
 
 export default function PositionsPage() {
   const [positions, setPositions] = useState<Position[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [drafts, setDrafts] = useState<Record<number, Position>>({});
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyBatch, setBusyBatch] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  // Filters
+  const [filterAccountId, setFilterAccountId] = useState<number | 'all'>('all');
+  const [filterSource, setFilterSource] = useState('');
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
 
   useEffect(() => {
     refresh();
+    api.accounts().then(setAccounts).catch(() => {});
   }, []);
 
   function refresh() {
@@ -27,8 +39,46 @@ export default function PositionsPage() {
         const next: Record<number, Position> = {};
         for (const p of rows) next[p.id] = { ...p };
         setDrafts(next);
+        setSelected(new Set());
       })
       .catch((e) => setStatus({ kind: 'err', message: (e as Error).message }));
+  }
+
+  const filtered = useMemo(() => {
+    const srcQuery = filterSource.trim().toLowerCase();
+    return positions.filter((p) => {
+      if (filterAccountId !== 'all' && p.account_id !== filterAccountId) return false;
+      if (srcQuery && !p.source.toLowerCase().includes(srcQuery)) return false;
+      const asOf = p.as_of.slice(0, 10);
+      if (filterFrom && asOf < filterFrom) return false;
+      if (filterTo && asOf > filterTo) return false;
+      return true;
+    });
+  }, [positions, filterAccountId, filterSource, filterFrom, filterTo]);
+
+  const allFilteredSelected =
+    filtered.length > 0 && filtered.every((p) => selected.has(p.id));
+
+  function toggleOne(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected((prev) => {
+      if (allFilteredSelected) {
+        const next = new Set(prev);
+        for (const p of filtered) next.delete(p.id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const p of filtered) next.add(p.id);
+      return next;
+    });
   }
 
   function patchDraft(id: number, patch: Partial<Position>) {
@@ -78,13 +128,153 @@ export default function PositionsPage() {
     }
   }
 
+  async function deleteSelected() {
+    if (selected.size === 0) return;
+    const ok = window.confirm(
+      `Delete ${selected.size} position(s)? Provenance audit trail is preserved.`,
+    );
+    if (!ok) return;
+    setBusyBatch(true);
+    setStatus(null);
+    const ids = Array.from(selected);
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await api.deletePosition(id);
+      } catch {
+        failed += 1;
+      }
+    }
+    if (failed === 0) {
+      setStatus({ kind: 'ok', message: `Deleted ${ids.length} position(s).` });
+    } else {
+      setStatus({
+        kind: 'err',
+        message: `Deleted ${ids.length - failed} of ${ids.length}; ${failed} failed.`,
+      });
+    }
+    setBusyBatch(false);
+    refresh();
+  }
+
+  const accountLabel = (id: number) =>
+    accounts.find((a) => a.id === id)?.label ?? `#${id}`;
+  const distinctSources = Array.from(new Set(positions.map((p) => p.source))).sort();
+
   return (
-    <main style={{ padding: '2rem', maxWidth: 1100, margin: '0 auto' }}>
+    <main style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>
       <h1>Positions</h1>
       <p style={{ color: '#555' }}>
-        Every committed row. Edit inline (writes an override provenance entry), or delete
-        (provenance audit trail is preserved).
+        Every committed row. Edit inline (writes an override provenance entry) or delete.
+        Filter to scope the view; batch-delete for cleanup after a paste.
       </p>
+
+      <div
+        style={{
+          display: 'flex',
+          gap: '0.75rem',
+          alignItems: 'end',
+          flexWrap: 'wrap',
+          margin: '1rem 0',
+          padding: '0.75rem',
+          background: '#f5f7fa',
+          borderRadius: 4,
+        }}
+      >
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={{ fontSize: '0.8rem', color: '#666' }}>Account</span>
+          <select
+            value={filterAccountId}
+            onChange={(e) =>
+              setFilterAccountId(e.target.value === 'all' ? 'all' : Number(e.target.value))
+            }
+            style={{ padding: '0.35rem 0.4rem' }}
+          >
+            <option value="all">All</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                #{a.id} {a.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={{ fontSize: '0.8rem', color: '#666' }}>Source contains</span>
+          <input
+            value={filterSource}
+            onChange={(e) => setFilterSource(e.target.value)}
+            list="known-sources"
+            placeholder="paste, manual, fidelity..."
+            style={{ padding: '0.35rem 0.4rem', width: 200 }}
+          />
+          <datalist id="known-sources">
+            {distinctSources.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={{ fontSize: '0.8rem', color: '#666' }}>As of from</span>
+          <input
+            type="date"
+            value={filterFrom}
+            onChange={(e) => setFilterFrom(e.target.value)}
+            style={{ padding: '0.3rem 0.4rem' }}
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={{ fontSize: '0.8rem', color: '#666' }}>As of to</span>
+          <input
+            type="date"
+            value={filterTo}
+            onChange={(e) => setFilterTo(e.target.value)}
+            style={{ padding: '0.3rem 0.4rem' }}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => {
+            setFilterAccountId('all');
+            setFilterSource('');
+            setFilterFrom('');
+            setFilterTo('');
+          }}
+          style={{ padding: '0.4rem 0.75rem' }}
+        >
+          Clear
+        </button>
+        <span style={{ marginLeft: 'auto', color: '#666', fontSize: '0.85rem' }}>
+          {filtered.length} of {positions.length} shown
+        </span>
+      </div>
+
+      {selected.size > 0 && (
+        <div
+          style={{
+            margin: '0.5rem 0',
+            padding: '0.5rem 0.75rem',
+            background: '#fff5d6',
+            border: '1px solid #e0c873',
+            borderRadius: 4,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+          }}
+        >
+          <span>{selected.size} selected</span>
+          <button
+            type="button"
+            onClick={deleteSelected}
+            disabled={busyBatch}
+            style={{ color: 'crimson' }}
+          >
+            {busyBatch ? 'Deleting...' : `Delete ${selected.size} selected`}
+          </button>
+          <button type="button" onClick={() => setSelected(new Set())} disabled={busyBatch}>
+            Clear selection
+          </button>
+        </div>
+      )}
 
       {status && (
         <p
@@ -110,6 +300,14 @@ export default function PositionsPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
             <thead>
               <tr style={{ textAlign: 'left', borderBottom: '1px solid #ccc' }}>
+                <th style={th}>
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleAll}
+                    aria-label="Select all filtered"
+                  />
+                </th>
                 <th style={th}>#</th>
                 <th style={th}>Account</th>
                 <th style={th}>Ticker</th>
@@ -122,12 +320,22 @@ export default function PositionsPage() {
               </tr>
             </thead>
             <tbody>
-              {positions.map((p) => {
+              {filtered.map((p) => {
                 const d = drafts[p.id] ?? p;
                 return (
                   <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
+                    <td style={td}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(p.id)}
+                        onChange={() => toggleOne(p.id)}
+                        aria-label={`Select #${p.id}`}
+                      />
+                    </td>
                     <td style={td}>{p.id}</td>
-                    <td style={td}>#{p.account_id}</td>
+                    <td style={td} title={accountLabel(p.account_id)}>
+                      {accountLabel(p.account_id)}
+                    </td>
                     <td style={td}>
                       <input
                         value={d.ticker}

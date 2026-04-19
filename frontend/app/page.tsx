@@ -227,9 +227,45 @@ function DrillPanel({
                 Contributing tickers
               </div>
               <ul style={{ paddingLeft: '1.25rem', margin: '0.25rem 0' }}>
-                {slice.tickers.map((t) => (
-                  <li key={t}>{t}</li>
-                ))}
+                {slice.tickers.map((t) => {
+                  const src = data.classification_sources[t];
+                  return (
+                    <li key={t}>
+                      <code>{t}</code>
+                      {src === 'user' && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            padding: '0 0.4rem',
+                            fontSize: '0.7rem',
+                            background: '#fff5d6',
+                            border: '1px solid #e0c873',
+                            borderRadius: 3,
+                          }}
+                          title="Classification overridden on /classifications"
+                        >
+                          your override
+                        </span>
+                      )}
+                      {src === 'prefix' && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            padding: '0 0.4rem',
+                            fontSize: '0.7rem',
+                            background: '#f0f0f0',
+                            border: '1px solid #ccc',
+                            borderRadius: 3,
+                            color: '#666',
+                          }}
+                          title="Synthetic prefix fallback; will migrate in v0.1.5 M4"
+                        >
+                          prefix
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </>
           )}

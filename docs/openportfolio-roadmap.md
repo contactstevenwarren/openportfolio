@@ -79,6 +79,8 @@ Revisit after v1.0 unless a phase explicitly pulls an item in.
 
 Future phases add execution plans here when scoped.
 
+**Convention:** every execution plan opens with a user-stories section capturing the end-user value delivered by the phase. Implementation detail (milestones, file changes, schema moves) follows the stories, not the other way around. Acceptance walks the stories. This keeps scope grounded in "what can a maintainer do after this phase ships" rather than in internal architecture.
+
 ---
 
 ## 5. Success criteria

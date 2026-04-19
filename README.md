@@ -15,9 +15,20 @@ An open-source portfolio x-ray for US DIY investors with fragmented accounts and
 
 ## What this is
 
-Paste broker statement text → the LLM extracts positions with per-row confidence and source spans → you review and commit → a deterministic Python engine produces a 3-ring sunburst (asset class → sub-class → sector/region) with a 5-number summary on top. Non-brokerage assets (real estate, gold, crypto, private, HSA cash) enter through a manual form with synthetic tickers. Every number on screen shows provenance on hover.
+Paste broker statement text → the LLM extracts positions with per-row confidence and source spans → you review and commit → a deterministic Python engine produces a 3-ring sunburst (asset class → region → sub-class) with a 5-number summary on top. Non-brokerage assets (real estate, gold, crypto, private, HSA cash) enter through a manual form where you pick the asset class yourself. Every number on screen shows provenance on hover.
 
 Not a returns tracker, not a benchmark comparison, not a trading tool. Visibility, not advice.
+
+### Routes
+
+| Route | What it does |
+|---|---|
+| `/` | 3-ring sunburst + 5-number summary. Click a wedge to drill down. |
+| `/paste` | Paste a broker statement; LLM extracts rows; review and commit. |
+| `/manual` | Enter a non-brokerage asset (real estate, gold, checking, crypto, …) with its own classification. |
+| `/accounts` | Create, edit, delete accounts (brokerage / HSA / crypto / real-estate buckets). |
+| `/positions` | Every committed row, filterable by account / source / date, inline edit and batch delete. |
+| `/classifications` | Edit how any ticker is classified. YAML baseline + your overrides in one table. |
 
 ---
 
