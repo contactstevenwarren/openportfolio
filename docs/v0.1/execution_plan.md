@@ -147,7 +147,7 @@ From roadmap §4: maintainer pastes 6 accounts in <3 min, adds non-brokerage ass
   - `models.Position.market_value` added (nullable) — schema extension per roadmap §6 ("locked; extended in later phases"). **Ops note:** existing Fly DB must be recreated (`fly ssh console -C 'rm /data/openportfolio.db'`) since there's no Alembic; no data loss (no positions committed yet).
   - `conftest.py` — shared `client` + `test_db` fixtures (fresh SQLite per test via `tmp_path` + `dependency_overrides`).
 - [x] **M2 extract tests** — 3 paste fixtures + `test_extract.py` + `test_allocation.py`. (Delivered across M2.2b + M2.3.)
-- [ ] **M2 frontend paste** — `echarts` + `swr` deps, `lib/api.ts`, `/paste` review-and-confirm UI sorted by confidence.
+- [x] **M2 frontend paste** — `echarts` + `echarts-for-react` + `swr` deps; `frontend/app/lib/api.ts` typed client (admin token in `localStorage`, one-time prompt, 401 clears token); `frontend/app/lib/provenance.tsx` native-title hover wrapper for every on-screen number; `frontend/app/paste/page.tsx` textarea → Extract → editable review table (rows sorted confidence asc, color-coded by confidence + validation errors, per-row selection) → Commit; account dropdown with "Default (auto-create)" fallback. `nginx.conf` proxies `/api/` → backend. Root nav links in `layout.tsx`. Next.js standalone build green (`docker build`); 86 backend tests still green.
 - [ ] **M2 frontend sunburst** — `/` 1-ring ECharts sunburst + net worth headline + `<Provenance>` tooltip wrapper.
 - [ ] **M3 accounts UI** — `/accounts` labeled buckets, paste assigns to account.
 - [ ] **M3 manual entry** — `/manual` form for real estate, gold, crypto, private, HSA cash.
