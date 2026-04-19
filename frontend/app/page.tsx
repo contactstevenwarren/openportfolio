@@ -2,9 +2,8 @@
 
 // M4 hero screen.
 //   Ring 1  asset_class   (equity / fixed_income / real_estate / ...)
-//   Ring 2  sub_class     (us_large_cap / us_aggregate / ...)
-//   Ring 3  sector        (technology / financials / ...) for equities
-//          region         (US / intl_developed / ...) for non-equity
+//   Ring 2  region        (US / intl_developed / emerging / global / other)
+//   Ring 3  sub_class     (us_large_cap / us_aggregate / cd / direct / ...)
 //
 // The 5-number summary strip on top is the acceptance bar from roadmap
 // section 4 -- a user must answer "what fraction is cash?" in <5s

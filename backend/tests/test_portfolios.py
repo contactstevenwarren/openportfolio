@@ -1,7 +1,7 @@
 """Integration tests locking the math for 3 reference portfolios.
 
 Each portfolio exercises a slice of the M4 pipeline:
-  - all-VTI: single-fund look-through → sector/region breakdown
+  - all-VTI: single-fund look-through → region/sub_class breakdown
   - 60/40:   mixed fund classes → asset-class split drives 5-number
   - real-world: mix of direct + fund + manual → unclassified=0 and
     alts math works
@@ -53,20 +53,23 @@ def test_all_vti_total_and_summary() -> None:
     assert result.summary.alts_pct == 0.0
 
 
-def test_all_vti_sector_ring_from_lookthrough() -> None:
+def test_all_vti_sub_class_ring_from_lookthrough() -> None:
     positions = [_pos("VTI", 100000.0)]
     result = aggregate(positions, load_classifications())
 
     equity = result.by_asset_class[0]
-    # Ring 2 within equity -> ring 3 is sector. VTI's YAML has tech as the
-    # largest sector (~30%) so the tree must reflect that.
+    # Ring 2 (region) = US for VTI; Ring 3 (sub_class) fans out across
+    # us_large_cap / us_mid_cap / us_small_cap from the lookthrough YAML.
+    # us_large_cap dominates at ~72% so the tree must reflect that.
     assert equity.children, "ring 2 missing"
-    ring3_tech = 0.0
+    ring3_large_cap = 0.0
     for ring2 in equity.children:
         for ring3 in ring2.children:
-            if ring3.name == "technology":
-                ring3_tech += ring3.value
-    assert 25_000 < ring3_tech < 35_000, f"technology allocation off: {ring3_tech}"
+            if ring3.name == "us_large_cap":
+                ring3_large_cap += ring3.value
+    assert 65_000 < ring3_large_cap < 80_000, (
+        f"us_large_cap allocation off: {ring3_large_cap}"
+    )
 
 
 # ---- Portfolio 2: classic 60/40 (VTI + BND) -------------------------------

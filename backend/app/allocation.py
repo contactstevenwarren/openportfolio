@@ -10,9 +10,12 @@ For every position:
 
 Ring layout for the sunburst:
     Ring 1  asset_class   (equity / fixed_income / real_estate / ...)
-    Ring 2  sub_class     (us_large_cap / us_aggregate / ...)
-    Ring 3  sector        (technology / financials / ...) for equities
-           region         (US / intl_developed / ...) for non-equity
+    Ring 2  region        (US / intl_developed / emerging / global / other)
+    Ring 3  sub_class     (us_large_cap / us_aggregate / cd / direct / ...)
+
+Each ring carries a single consistent meaning across every parent --
+what / where / what-kind. Sector is intentionally not in the tree
+(equity-only, low-signal for v0.1).
 
 The 5-number summary is computed from the ring-1 totals with special
 handling for equity split by region (via either fund breakdown or ticker
@@ -66,11 +69,6 @@ def _bucket_weights(
         yield (bucket, value * (w / total))
 
 
-def _ring3_dim(asset_class_bucket: str) -> str:
-    """Ring-3 is sector for equities, region for everything else."""
-    return "sector" if asset_class_bucket == "equity" else "region"
-
-
 def _classification_weights(
     entry: ClassificationEntry,
 ) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
@@ -92,7 +90,7 @@ def aggregate(
     db: Session | None = None,
 ) -> AllocationResult:
     """Produce the 3-ring + 5-number payload for the hero screen."""
-    # Nested dict: [asset_class][sub_class_or_other][ring3_bucket] -> dollars
+    # Nested dict: [asset_class][region][sub_class] -> dollars
     tree: dict[str, dict[str, dict[str, float]]] = defaultdict(
         lambda: defaultdict(lambda: defaultdict(float))
     )
@@ -120,33 +118,31 @@ def aggregate(
             continue
         total += value
 
-        # Prefer fund-level breakdown when available.
+        # Prefer fund-level breakdown when available. Sector is unpacked
+        # but not used (not in the ring tree anymore); kept for symmetry
+        # with _classification_weights' 4-tuple return.
         br: Breakdown | None = get_breakdown(p.ticker, db=db)
         if br is not None:
-            ac_w, sc_w, sec_w, reg_w = (
+            ac_w, sc_w, _sec_w, reg_w = (
                 br.asset_class,
                 br.sub_class,
                 br.sector,
                 br.region,
             )
         else:
-            ac_w, sc_w, sec_w, reg_w = _classification_weights(entry)
+            ac_w, sc_w, _sec_w, reg_w = _classification_weights(entry)
 
         tickers_by_asset.setdefault(entry.asset_class, [])
         tickers_by_asset[entry.asset_class].append(p.ticker)
 
         for ac_bucket, ac_value in _bucket_weights(ac_w, value):
             totals_by_asset[ac_bucket] += ac_value
-            # Ring-2 choice: use sub_class weights if present; otherwise
-            # fall back to a single "other" bucket so the ring still
-            # renders with the right total.
-            for sc_bucket, sc_value in _bucket_weights(sc_w, ac_value):
-                # Ring-3 depends on asset class.
-                ring3_weights = sec_w if ac_bucket == "equity" else reg_w
-                for r3_bucket, r3_value in _bucket_weights(
-                    ring3_weights, sc_value
-                ):
-                    tree[ac_bucket][sc_bucket][r3_bucket] += r3_value
+            # Ring-2 = region; Ring-3 = sub_class. Both fall back to a
+            # single "other" bucket when the weights are missing so the
+            # ring totals still match ring-1.
+            for reg_bucket, reg_value in _bucket_weights(reg_w, ac_value):
+                for sc_bucket, sc_value in _bucket_weights(sc_w, reg_value):
+                    tree[ac_bucket][reg_bucket][sc_bucket] += sc_value
 
             if ac_bucket == "equity":
                 # Equity region split for the 5-number summary uses the
@@ -171,42 +167,42 @@ def aggregate(
         tree.setdefault(ac_bucket, defaultdict(lambda: defaultdict(float)))
 
     by_asset_class: list[AllocationSlice] = []
-    for ac_bucket, sub_tree in tree.items():
+    for ac_bucket, region_tree in tree.items():
         ac_value = sum(
             v
-            for ring2 in sub_tree.values()
-            for v in ring2.values()
+            for sub_tree in region_tree.values()
+            for v in sub_tree.values()
         )
-        sub_slices: list[AllocationSlice] = []
-        for sc_bucket, ring3 in sub_tree.items():
-            sc_value = sum(ring3.values())
-            ring3_slices = [
-                AllocationSlice(
-                    name=r3_bucket,
-                    value=r3_value,
-                    pct=(100 * r3_value / total) if total > 0 else 0.0,
-                )
-                for r3_bucket, r3_value in sorted(
-                    ring3.items(), key=lambda kv: kv[1], reverse=True
-                )
-                if r3_value > 0
-            ]
-            sub_slices.append(
+        region_slices: list[AllocationSlice] = []
+        for reg_bucket, sub_tree in region_tree.items():
+            reg_value = sum(sub_tree.values())
+            sub_slices = [
                 AllocationSlice(
                     name=sc_bucket,
                     value=sc_value,
                     pct=(100 * sc_value / total) if total > 0 else 0.0,
-                    children=ring3_slices,
+                )
+                for sc_bucket, sc_value in sorted(
+                    sub_tree.items(), key=lambda kv: kv[1], reverse=True
+                )
+                if sc_value > 0
+            ]
+            region_slices.append(
+                AllocationSlice(
+                    name=reg_bucket,
+                    value=reg_value,
+                    pct=(100 * reg_value / total) if total > 0 else 0.0,
+                    children=sub_slices,
                 )
             )
-        sub_slices.sort(key=lambda s: s.value, reverse=True)
+        region_slices.sort(key=lambda s: s.value, reverse=True)
         by_asset_class.append(
             AllocationSlice(
                 name=ac_bucket,
                 value=ac_value,
                 pct=(100 * ac_value / total) if total > 0 else 0.0,
                 tickers=_dedup(tickers_by_asset.get(ac_bucket, [])),
-                children=sub_slices,
+                children=region_slices,
             )
         )
     by_asset_class.sort(key=lambda s: s.value, reverse=True)
