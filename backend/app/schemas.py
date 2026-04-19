@@ -14,7 +14,7 @@ review and fix them in the UI, not rejected silently.
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExtractedPosition(BaseModel):
@@ -41,3 +41,74 @@ class ExtractionResult(BaseModel):
 
 class ExtractRequest(BaseModel):
     text: str
+
+
+# ----- accounts ------------------------------------------------------------
+
+
+class AccountCreate(BaseModel):
+    label: str
+    type: str = "brokerage"
+
+
+class AccountRead(BaseModel):
+    id: int
+    label: str
+    type: str
+    currency: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ----- position commit ----------------------------------------------------
+
+
+class CommitPosition(BaseModel):
+    """A single row the user reviewed and approved for commit.
+
+    Mirrors ExtractedPosition minus validation_errors (the review UI has
+    already resolved them). confidence + source_span travel with the row
+    so the commit endpoint can persist them in the provenance table.
+    """
+
+    ticker: str
+    shares: float
+    cost_basis: float | None = None
+    market_value: float | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    source_span: str
+
+
+class PositionCommit(BaseModel):
+    # account_id is optional: when absent, the server uses the first
+    # account or auto-seeds a "Default" brokerage one (Decision 1a).
+    account_id: int | None = None
+    # Free-form identifier stored on each provenance row, e.g.
+    # "paste:fidelity-2026-04-19" or "manual". Defaults broadly.
+    source: str = "paste"
+    positions: list[CommitPosition]
+
+
+class CommitResult(BaseModel):
+    account_id: int
+    position_ids: list[int]
+
+
+# ----- allocation ---------------------------------------------------------
+
+
+class AllocationSlice(BaseModel):
+    # asset_class name (e.g. "equity"). Sub-class / sector / region arrive
+    # in M4 as additional rings.
+    name: str
+    value: float
+    pct: float
+    tickers: list[str]
+
+
+class AllocationResult(BaseModel):
+    total: float
+    by_asset_class: list[AllocationSlice]
+    # Tickers held but not present in data/classifications.yaml. UI flags
+    # them so the user knows they're missing from the view.
+    unclassified_tickers: list[str]
