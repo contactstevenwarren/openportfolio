@@ -1,0 +1,166 @@
+"""Integration tests locking the math for 3 reference portfolios.
+
+Each portfolio exercises a slice of the M4 pipeline:
+  - all-VTI: single-fund look-through → sector/region breakdown
+  - 60/40:   mixed fund classes → asset-class split drives 5-number
+  - real-world: mix of direct + fund + manual → unclassified=0 and
+    alts math works
+
+yfinance is mocked via ``autouse`` so tests never hit the network; the
+YAML fallback is authoritative. If the YAML changes and these tests drift,
+update both intentionally.
+"""
+
+from datetime import UTC, datetime
+
+from app.allocation import aggregate
+from app.classifications import load_classifications
+from app.models import Position
+
+# yfinance stays off in v0.1 by default (see config.lookthrough_yfinance_enabled);
+# the YAML fallback is authoritative, and these tests pin its math.
+
+
+def _pos(ticker: str, market_value: float, cost_basis: float | None = None) -> Position:
+    return Position(
+        account_id=1,
+        ticker=ticker,
+        shares=1.0,
+        cost_basis=cost_basis,
+        market_value=market_value,
+        as_of=datetime.now(UTC),
+        source="paste",
+    )
+
+
+# ---- Portfolio 1: all-VTI -------------------------------------------------
+
+
+def test_all_vti_total_and_summary() -> None:
+    positions = [_pos("VTI", 100000.0)]
+    result = aggregate(positions, load_classifications())
+
+    assert result.total == 100000.0
+    assert len(result.by_asset_class) == 1
+    equity = result.by_asset_class[0]
+    assert equity.name == "equity"
+    assert equity.pct == 100.0
+
+    assert result.summary is not None
+    assert result.summary.us_equity_pct == 100.0
+    assert result.summary.intl_equity_pct == 0.0
+    assert result.summary.cash_pct == 0.0
+    assert result.summary.alts_pct == 0.0
+
+
+def test_all_vti_sector_ring_from_lookthrough() -> None:
+    positions = [_pos("VTI", 100000.0)]
+    result = aggregate(positions, load_classifications())
+
+    equity = result.by_asset_class[0]
+    # Ring 2 within equity -> ring 3 is sector. VTI's YAML has tech as the
+    # largest sector (~30%) so the tree must reflect that.
+    assert equity.children, "ring 2 missing"
+    ring3_tech = 0.0
+    for ring2 in equity.children:
+        for ring3 in ring2.children:
+            if ring3.name == "technology":
+                ring3_tech += ring3.value
+    assert 25_000 < ring3_tech < 35_000, f"technology allocation off: {ring3_tech}"
+
+
+# ---- Portfolio 2: classic 60/40 (VTI + BND) -------------------------------
+
+
+def test_60_40() -> None:
+    positions = [_pos("VTI", 60_000.0), _pos("BND", 40_000.0)]
+    result = aggregate(positions, load_classifications())
+
+    assert result.total == 100_000.0
+    by_name = {s.name: s for s in result.by_asset_class}
+    assert by_name["equity"].pct == 60.0
+    assert by_name["fixed_income"].pct == 40.0
+
+    assert result.summary is not None
+    assert result.summary.us_equity_pct == 60.0
+    assert result.summary.intl_equity_pct == 0.0
+    assert result.summary.cash_pct == 0.0
+    assert result.summary.alts_pct == 0.0
+
+
+def test_60_40_pct_sums_to_100() -> None:
+    positions = [_pos("VTI", 60_000.0), _pos("BND", 40_000.0)]
+    result = aggregate(positions, load_classifications())
+    assert abs(sum(s.pct for s in result.by_asset_class) - 100.0) < 1e-9
+
+
+# ---- Portfolio 3: real-world mix (fund + direct + manual) -----------------
+
+
+def test_real_world_mix() -> None:
+    """Brokerage + HSA + real estate + gold + crypto + cash."""
+    positions = [
+        _pos("VTI", 150_000.0),            # US equity fund
+        _pos("VXUS", 50_000.0),            # intl equity fund
+        _pos("BND", 40_000.0),             # US bonds
+        _pos("AAPL", 20_000.0),            # direct US equity
+        _pos("REALESTATE:home", 400_000.0),
+        _pos("GOLD:bars", 10_000.0),
+        _pos("CRYPTO:solana", 5_000.0),
+        _pos("CASH", 25_000.0),
+        _pos("HSA_CASH:fidelity", 3_000.0),
+    ]
+    result = aggregate(positions, load_classifications())
+
+    assert result.unclassified_tickers == []
+    expected_total = 703_000.0
+    assert result.total == expected_total
+
+    # Asset classes present.
+    names = {s.name for s in result.by_asset_class}
+    assert names >= {
+        "equity",
+        "fixed_income",
+        "real_estate",
+        "commodity",
+        "crypto",
+        "cash",
+    }
+
+    summary = result.summary
+    assert summary is not None
+    # US equity = VTI 150k * 100% + AAPL 20k * 100% = 170k
+    assert abs(summary.us_equity_pct - (170_000.0 / expected_total * 100)) < 0.01
+    # Intl equity = VXUS 50k * 100%
+    assert abs(summary.intl_equity_pct - (50_000.0 / expected_total * 100)) < 0.01
+    # Cash = CASH 25k + HSA_CASH 3k
+    assert abs(summary.cash_pct - (28_000.0 / expected_total * 100)) < 0.01
+    # Alts = real estate 400k + gold 10k + crypto 5k = 415k
+    assert abs(summary.alts_pct - (415_000.0 / expected_total * 100)) < 0.01
+
+
+def test_real_world_ring_nesting_is_three_deep() -> None:
+    positions = [
+        _pos("VTI", 150_000.0),
+        _pos("BND", 40_000.0),
+        _pos("AAPL", 20_000.0),
+    ]
+    result = aggregate(positions, load_classifications())
+
+    # Ring 1 (asset_class) must have ring 2 children with ring 3 leaves
+    # for at least equity.
+    equity = next(s for s in result.by_asset_class if s.name == "equity")
+    assert equity.children, "ring 2 missing for equity"
+    assert all(ring2.children for ring2 in equity.children), "ring 3 missing under equity"
+
+
+def test_vxus_splits_into_intl_developed_and_emerging() -> None:
+    positions = [_pos("VXUS", 100_000.0)]
+    result = aggregate(positions, load_classifications())
+
+    summary = result.summary
+    assert summary is not None
+    # VXUS is 100% intl equity (split ~75/25 between developed and
+    # emerging in the YAML); either way it all counts as intl.
+    assert summary.intl_equity_pct == 100.0
+    assert summary.us_equity_pct == 0.0

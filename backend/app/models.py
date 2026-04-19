@@ -87,3 +87,26 @@ class Provenance(Base):
     # Source span from the LLM extraction (character range or quoted excerpt).
     llm_span: Mapped[str | None] = mapped_column(Text, nullable=True)
     captured_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class FundHolding(Base):
+    """Cached fund composition (M4 look-through).
+
+    One row per (fund_ticker, dimension, bucket) triple, where dimension
+    is one of {"asset_class", "sub_class", "sector", "region"} and bucket
+    is the value within that dimension (e.g. "us_large_cap", "technology").
+    weight is 0..1. fetched_at drives the 24h cache; rows older than that
+    are refetched before use. Roadmap data-model schema says "locked in
+    v0.1, extended in later phases" -- this is a pure extension.
+    """
+
+    __tablename__ = "fund_holdings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fund_ticker: Mapped[str] = mapped_column(String(64), index=True)
+    dimension: Mapped[str] = mapped_column(String(20))
+    bucket: Mapped[str] = mapped_column(String(50))
+    weight: Mapped[float] = mapped_column(Float)
+    # "yaml" | "yfinance"
+    source: Mapped[str] = mapped_column(String(50))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime)
