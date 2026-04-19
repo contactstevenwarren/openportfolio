@@ -171,9 +171,9 @@ class ExportResult(BaseModel):
 class AllocationSlice(BaseModel):
     """One wedge in the 3-ring sunburst.
 
-    ``children`` lets the same schema carry asset_class → sub_class →
-    sector/region nesting. Leaves have ``children=[]`` and contribute
-    their value directly; inner nodes' ``value`` equals the sum of their
+    ``children`` lets the same schema carry asset_class → region →
+    sub_class nesting. Leaves have ``children=[]`` and contribute their
+    value directly; inner nodes' ``value`` equals the sum of their
     children.
     """
 

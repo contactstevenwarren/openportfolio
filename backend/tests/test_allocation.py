@@ -154,6 +154,67 @@ def test_unclassified_dedup_preserves_order() -> None:
     assert result.unclassified_tickers == ["FOO", "BAR"]
 
 
+def test_ring_layout_is_region_then_sub_class() -> None:
+    # Pins the invariant: Ring 2 = region, Ring 3 = sub_class, consistent
+    # across both equity and non-equity asset classes. Using tickers not
+    # in lookthrough.yaml so the breakdown fallback is the single-ticker
+    # classification (100% to each dimension), keeping the test focused
+    # on tree shape rather than fund fan-out.
+    classifications = {
+        "MYSTOCK": ClassificationEntry(
+            ticker="MYSTOCK",
+            asset_class="equity",
+            sub_class="us_large_cap",
+            region="US",
+        ),
+        "MYBOND": ClassificationEntry(
+            ticker="MYBOND",
+            asset_class="fixed_income",
+            sub_class="us_aggregate",
+            region="US",
+        ),
+    }
+    result = aggregate(
+        [
+            _position("MYSTOCK", market_value=60000.0),
+            _position("MYBOND", market_value=40000.0),
+        ],
+        classifications,
+    )
+    by_name = {s.name: s for s in result.by_asset_class}
+
+    # Equity: ring 2 keyed by region, ring 3 keyed by sub_class.
+    equity_ring2 = by_name["equity"].children
+    assert [r.name for r in equity_ring2] == ["US"]
+    assert [c.name for c in equity_ring2[0].children] == ["us_large_cap"]
+
+    # Non-equity: same layout. (Previously ring 2 was sub_class here.)
+    fi_ring2 = by_name["fixed_income"].children
+    assert [r.name for r in fi_ring2] == ["US"]
+    assert [c.name for c in fi_ring2[0].children] == ["us_aggregate"]
+
+    # Ring totals sum correctly at each level.
+    assert equity_ring2[0].value == 60000.0
+    assert equity_ring2[0].children[0].value == 60000.0
+    assert fi_ring2[0].value == 40000.0
+    assert fi_ring2[0].children[0].value == 40000.0
+
+
+def test_ring_layout_falls_back_to_other_when_region_or_sub_class_missing() -> None:
+    # Synthetic CASH entries have no region and a sub_class of "cash".
+    # Ring 2 (region) should collapse to "other"; Ring 3 should render
+    # the known sub_class bucket.
+    result = aggregate(
+        [_position("CASH:ally", market_value=10000.0)],
+        {},  # synthetic prefix resolves without the YAML
+    )
+    cash = result.by_asset_class[0]
+    assert cash.name == "cash"
+    assert [r.name for r in cash.children] == ["other"]
+    assert [c.name for c in cash.children[0].children] == ["cash"]
+    assert cash.children[0].value == 10000.0
+
+
 # --- GET /api/allocation --------------------------------------------------
 
 
