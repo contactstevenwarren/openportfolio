@@ -51,6 +51,13 @@ class AccountCreate(BaseModel):
     type: str = "brokerage"
 
 
+class AccountPatch(BaseModel):
+    """Edit label and/or type on an existing account. Both optional."""
+
+    label: str | None = None
+    type: str | None = None
+
+
 class AccountRead(BaseModel):
     id: int
     label: str
@@ -63,12 +70,31 @@ class AccountRead(BaseModel):
 # ----- position commit ----------------------------------------------------
 
 
+class InlineClassification(BaseModel):
+    """Classification fields submitted alongside a manual-entry position.
+
+    Set by /manual so the user's choice of asset_class / sub_class /
+    sector / region lands in the Classification table in the same
+    transaction as the Position. /paste leaves it None -- pasted tickers
+    look up classification from YAML or user DB rows.
+    """
+
+    asset_class: str
+    sub_class: str | None = None
+    sector: str | None = None
+    region: str | None = None
+
+
 class CommitPosition(BaseModel):
     """A single row the user reviewed and approved for commit.
 
     Mirrors ExtractedPosition minus validation_errors (the review UI has
     already resolved them). confidence + source_span travel with the row
     so the commit endpoint can persist them in the provenance table.
+
+    ``classification`` is set by /manual entries and triggers a
+    Classification upsert + auto-suffix for ticker collisions. /paste
+    leaves it None.
     """
 
     ticker: str
@@ -77,6 +103,7 @@ class CommitPosition(BaseModel):
     market_value: float | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     source_span: str
+    classification: InlineClassification | None = None
 
 
 class PositionCommit(BaseModel):
@@ -92,6 +119,12 @@ class PositionCommit(BaseModel):
 class CommitResult(BaseModel):
     account_id: int
     position_ids: list[int]
+    # Final tickers for each position (same index as position_ids).
+    # Differs from the proposed ticker only when ``classification`` was
+    # set and the slug collided with an existing Classification row --
+    # the server auto-suffixes ("gold-bar" -> "gold-bar-2") and the UI
+    # surfaces the final value.
+    tickers: list[str]
 
 
 # ----- position read / patch ----------------------------------------------
@@ -131,6 +164,9 @@ class ProvenanceRead(BaseModel):
     id: int
     entity_type: str
     entity_id: int
+    # Non-null for string-PK entities (Classification, keyed by ticker).
+    # Null for numeric-PK entities (Position, Account) -- use entity_id.
+    entity_key: str | None = None
     field: str
     source: str
     confidence: float | None
@@ -198,6 +234,66 @@ class FiveNumberSummary(BaseModel):
     alts_pct: float
 
 
+# ----- classifications (v0.1.5 M3) ----------------------------------------
+
+
+class ClassificationRow(BaseModel):
+    """One row on the /classifications page.
+
+    Merged view over the YAML baseline and the DB user rows. ``source``
+    reflects where the active row came from; ``overrides_yaml`` is True
+    when a user row is replacing a YAML value (UI surfaces a badge).
+    """
+
+    ticker: str
+    asset_class: str
+    sub_class: str | None = None
+    sector: str | None = None
+    region: str | None = None
+    source: str  # "yaml" | "user"
+    overrides_yaml: bool = False
+
+
+class ClassificationPatch(BaseModel):
+    """Upsert payload for PATCH /api/classifications/{ticker}.
+
+    Every field is required -- a user-owned classification must be
+    complete. ``asset_class`` must be in the taxonomy enum; the endpoint
+    enforces it so bad values can't sneak past Pydantic.
+    """
+
+    asset_class: str
+    sub_class: str | None = None
+    sector: str | None = None
+    region: str | None = None
+
+
+class TaxonomyOption(BaseModel):
+    """One choice for the asset_class dropdown."""
+
+    value: str   # canonical snake_case stored in DB
+    label: str   # friendly label shown in UI ("Fixed Income")
+
+
+class Taxonomy(BaseModel):
+    asset_classes: list[TaxonomyOption]
+
+
+# Single source of truth for the allocation taxonomy. Canonical values
+# are snake_case to match DB storage; labels are human-friendly for the
+# UI. Adding a new asset class = one line here. Displayed by /manual
+# and /classifications forms.
+ASSET_CLASS_OPTIONS: list[TaxonomyOption] = [
+    TaxonomyOption(value="equity", label="Equity"),
+    TaxonomyOption(value="fixed_income", label="Fixed Income"),
+    TaxonomyOption(value="real_estate", label="Real Estate"),
+    TaxonomyOption(value="commodity", label="Commodity"),
+    TaxonomyOption(value="crypto", label="Crypto"),
+    TaxonomyOption(value="cash", label="Cash"),
+    TaxonomyOption(value="private", label="Private"),
+]
+
+
 class AllocationResult(BaseModel):
     total: float
     by_asset_class: list[AllocationSlice]
@@ -207,3 +303,9 @@ class AllocationResult(BaseModel):
     # M4 adds the 5-number summary strip. Optional for back-compat with
     # M2 clients that pre-date it.
     summary: FiveNumberSummary | None = None
+    # Per-ticker source of the classification used to place it in the
+    # tree. Values: "yaml" (bundled baseline), "user" (DB override),
+    # "prefix" (synthetic fallback, pre-v0.1.5-M4). Drives the sunburst
+    # hover provenance -- e.g. "classified as: us_tips (your override)"
+    # when the user overrode a YAML ticker.
+    classification_sources: dict[str, str] = Field(default_factory=dict)

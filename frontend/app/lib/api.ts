@@ -29,6 +29,13 @@ export type Account = {
   currency: string;
 };
 
+export type InlineClassification = {
+  asset_class: string;
+  sub_class?: string | null;
+  sector?: string | null;
+  region?: string | null;
+};
+
 export type CommitPosition = {
   ticker: string;
   shares: number;
@@ -36,6 +43,9 @@ export type CommitPosition = {
   market_value: number | null;
   confidence: number;
   source_span: string;
+  // Set by /manual so the commit also writes a Classification row and
+  // resolves ticker collisions server-side. Leave undefined on paste.
+  classification?: InlineClassification;
 };
 
 export type CommitRequest = {
@@ -47,6 +57,8 @@ export type CommitRequest = {
 export type CommitResult = {
   account_id: number;
   position_ids: number[];
+  // Server-resolved final tickers (auto-suffixed on collision).
+  tickers: string[];
 };
 
 export type AllocationSlice = {
@@ -70,6 +82,35 @@ export type AllocationResult = {
   by_asset_class: AllocationSlice[];
   unclassified_tickers: string[];
   summary?: FiveNumberSummary;
+  // Per-ticker classification provenance: "yaml" | "user" | "prefix".
+  // Drives sunburst hover tooltip provenance labels.
+  classification_sources: Record<string, string>;
+};
+
+export type ClassificationRow = {
+  ticker: string;
+  asset_class: string;
+  sub_class: string | null;
+  sector: string | null;
+  region: string | null;
+  source: 'yaml' | 'user';
+  overrides_yaml: boolean;
+};
+
+export type ClassificationPatch = {
+  asset_class: string;
+  sub_class?: string | null;
+  sector?: string | null;
+  region?: string | null;
+};
+
+export type TaxonomyOption = {
+  value: string;
+  label: string;
+};
+
+export type Taxonomy = {
+  asset_classes: TaxonomyOption[];
 };
 
 export type Position = {
@@ -142,6 +183,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  patchAccount: (id: number, patch: { label?: string; type?: string }) =>
+    fetchJson<Account>(`/api/accounts/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteAccount: (id: number) =>
+    fetchJson<void>(`/api/accounts/${id}`, { method: 'DELETE' }),
   allocation: () => fetchJson<AllocationResult>('/api/allocation'),
   positions: () => fetchJson<Position[]>('/api/positions'),
   patchPosition: (id: number, patch: PositionPatch) =>
@@ -151,4 +199,15 @@ export const api = {
     }),
   deletePosition: (id: number) =>
     fetchJson<void>(`/api/positions/${id}`, { method: 'DELETE' }),
+  classifications: () => fetchJson<ClassificationRow[]>('/api/classifications'),
+  taxonomy: () => fetchJson<Taxonomy>('/api/classifications/taxonomy'),
+  patchClassification: (ticker: string, patch: ClassificationPatch) =>
+    fetchJson<ClassificationRow>(`/api/classifications/${encodeURIComponent(ticker)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteClassification: (ticker: string) =>
+    fetchJson<void>(`/api/classifications/${encodeURIComponent(ticker)}`, {
+      method: 'DELETE',
+    }),
 };

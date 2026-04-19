@@ -206,31 +206,40 @@ def test_delete_preserves_provenance_audit_trail(
     )
 
 
-# ---- manual-entry integration (synthetic tickers) ------------------------
+# ---- manual-entry integration (v0.1.5 M4 classification payload) --------
 
 
 def test_manual_realestate_commit_and_classify(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
-    # Manual entry uses the existing /commit endpoint with source="manual".
+    # v0.1.5 M4: the manual flow sends the classification alongside the
+    # position so aggregation sees real_estate immediately (no prefix
+    # fallback). The response surfaces the final ticker slug.
     body = {
         "source": "manual",
         "positions": [
             {
-                "ticker": "REALESTATE:123Main",
+                "ticker": "123main",
                 "shares": 1.0,
                 "cost_basis": 400000.0,
                 "market_value": 650000.0,
                 "confidence": 1.0,
                 "source_span": "",
+                "classification": {
+                    "asset_class": "real_estate",
+                    "sub_class": "direct",
+                    "region": "US",
+                },
             }
         ],
     }
     r = client.post("/api/positions/commit", json=body, headers=auth_headers)
     assert r.status_code == 201
+    assert r.json()["tickers"] == ["123main"]
 
     r = client.get("/api/allocation", headers=auth_headers)
     body = r.json()
     names = {s["name"] for s in body["by_asset_class"]}
     assert "real_estate" in names
     assert body["unclassified_tickers"] == []
+    assert body["classification_sources"]["123main"] == "user"

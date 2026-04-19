@@ -3,19 +3,28 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  -- register models with Base before create_all
 from .allocation import aggregate
 from .auth import require_admin_token
-from .classifications import load_classifications
-from .db import Base, engine, get_db
+from .classifications import (
+    load_classifications,
+    load_user_classifications,
+    migrate_synthetic_positions,
+)
+from .db import Base, SessionLocal, engine, get_db
 from .llm import extract_positions
-from .models import Account, Position, Provenance, Snapshot
+from .models import Account, Classification, Position, Provenance, Snapshot
 from .schemas import (
+    ASSET_CLASS_OPTIONS,
     AccountCreate,
+    AccountPatch,
     AccountRead,
     AllocationResult,
+    ClassificationPatch,
+    ClassificationRow,
     CommitResult,
     ExportResult,
     ExtractionResult,
@@ -25,12 +34,44 @@ from .schemas import (
     PositionRead,
     ProvenanceRead,
     SnapshotRead,
+    Taxonomy,
 )
+
+_VALID_ASSET_CLASSES = {o.value for o in ASSET_CLASS_OPTIONS}
+
+
+def _migrate_sqlite_schema() -> None:
+    """Additive column migrations for the v0.1 → v0.1.5 transition.
+
+    ``create_all`` only creates missing tables; it does not add columns
+    to existing ones. For a maintainer whose SQLite file predates
+    v0.1.5 we add the new ``provenance.entity_key`` column in place.
+    Idempotent -- the inspector check means repeated startups are a
+    no-op. Drops out of the way once the codebase moves to a real
+    migration tool.
+    """
+    inspector = inspect(engine)
+    if "provenance" not in inspector.get_table_names():
+        return
+    cols = {c["name"] for c in inspector.get_columns("provenance")}
+    if "entity_key" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE provenance ADD COLUMN entity_key VARCHAR(64)"))
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_provenance_entity_key ON provenance(entity_key)")
+        )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Base.metadata.create_all(bind=engine)
+    _migrate_sqlite_schema()
+    # Convert legacy synthetic-ticker positions to per-ticker
+    # Classification rows so ``classify()`` can drop its prefix fallback.
+    # Idempotent: rows with a Classification are skipped on re-run.
+    with SessionLocal() as db:
+        migrate_synthetic_positions(db)
     yield
 
 
@@ -68,6 +109,38 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)) -> Accoun
     return AccountRead.model_validate(account)
 
 
+@app.patch("/api/accounts/{account_id}", dependencies=[Depends(require_admin_token)])
+def patch_account(
+    account_id: int, body: AccountPatch, db: Session = Depends(get_db)
+) -> AccountRead:
+    account = db.get(Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    patch_fields = body.model_dump(exclude_unset=True)
+    for field, value in patch_fields.items():
+        setattr(account, field, value)
+    db.commit()
+    db.refresh(account)
+    return AccountRead.model_validate(account)
+
+
+@app.delete(
+    "/api/accounts/{account_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin_token)],
+)
+def delete_account(account_id: int, db: Session = Depends(get_db)) -> None:
+    account = db.get(Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    # Positions cascade via the Account.positions relationship
+    # (cascade="all, delete-orphan") + schema-level ondelete=CASCADE on
+    # Position.account_id. Provenance rows stay as an audit trail,
+    # matching the delete_position behavior (v0.1 decision).
+    db.delete(account)
+    db.commit()
+
+
 # ----- position commit ----------------------------------------------------
 
 
@@ -96,6 +169,25 @@ def _resolve_account(db: Session, account_id: int | None) -> Account:
     return account
 
 
+def _resolve_ticker(db: Session, proposed: str) -> str:
+    """Auto-suffix when a Classification row already exists for ``proposed``.
+
+    Only the manual flow carries ``classification`` payloads, which is
+    when this is called. Paste commits don't pass through here -- their
+    tickers are market symbols (VTI, BND) and collisions are expected
+    (multiple positions share a ticker intentionally).
+
+    ``gold-bar`` collides -> return ``gold-bar-2``; ``gold-bar-2`` also
+    collides -> ``gold-bar-3``; etc.
+    """
+    if db.get(Classification, proposed) is None:
+        return proposed
+    n = 2
+    while db.get(Classification, f"{proposed}-{n}") is not None:
+        n += 1
+    return f"{proposed}-{n}"
+
+
 @app.post(
     "/api/positions/commit",
     status_code=status.HTTP_201_CREATED,
@@ -108,10 +200,56 @@ def commit_positions(
     now = datetime.now(UTC)
 
     created_ids: list[int] = []
+    final_tickers: list[str] = []
     for row in body.positions:
+        # Manual entries carry a classification payload + get ticker
+        # auto-suffixing on collision so "Gold bar" entered twice
+        # becomes gold-bar and gold-bar-2. Paste entries share tickers
+        # intentionally (two brokerages both holding VTI).
+        ticker = row.ticker
+        if row.classification is not None:
+            if row.classification.asset_class not in _VALID_ASSET_CLASSES:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"asset_class must be one of "
+                        f"{sorted(_VALID_ASSET_CLASSES)}; "
+                        f"got {row.classification.asset_class!r}"
+                    ),
+                )
+            ticker = _resolve_ticker(db, ticker)
+            db.add(
+                Classification(
+                    ticker=ticker,
+                    asset_class=row.classification.asset_class,
+                    sub_class=row.classification.sub_class,
+                    sector=row.classification.sector,
+                    region=row.classification.region,
+                    source="user",
+                )
+            )
+            for field, value in (
+                ("asset_class", row.classification.asset_class),
+                ("sub_class", row.classification.sub_class),
+                ("sector", row.classification.sector),
+                ("region", row.classification.region),
+            ):
+                db.add(
+                    Provenance(
+                        entity_type="classification",
+                        entity_id=0,
+                        entity_key=ticker,
+                        field=field,
+                        source=body.source,
+                        confidence=1.0,
+                        llm_span=None,
+                        captured_at=now,
+                    )
+                )
+
         position = Position(
             account_id=account.id,
-            ticker=row.ticker,
+            ticker=ticker,
             shares=row.shares,
             cost_basis=row.cost_basis,
             market_value=row.market_value,
@@ -144,9 +282,48 @@ def commit_positions(
             )
 
         created_ids.append(position.id)
+        final_tickers.append(ticker)
 
     db.commit()
-    return CommitResult(account_id=account.id, position_ids=created_ids)
+
+    # v0.1.5 M6: capture a deterministic snapshot of the portfolio
+    # state after the commit lands so the v0.6 timeline view has real
+    # history to plot. Minimal payload shape (totals by asset class +
+    # equity region split) -- enough for trend lines without bloating
+    # the DB on every commit.
+    _write_snapshot(db)
+
+    return CommitResult(
+        account_id=account.id, position_ids=created_ids, tickers=final_tickers
+    )
+
+
+def _write_snapshot(db: Session) -> None:
+    """Persist one Snapshot row summarising current portfolio state."""
+    import json
+
+    positions = db.query(Position).all()
+    classifications = {**load_classifications(), **load_user_classifications(db)}
+    result = aggregate(positions, classifications, db=db)
+
+    payload = {
+        "total_usd": result.total,
+        "by_asset_class": {
+            s.name: {"value": s.value, "pct": s.pct} for s in result.by_asset_class
+        },
+        "summary": (
+            result.summary.model_dump() if result.summary is not None else None
+        ),
+        "unclassified_count": len(result.unclassified_tickers),
+    }
+    db.add(
+        Snapshot(
+            taken_at=datetime.now(UTC),
+            net_worth_usd=result.total,
+            payload_json=json.dumps(payload, sort_keys=True),
+        )
+    )
+    db.commit()
 
 
 # ----- positions read / patch / delete (M3) ------------------------------
@@ -217,8 +394,173 @@ def delete_position(position_id: int, db: Session = Depends(get_db)) -> None:
 @app.get("/api/allocation", dependencies=[Depends(require_admin_token)])
 def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
     positions = db.query(Position).all()
-    classifications = load_classifications()
+    # YAML baseline + DB user overrides (user wins on ticker collision).
+    # classify() returns an entry carrying source="yaml" or "user" which
+    # the allocator surfaces per-ticker for sunburst hover.
+    classifications = {**load_classifications(), **load_user_classifications(db)}
     return aggregate(positions, classifications, db=db)
+
+
+# ----- classifications (v0.1.5 M3) ----------------------------------------
+
+
+@app.get("/api/classifications/taxonomy", dependencies=[Depends(require_admin_token)])
+def get_taxonomy() -> Taxonomy:
+    """Allowed asset_class values with display labels.
+
+    Single source of truth for both /classifications and /manual forms
+    (v0.1.5 M4). Frontend renders ``label``, sends ``value``.
+    """
+    return Taxonomy(asset_classes=ASSET_CLASS_OPTIONS)
+
+
+@app.get("/api/classifications", dependencies=[Depends(require_admin_token)])
+def list_classifications(db: Session = Depends(get_db)) -> list[ClassificationRow]:
+    """YAML baseline + user DB rows, user wins on ticker collision."""
+    yaml_entries = load_classifications()
+    user_rows = {c.ticker: c for c in db.query(Classification).all()}
+
+    merged: list[ClassificationRow] = []
+    for ticker, entry in yaml_entries.items():
+        if ticker in user_rows:
+            continue  # user row emitted below with overrides_yaml=True
+        merged.append(
+            ClassificationRow(
+                ticker=ticker,
+                asset_class=entry.asset_class,
+                sub_class=entry.sub_class,
+                sector=entry.sector,
+                region=entry.region,
+                source="yaml",
+            )
+        )
+    for ticker, row in user_rows.items():
+        merged.append(
+            ClassificationRow(
+                ticker=ticker,
+                asset_class=row.asset_class,
+                sub_class=row.sub_class,
+                sector=row.sector,
+                region=row.region,
+                source="user",
+                overrides_yaml=ticker in yaml_entries,
+            )
+        )
+    merged.sort(key=lambda r: r.ticker)
+    return merged
+
+
+@app.patch("/api/classifications/{ticker}", dependencies=[Depends(require_admin_token)])
+def patch_classification(
+    ticker: str, body: ClassificationPatch, db: Session = Depends(get_db)
+) -> ClassificationRow:
+    """Upsert a user-owned classification for ``ticker``.
+
+    Writes a Provenance row per changed field (entity_type='classification',
+    entity_key=ticker) so the audit trail matches positions. No diff
+    detection across fields: the caller supplies the full target shape,
+    and we capture provenance for every field we end up persisting --
+    keeps the code small and the audit trail thorough.
+    """
+    if body.asset_class not in _VALID_ASSET_CLASSES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"asset_class must be one of "
+                f"{sorted(_VALID_ASSET_CLASSES)}; got {body.asset_class!r}"
+            ),
+        )
+
+    now = datetime.now(UTC)
+    existing = db.get(Classification, ticker)
+    if existing is None:
+        existing = Classification(
+            ticker=ticker,
+            asset_class=body.asset_class,
+            sub_class=body.sub_class,
+            sector=body.sector,
+            region=body.region,
+            source="user",
+        )
+        db.add(existing)
+    else:
+        existing.asset_class = body.asset_class
+        existing.sub_class = body.sub_class
+        existing.sector = body.sector
+        existing.region = body.region
+        existing.source = "user"
+
+    for field, value in (
+        ("asset_class", body.asset_class),
+        ("sub_class", body.sub_class),
+        ("sector", body.sector),
+        ("region", body.region),
+    ):
+        db.add(
+            Provenance(
+                entity_type="classification",
+                entity_id=0,
+                entity_key=ticker,
+                field=field,
+                source="user",
+                confidence=1.0,
+                llm_span=None,
+                captured_at=now,
+            )
+        )
+
+    db.commit()
+    db.refresh(existing)
+
+    yaml_entries = load_classifications()
+    return ClassificationRow(
+        ticker=ticker,
+        asset_class=existing.asset_class,
+        sub_class=existing.sub_class,
+        sector=existing.sector,
+        region=existing.region,
+        source="user",
+        overrides_yaml=ticker in yaml_entries,
+    )
+
+
+@app.delete(
+    "/api/classifications/{ticker}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin_token)],
+)
+def delete_classification(ticker: str, db: Session = Depends(get_db)) -> None:
+    """Revert a user override back to the YAML baseline.
+
+    If the ticker isn't in YAML and any Position still references it,
+    block with 409 -- deleting would silently orphan positions into the
+    ``unclassified_tickers`` bucket. The user must first reclassify or
+    delete those positions.
+    """
+    existing = db.get(Classification, ticker)
+    if existing is None:
+        # Nothing to revert. Idempotent no-op so the UI's "Revert"
+        # button is safe to click twice.
+        return
+
+    yaml_entries = load_classifications()
+    has_yaml_fallback = ticker in yaml_entries
+
+    if not has_yaml_fallback:
+        position_count = (
+            db.query(Position).filter(Position.ticker == ticker).count()
+        )
+        if position_count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"{position_count} position(s) reference {ticker!r}; "
+                    "delete or reclassify them first."
+                ),
+            )
+
+    db.delete(existing)
+    db.commit()
 
 
 # ----- export (M5) --------------------------------------------------------

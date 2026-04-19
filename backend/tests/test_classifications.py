@@ -1,21 +1,26 @@
-"""Unit tests for the classifications YAML loader.
+"""Unit tests for the classifications YAML loader + v0.1.5 M4 migration.
 
-Locks the 10-ticker seed set for M2 and the shape of each entry. When M3
-expands to ~50 tickers, EXPECTED_SEED stays unchanged -- new tickers are
-additive.
+Locks the 10-ticker seed set for M2 and the shape of each entry; later
+phases are additive. Also covers ``migrate_synthetic_positions`` which
+converts legacy ``PREFIX:suffix`` positions to per-ticker Classification
+rows so the v0.1 prefix fallback can be deleted.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import yaml
+from sqlalchemy.orm import Session
 
 from app.classifications import (
     DEFAULT_PATH,
     ClassificationEntry,
     classify,
     load_classifications,
+    migrate_synthetic_positions,
 )
+from app.models import Account, Classification, Position
 
 EXPECTED_SEED = {"VTI", "VXUS", "BND", "VNQ", "GLD", "BTC", "SPY", "QQQ", "AAPL", "CASH"}
 VALID_ASSET_CLASSES = {
@@ -93,7 +98,7 @@ def test_seed_expanded_to_maintainer_holdings() -> None:
         assert t in entries, f"expected {t} in classifications YAML"
 
 
-# ---- synthetic prefix resolver ------------------------------------------
+# ---- classify() (pure dict lookup in v0.1.5) ----------------------------
 
 
 def test_classify_exact_match_wins() -> None:
@@ -108,92 +113,90 @@ def test_classify_unknown_returns_none() -> None:
     assert classify("ZZZZZ", entries) is None
 
 
-def test_classify_synthetic_real_estate() -> None:
-    entry = classify("REALESTATE:123Main", {})
-    assert entry is not None
-    assert entry.asset_class == "real_estate"
-    assert entry.ticker == "REALESTATE:123Main"  # label preserved
+def test_classify_no_longer_splits_on_colon() -> None:
+    # v0.1.5 M4 removed the synthetic-prefix fallback. A PREFIX:suffix
+    # ticker is just a plain ticker now; classification must come from
+    # YAML or a user DB row (or be None = unclassified).
+    assert classify("REALESTATE:123Main", {}) is None
 
 
-def test_classify_synthetic_gold() -> None:
-    entry = classify("GOLD:physical-bar", {})
-    assert entry is not None
-    assert entry.asset_class == "commodity"
-    assert entry.sub_class == "gold"
+# ---- migrate_synthetic_positions (v0.1.5 M4 one-shot) -------------------
 
 
-def test_classify_synthetic_crypto() -> None:
-    entry = classify("CRYPTO:solana", {})
-    assert entry is not None
-    assert entry.asset_class == "crypto"
-
-
-def test_classify_synthetic_private() -> None:
-    entry = classify("PRIVATE:startup-xyz", {})
-    assert entry is not None
-    assert entry.asset_class == "private"
-
-
-def test_classify_synthetic_hsa_cash() -> None:
-    entry = classify("HSA_CASH:fidelity", {})
-    assert entry is not None
-    assert entry.asset_class == "cash"
-    assert entry.sub_class == "hsa_cash"
-
-
-def test_classify_synthetic_cash_pool() -> None:
-    entry = classify("CASH:ally-checking", {})
-    assert entry is not None
-    assert entry.asset_class == "cash"
-    assert entry.sub_class == "cash"
-
-
-def test_classify_synthetic_treasury_note() -> None:
-    entry = classify("TREASURY:91282CKE0", {})
-    assert entry is not None
-    assert entry.asset_class == "fixed_income"
-    assert entry.sub_class == "us_treasury"
-    assert entry.region == "US"
-
-
-def test_classify_synthetic_tips() -> None:
-    entry = classify("TIPS:treasury-direct", {})
-    assert entry is not None
-    assert entry.asset_class == "fixed_income"
-    assert entry.sub_class == "us_tips"
-
-
-def test_classify_synthetic_cd() -> None:
-    entry = classify("CD:ubs-bank-2026", {})
-    assert entry is not None
-    assert entry.asset_class == "cash"
-    assert entry.sub_class == "cd"
-
-
-def test_classify_synthetic_espp() -> None:
-    entry = classify("ESPP:employer-stock", {})
-    assert entry is not None
-    assert entry.asset_class == "equity"
-    assert entry.region == "US"
-
-
-def test_classify_prefix_case_insensitive() -> None:
-    entry = classify("realestate:789Oak", {})
-    assert entry is not None
-    assert entry.asset_class == "real_estate"
-
-
-def test_classify_unknown_prefix_returns_none() -> None:
-    assert classify("UNKNOWN:foo", {}) is None
-
-
-def test_classify_exact_match_beats_prefix_lookup() -> None:
-    # YAML entry takes precedence over prefix match even if both exist.
-    entries = {
-        "CASH:something": ClassificationEntry(
-            ticker="CASH:something", asset_class="equity"
+def _seed_position(db: Session, ticker: str) -> None:
+    account = db.query(Account).first()
+    if account is None:
+        account = Account(label="Test", type="brokerage")
+        db.add(account)
+        db.commit()
+    db.add(
+        Position(
+            account_id=account.id,
+            ticker=ticker,
+            shares=1.0,
+            market_value=1000.0,
+            as_of=datetime.now(UTC),
+            source="paste",
         )
-    }
-    entry = classify("CASH:something", entries)
-    assert entry is not None
-    assert entry.asset_class == "equity"
+    )
+    db.commit()
+
+
+def test_migration_converts_synthetic_positions(test_db: Session) -> None:
+    _seed_position(test_db, "REALESTATE:123Main")
+    _seed_position(test_db, "GOLD:bar-1")
+    _seed_position(test_db, "CRYPTO:solana")
+
+    created = migrate_synthetic_positions(test_db)
+    assert created == 3
+
+    house = test_db.get(Classification, "REALESTATE:123Main")
+    assert house is not None
+    assert house.asset_class == "real_estate"
+    assert house.source == "user"
+
+    gold = test_db.get(Classification, "GOLD:bar-1")
+    assert gold is not None
+    assert gold.sub_class == "gold"
+
+
+def test_migration_is_idempotent(test_db: Session) -> None:
+    _seed_position(test_db, "CASH:ally")
+    assert migrate_synthetic_positions(test_db) == 1
+    # Second run finds the row, skips it.
+    assert migrate_synthetic_positions(test_db) == 0
+
+
+def test_migration_ignores_plain_tickers(test_db: Session) -> None:
+    _seed_position(test_db, "VTI")
+    _seed_position(test_db, "BND")
+    assert migrate_synthetic_positions(test_db) == 0
+    assert test_db.get(Classification, "VTI") is None
+
+
+def test_migration_ignores_unknown_prefixes(test_db: Session) -> None:
+    # UNKNOWN isn't in the legacy prefix table -- leave it alone. The
+    # ticker will surface on the allocation page as unclassified.
+    _seed_position(test_db, "UNKNOWN:foo")
+    assert migrate_synthetic_positions(test_db) == 0
+    assert test_db.get(Classification, "UNKNOWN:foo") is None
+
+
+def test_migration_preserves_existing_user_row(test_db: Session) -> None:
+    # If the user already created a Classification for a synthetic
+    # ticker (e.g. via /classifications), the migration leaves it alone.
+    _seed_position(test_db, "REALESTATE:house")
+    test_db.add(
+        Classification(
+            ticker="REALESTATE:house",
+            asset_class="real_estate",
+            sub_class="custom",
+            source="user",
+        )
+    )
+    test_db.commit()
+
+    assert migrate_synthetic_positions(test_db) == 0
+    row = test_db.get(Classification, "REALESTATE:house")
+    assert row is not None
+    assert row.sub_class == "custom"  # user value preserved

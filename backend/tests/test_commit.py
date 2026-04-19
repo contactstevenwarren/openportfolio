@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import Account, Position, Provenance
+from app.models import Account, Classification, Position, Provenance
 
 
 def _body(**overrides: object) -> dict[str, object]:
@@ -164,3 +164,164 @@ def test_commits_multiple_positions(
     assert len(set(ids)) == 2  # distinct ids
     tickers = {p.ticker for p in test_db.query(Position).all()}
     assert tickers == {"SPY", "QQQ"}
+
+
+def test_response_includes_final_tickers(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    # Paste commits pass through the proposed ticker unchanged.
+    r = client.post("/api/positions/commit", json=_body(), headers=auth_headers)
+    assert r.json()["tickers"] == ["VTI"]
+
+
+# --- v0.1.5 M4: manual-entry classification + auto-suffix ----------------
+
+
+def _manual_body(
+    label: str,
+    asset_class: str,
+    sub_class: str | None = None,
+    market_value: float = 1000.0,
+) -> dict[str, object]:
+    return {
+        "source": "manual",
+        "positions": [
+            {
+                "ticker": label,
+                "shares": 1.0,
+                "cost_basis": None,
+                "market_value": market_value,
+                "confidence": 1.0,
+                "source_span": "",
+                "classification": {
+                    "asset_class": asset_class,
+                    "sub_class": sub_class,
+                },
+            }
+        ],
+    }
+
+
+def test_manual_commit_writes_classification_row(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    r = client.post(
+        "/api/positions/commit",
+        json=_manual_body("wine-bottle-2019", "commodity", "wine"),
+        headers=auth_headers,
+    )
+    assert r.status_code == 201
+
+    row = test_db.get(Classification, "wine-bottle-2019")
+    assert row is not None
+    assert row.asset_class == "commodity"
+    assert row.sub_class == "wine"
+    assert row.source == "user"
+
+
+def test_manual_commit_auto_suffixes_on_collision(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    first = client.post(
+        "/api/positions/commit",
+        json=_manual_body("gold-bar", "commodity", "gold"),
+        headers=auth_headers,
+    )
+    assert first.json()["tickers"] == ["gold-bar"]
+
+    second = client.post(
+        "/api/positions/commit",
+        json=_manual_body("gold-bar", "commodity", "gold"),
+        headers=auth_headers,
+    )
+    assert second.json()["tickers"] == ["gold-bar-2"]
+
+    third = client.post(
+        "/api/positions/commit",
+        json=_manual_body("gold-bar", "commodity", "gold"),
+        headers=auth_headers,
+    )
+    assert third.json()["tickers"] == ["gold-bar-3"]
+
+    # Each got its own Classification row.
+    assert test_db.get(Classification, "gold-bar") is not None
+    assert test_db.get(Classification, "gold-bar-2") is not None
+    assert test_db.get(Classification, "gold-bar-3") is not None
+
+
+def test_manual_commit_writes_provenance_for_classification(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    client.post(
+        "/api/positions/commit",
+        json=_manual_body("wine-bottle", "commodity", "wine"),
+        headers=auth_headers,
+    )
+
+    prov = (
+        test_db.query(Provenance)
+        .filter(Provenance.entity_type == "classification")
+        .filter(Provenance.entity_key == "wine-bottle")
+        .all()
+    )
+    fields = {p.field for p in prov}
+    assert fields == {"asset_class", "sub_class", "sector", "region"}
+    for p in prov:
+        assert p.source == "manual"
+
+
+def test_manual_commit_rejects_invalid_asset_class(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    r = client.post(
+        "/api/positions/commit",
+        json=_manual_body("bad", "nonsense"),
+        headers=auth_headers,
+    )
+    assert r.status_code == 422
+
+
+def test_paste_commit_without_classification_does_not_touch_classifications(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    # Baseline: paste of VTI doesn't create a Classification row (YAML
+    # covers VTI). Confirms the classification-upsert path is strictly
+    # opt-in via the manual flow.
+    client.post("/api/positions/commit", json=_body(), headers=auth_headers)
+    assert test_db.query(Classification).count() == 0
+
+
+# --- v0.1.5 M6: snapshot-on-commit ---------------------------------------
+
+
+def test_commit_writes_snapshot_row(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    import json
+
+    from app.models import Snapshot
+
+    assert test_db.query(Snapshot).count() == 0
+
+    client.post("/api/positions/commit", json=_body(), headers=auth_headers)
+
+    snaps = test_db.query(Snapshot).all()
+    assert len(snaps) == 1
+    snap = snaps[0]
+    assert snap.net_worth_usd == 29438.40
+
+    payload = json.loads(snap.payload_json)
+    assert payload["total_usd"] == 29438.40
+    assert "equity" in payload["by_asset_class"]
+    assert payload["unclassified_count"] == 0
+    assert payload["summary"] is not None
+
+
+def test_each_commit_appends_a_snapshot(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    from app.models import Snapshot
+
+    client.post("/api/positions/commit", json=_body(), headers=auth_headers)
+    client.post("/api/positions/commit", json=_body(), headers=auth_headers)
+    assert test_db.query(Snapshot).count() == 2

@@ -101,19 +101,43 @@ def test_60_40_pct_sums_to_100() -> None:
 
 
 def test_real_world_mix() -> None:
-    """Brokerage + HSA + real estate + gold + crypto + cash."""
+    """Brokerage + HSA + real estate + gold + crypto + cash.
+
+    v0.1.5 M4: manual-entry tickers now carry their own Classification
+    row (written by /manual at commit time). For this aggregation test
+    we pass the classifications explicitly.
+    """
+    from app.classifications import ClassificationEntry
+
     positions = [
         _pos("VTI", 150_000.0),            # US equity fund
         _pos("VXUS", 50_000.0),            # intl equity fund
         _pos("BND", 40_000.0),             # US bonds
         _pos("AAPL", 20_000.0),            # direct US equity
-        _pos("REALESTATE:home", 400_000.0),
-        _pos("GOLD:bars", 10_000.0),
-        _pos("CRYPTO:solana", 5_000.0),
-        _pos("CASH", 25_000.0),
-        _pos("HSA_CASH:fidelity", 3_000.0),
+        _pos("home", 400_000.0),           # real estate
+        _pos("bars", 10_000.0),            # physical gold
+        _pos("solana", 5_000.0),           # crypto
+        _pos("CASH", 25_000.0),            # cash pool (in YAML)
+        _pos("hsa-fidelity", 3_000.0),     # HSA cash sleeve
     ]
-    result = aggregate(positions, load_classifications())
+    classifications = {
+        **load_classifications(),
+        "home": ClassificationEntry(
+            ticker="home", asset_class="real_estate", sub_class="direct",
+            region="US", source="user",
+        ),
+        "bars": ClassificationEntry(
+            ticker="bars", asset_class="commodity", sub_class="gold", source="user",
+        ),
+        "solana": ClassificationEntry(
+            ticker="solana", asset_class="crypto", sub_class="other", source="user",
+        ),
+        "hsa-fidelity": ClassificationEntry(
+            ticker="hsa-fidelity", asset_class="cash", sub_class="hsa_cash",
+            source="user",
+        ),
+    }
+    result = aggregate(positions, classifications)
 
     assert result.unclassified_tickers == []
     expected_total = 703_000.0

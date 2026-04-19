@@ -102,6 +102,12 @@ def aggregate(
     equity_by_region: dict[str, float] = defaultdict(float)
 
     unclassified: list[str] = []
+    # Per-ticker classification provenance. Surfaced on the allocation
+    # response so the sunburst hover can show "classified as: X (your
+    # override)" vs. the bundled YAML default. Multiple positions on the
+    # same ticker share one source entry -- the classification is a
+    # property of the ticker, not the position.
+    classification_sources: dict[str, str] = {}
     total = 0.0
 
     for p in positions:
@@ -109,6 +115,7 @@ def aggregate(
         if entry is None:
             unclassified.append(p.ticker)
             continue
+        classification_sources[p.ticker] = entry.source
         value = position_value(p)
         if value <= 0:
             # Still record the ticker under its asset class so the
@@ -121,7 +128,15 @@ def aggregate(
         # Prefer fund-level breakdown when available. Sector is unpacked
         # but not used (not in the ring tree anymore); kept for symmetry
         # with _classification_weights' 4-tuple return.
-        br: Breakdown | None = get_breakdown(p.ticker, db=db)
+        #
+        # A user-owned classification wins over the lookthrough: the
+        # user's intent is "classify this ticker this way" which, for a
+        # fund, means suppress the decomposition and treat the dollars
+        # as a single bucket. Non-user entries (yaml/prefix) always
+        # defer to the richer fund-level breakdown.
+        br: Breakdown | None = (
+            None if entry.source == "user" else get_breakdown(p.ticker, db=db)
+        )
         if br is not None:
             ac_w, sc_w, _sec_w, reg_w = (
                 br.asset_class,
@@ -232,6 +247,7 @@ def aggregate(
         by_asset_class=by_asset_class,
         unclassified_tickers=_dedup(unclassified),
         summary=summary,
+        classification_sources=classification_sources,
     )
 
 

@@ -201,13 +201,18 @@ def test_ring_layout_is_region_then_sub_class() -> None:
 
 
 def test_ring_layout_falls_back_to_other_when_region_or_sub_class_missing() -> None:
-    # Synthetic CASH entries have no region and a sub_class of "cash".
-    # Ring 2 (region) should collapse to "other"; Ring 3 should render
-    # the known sub_class bucket.
-    result = aggregate(
-        [_position("CASH:ally", market_value=10000.0)],
-        {},  # synthetic prefix resolves without the YAML
-    )
+    # Cash entries with no region and sub_class="cash": Ring 2 (region)
+    # collapses to "other"; Ring 3 renders the known sub_class bucket.
+    # v0.1.5 M4 note: synthetic prefixes no longer auto-resolve inside
+    # classify(), so the caller passes an explicit entry.
+    entries = {
+        "CASH:ally": ClassificationEntry(
+            ticker="CASH:ally",
+            asset_class="cash",
+            sub_class="cash",
+        ),
+    }
+    result = aggregate([_position("CASH:ally", market_value=10000.0)], entries)
     cash = result.by_asset_class[0]
     assert cash.name == "cash"
     assert [r.name for r in cash.children] == ["other"]
@@ -275,3 +280,75 @@ def test_uses_real_yaml_classifications() -> None:
     assert entries["VTI"].asset_class == "equity"
     assert entries["BND"].asset_class == "fixed_income"
     assert entries["CASH"].asset_class == "cash"
+
+
+# --- v0.1.5 M1: user overrides affect allocation --------------------------
+
+
+def test_user_override_beats_yaml_in_allocation(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """Core v0.1.5 user story 2: override a ticker's classification and
+    see it reflected in the allocation payload (sub_class, sunburst
+    routing, and the classification_sources map that drives tooltip
+    provenance). YAML says BND is ``us_aggregate``; the user reclassifies
+    it to ``us_treasury`` -- allocation must reflect the override.
+    """
+    from app.models import Classification as DbClassification
+
+    account = Account(label="Test", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add(_position_row(account.id, "BND", market_value=10000.0))
+    test_db.add(
+        DbClassification(
+            ticker="BND",
+            asset_class="fixed_income",
+            sub_class="us_treasury",
+            region="US",
+            source="user",
+        )
+    )
+    test_db.commit()
+
+    r = client.get("/api/allocation", headers=auth_headers)
+    body = r.json()
+    assert body["classification_sources"]["BND"] == "user"
+
+    fixed_income = next(s for s in body["by_asset_class"] if s["name"] == "fixed_income")
+    us_region = next(c for c in fixed_income["children"] if c["name"] == "US")
+    sub_names = [c["name"] for c in us_region["children"]]
+    assert "us_treasury" in sub_names
+    assert "us_aggregate" not in sub_names
+
+
+def test_classification_sources_default_to_yaml(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    # No DB overrides -> every held ticker's source is "yaml".
+    account = Account(label="Test", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add(_position_row(account.id, "VTI", market_value=1000.0))
+    test_db.commit()
+
+    body = client.get("/api/allocation", headers=auth_headers).json()
+    assert body["classification_sources"] == {"VTI": "yaml"}
+
+
+def test_synthetic_tickers_are_unclassified_without_user_row(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    # v0.1.5 M4 removed the synthetic-prefix fallback. A position whose
+    # ticker has no YAML or user classification is unclassified -- the
+    # migration step covers pre-existing synthetic positions at startup;
+    # new ones ride through /manual which writes a Classification row.
+    account = Account(label="Test", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add(_position_row(account.id, "REALESTATE:house", market_value=500000.0))
+    test_db.commit()
+
+    body = client.get("/api/allocation", headers=auth_headers).json()
+    assert "REALESTATE:house" in body["unclassified_tickers"]
+    assert "REALESTATE:house" not in body["classification_sources"]
