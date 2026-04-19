@@ -31,6 +31,10 @@ RUN cd /app/backend && uv sync --frozen --no-dev --no-install-project
 COPY backend/ /app/backend/
 RUN cd /app/backend && uv sync --frozen --no-dev
 
+# Repo-root data (classifications.yaml, etc.). Separate from /data, which is
+# the Fly persistent volume mounted at runtime for SQLite.
+COPY data/ /app/data/
+
 # Frontend: standalone server + static assets
 COPY --from=frontend-build /frontend/.next/standalone /app/frontend
 COPY --from=frontend-build /frontend/.next/static /app/frontend/.next/static
