@@ -1,0 +1,65 @@
+# Seed classifications for OpenPortfolio v0.1 (M2).
+#
+# Source of truth for asset_class / sub_class / sector / region per ticker.
+# Expanded to ~50 entries in M3 and merged with user overrides then. The
+# `classifications` DB table stays empty in v0.1 -- the loader reads this
+# YAML directly.
+#
+# Field semantics:
+#   asset_class: equity | fixed_income | real_estate | commodity | crypto | cash
+#   sub_class:   finer category within asset_class (free-form string)
+#   sector:      for equities; omit for non-equity
+#   region:      US | intl_developed | intl_emerging | global; omit where N/A
+
+VTI:
+  asset_class: equity
+  sub_class: us_total_market
+  sector: diversified
+  region: US
+
+VXUS:
+  asset_class: equity
+  sub_class: intl_total_market
+  sector: diversified
+  region: intl_developed
+
+BND:
+  asset_class: fixed_income
+  sub_class: us_aggregate
+  region: US
+
+VNQ:
+  asset_class: real_estate
+  sub_class: us_reits
+  sector: real_estate
+  region: US
+
+GLD:
+  asset_class: commodity
+  sub_class: gold
+
+BTC:
+  asset_class: crypto
+  sub_class: bitcoin
+
+SPY:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: diversified
+  region: US
+
+QQQ:
+  asset_class: equity
+  sub_class: us_large_cap_growth
+  sector: technology
+  region: US
+
+AAPL:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: technology
+  region: US
+
+CASH:
+  asset_class: cash
+  sub_class: cash
