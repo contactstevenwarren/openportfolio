@@ -19,6 +19,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/paste" style={{ color: '#111' }}>
             Paste
           </a>
+          <a href="/manual" style={{ color: '#111' }}>
+            Manual
+          </a>
+          <a href="/accounts" style={{ color: '#111' }}>
+            Accounts
+          </a>
+          <a href="/positions" style={{ color: '#111' }}>
+            Positions
+          </a>
         </nav>
         {children}
       </body>

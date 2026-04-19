@@ -1,65 +1,309 @@
-# Seed classifications for OpenPortfolio v0.1 (M2).
+# Seed classifications for OpenPortfolio v0.1.
 #
 # Source of truth for asset_class / sub_class / sector / region per ticker.
-# Expanded to ~50 entries in M3 and merged with user overrides then. The
-# `classifications` DB table stays empty in v0.1 -- the loader reads this
-# YAML directly.
+# ~50 tickers covering the maintainer's plausible holdings; merged with user
+# overrides in M3+. The `classifications` DB table stays empty in v0.1 --
+# the loader reads this YAML directly.
 #
 # Field semantics:
-#   asset_class: equity | fixed_income | real_estate | commodity | crypto | cash
-#   sub_class:   finer category within asset_class (free-form string)
+#   asset_class: equity | fixed_income | real_estate | commodity | crypto | cash | private
+#   sub_class:   finer category within asset_class (free-form)
 #   sector:      for equities; omit for non-equity
 #   region:      US | intl_developed | intl_emerging | global; omit where N/A
+#
+# Synthetic tickers used by the /manual form (REALESTATE:*, GOLD:*, CRYPTO:*,
+# PRIVATE:*, HSA_CASH:*) are resolved by prefix in app/classifications.py,
+# not listed here.
+
+# ---- broad-market equity ETFs --------------------------------------------
 
 VTI:
   asset_class: equity
   sub_class: us_total_market
   sector: diversified
   region: US
+ITOT:
+  asset_class: equity
+  sub_class: us_total_market
+  sector: diversified
+  region: US
+SCHB:
+  asset_class: equity
+  sub_class: us_total_market
+  sector: diversified
+  region: US
+VOO:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: diversified
+  region: US
+IVV:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: diversified
+  region: US
+SPY:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: diversified
+  region: US
+SCHX:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: diversified
+  region: US
+VTV:
+  asset_class: equity
+  sub_class: us_large_cap_value
+  sector: diversified
+  region: US
+VUG:
+  asset_class: equity
+  sub_class: us_large_cap_growth
+  sector: diversified
+  region: US
+SCHD:
+  asset_class: equity
+  sub_class: us_dividend
+  sector: diversified
+  region: US
+VYM:
+  asset_class: equity
+  sub_class: us_dividend
+  sector: diversified
+  region: US
+QQQ:
+  asset_class: equity
+  sub_class: us_large_cap_growth
+  sector: technology
+  region: US
+VB:
+  asset_class: equity
+  sub_class: us_small_cap
+  sector: diversified
+  region: US
+IWM:
+  asset_class: equity
+  sub_class: us_small_cap
+  sector: diversified
+  region: US
+VIOO:
+  asset_class: equity
+  sub_class: us_small_cap
+  sector: diversified
+  region: US
+
+# ---- sector ETFs ----------------------------------------------------------
+
+VGT:
+  asset_class: equity
+  sub_class: us_sector
+  sector: technology
+  region: US
+XLK:
+  asset_class: equity
+  sub_class: us_sector
+  sector: technology
+  region: US
+XLF:
+  asset_class: equity
+  sub_class: us_sector
+  sector: financials
+  region: US
+XLE:
+  asset_class: equity
+  sub_class: us_sector
+  sector: energy
+  region: US
+XLV:
+  asset_class: equity
+  sub_class: us_sector
+  sector: healthcare
+  region: US
+
+# ---- international equity -------------------------------------------------
 
 VXUS:
   asset_class: equity
   sub_class: intl_total_market
   sector: diversified
   region: intl_developed
-
-BND:
-  asset_class: fixed_income
-  sub_class: us_aggregate
-  region: US
-
-VNQ:
-  asset_class: real_estate
-  sub_class: us_reits
-  sector: real_estate
-  region: US
-
-GLD:
-  asset_class: commodity
-  sub_class: gold
-
-BTC:
-  asset_class: crypto
-  sub_class: bitcoin
-
-SPY:
+VEA:
   asset_class: equity
-  sub_class: us_large_cap
+  sub_class: intl_developed
   sector: diversified
-  region: US
-
-QQQ:
+  region: intl_developed
+IEFA:
   asset_class: equity
-  sub_class: us_large_cap_growth
-  sector: technology
-  region: US
+  sub_class: intl_developed
+  sector: diversified
+  region: intl_developed
+SCHF:
+  asset_class: equity
+  sub_class: intl_developed
+  sector: diversified
+  region: intl_developed
+VWO:
+  asset_class: equity
+  sub_class: intl_emerging
+  sector: diversified
+  region: intl_emerging
+IEMG:
+  asset_class: equity
+  sub_class: intl_emerging
+  sector: diversified
+  region: intl_emerging
+
+# ---- individual US equities ----------------------------------------------
 
 AAPL:
   asset_class: equity
   sub_class: us_large_cap
   sector: technology
   region: US
+MSFT:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: technology
+  region: US
+GOOGL:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: technology
+  region: US
+AMZN:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: consumer_discretionary
+  region: US
+NVDA:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: technology
+  region: US
+TSLA:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: consumer_discretionary
+  region: US
+META:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: technology
+  region: US
+BRK.B:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: financials
+  region: US
+
+# ---- fixed income ---------------------------------------------------------
+
+BND:
+  asset_class: fixed_income
+  sub_class: us_aggregate
+  region: US
+AGG:
+  asset_class: fixed_income
+  sub_class: us_aggregate
+  region: US
+BNDX:
+  asset_class: fixed_income
+  sub_class: intl_aggregate
+  region: global
+IEF:
+  asset_class: fixed_income
+  sub_class: us_treasury
+  region: US
+TLT:
+  asset_class: fixed_income
+  sub_class: us_treasury_long
+  region: US
+TIP:
+  asset_class: fixed_income
+  sub_class: us_tips
+  region: US
+LQD:
+  asset_class: fixed_income
+  sub_class: us_corporate
+  region: US
+VTEB:
+  asset_class: fixed_income
+  sub_class: us_municipal
+  region: US
+
+# ---- real estate ----------------------------------------------------------
+
+VNQ:
+  asset_class: real_estate
+  sub_class: us_reits
+  sector: real_estate
+  region: US
+VNQI:
+  asset_class: real_estate
+  sub_class: intl_reits
+  sector: real_estate
+  region: intl_developed
+
+# ---- commodities ----------------------------------------------------------
+
+GLD:
+  asset_class: commodity
+  sub_class: gold
+IAU:
+  asset_class: commodity
+  sub_class: gold
+SGOL:
+  asset_class: commodity
+  sub_class: gold
+SLV:
+  asset_class: commodity
+  sub_class: silver
+
+# ---- crypto ---------------------------------------------------------------
+
+BTC:
+  asset_class: crypto
+  sub_class: bitcoin
+BTC-USD:
+  asset_class: crypto
+  sub_class: bitcoin
+ETH:
+  asset_class: crypto
+  sub_class: ethereum
+ETH-USD:
+  asset_class: crypto
+  sub_class: ethereum
+IBIT:
+  asset_class: crypto
+  sub_class: bitcoin
+
+# ---- target-date funds (look-through in M4) -------------------------------
+
+VTIVX:
+  asset_class: equity
+  sub_class: target_date
+  region: global
+VFFVX:
+  asset_class: equity
+  sub_class: target_date
+  region: global
+VLXVX:
+  asset_class: equity
+  sub_class: target_date
+  region: global
+
+# ---- cash / money market --------------------------------------------------
 
 CASH:
   asset_class: cash
   sub_class: cash
+SPAXX:
+  asset_class: cash
+  sub_class: money_market
+VMFXX:
+  asset_class: cash
+  sub_class: money_market
+FDRXX:
+  asset_class: cash
+  sub_class: money_market

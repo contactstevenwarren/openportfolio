@@ -20,6 +20,8 @@ from .schemas import (
     ExtractionResult,
     ExtractRequest,
     PositionCommit,
+    PositionPatch,
+    PositionRead,
 )
 
 
@@ -142,6 +144,68 @@ def commit_positions(
 
     db.commit()
     return CommitResult(account_id=account.id, position_ids=created_ids)
+
+
+# ----- positions read / patch / delete (M3) ------------------------------
+
+
+@app.get("/api/positions", dependencies=[Depends(require_admin_token)])
+def list_positions(db: Session = Depends(get_db)) -> list[PositionRead]:
+    rows = db.query(Position).order_by(Position.id).all()
+    return [PositionRead.model_validate(p) for p in rows]
+
+
+@app.patch("/api/positions/{position_id}", dependencies=[Depends(require_admin_token)])
+def patch_position(
+    position_id: int, body: PositionPatch, db: Session = Depends(get_db)
+) -> PositionRead:
+    position = db.get(Position, position_id)
+    if position is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    now = datetime.now(UTC)
+    patch_fields = body.model_dump(exclude_unset=True)
+    changed_numeric_fields: list[tuple[str, float | None]] = []
+    for field, value in patch_fields.items():
+        setattr(position, field, value)
+        if field in ("shares", "cost_basis", "market_value"):
+            changed_numeric_fields.append((field, value))
+
+    # User overrides earn their own provenance row so the hover tooltip
+    # makes clear the number came from a manual edit, not the paste.
+    for field, value in changed_numeric_fields:
+        if value is None:
+            continue
+        db.add(
+            Provenance(
+                entity_type="position",
+                entity_id=position.id,
+                field=field,
+                source="override",
+                confidence=1.0,
+                llm_span=None,
+                captured_at=now,
+            )
+        )
+
+    db.commit()
+    db.refresh(position)
+    return PositionRead.model_validate(position)
+
+
+@app.delete(
+    "/api/positions/{position_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin_token)],
+)
+def delete_position(position_id: int, db: Session = Depends(get_db)) -> None:
+    position = db.get(Position, position_id)
+    if position is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    # Keep provenance rows as an audit trail -- positions come and go
+    # during the review/fix loop; their history shouldn't.
+    db.delete(position)
+    db.commit()
 
 
 # ----- allocation ---------------------------------------------------------

@@ -54,12 +54,40 @@ export type AllocationSlice = {
   value: number;
   pct: number;
   tickers: string[];
+  children?: AllocationSlice[];
+};
+
+export type FiveNumberSummary = {
+  net_worth: number;
+  cash_pct: number;
+  us_equity_pct: number;
+  intl_equity_pct: number;
+  alts_pct: number;
 };
 
 export type AllocationResult = {
   total: number;
   by_asset_class: AllocationSlice[];
   unclassified_tickers: string[];
+  summary?: FiveNumberSummary;
+};
+
+export type Position = {
+  id: number;
+  account_id: number;
+  ticker: string;
+  shares: number;
+  cost_basis: number | null;
+  market_value: number | null;
+  as_of: string;
+  source: string;
+};
+
+export type PositionPatch = {
+  ticker?: string;
+  shares?: number;
+  cost_basis?: number | null;
+  market_value?: number | null;
 };
 
 function getAdminToken(): string {
@@ -89,6 +117,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     clearAdminToken();
     throw new Error('Admin token rejected. Reload the page to re-enter.');
   }
+  if (res.status === 204) return undefined as T;
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`API ${res.status}: ${body || res.statusText}`);
@@ -114,4 +143,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
   allocation: () => fetchJson<AllocationResult>('/api/allocation'),
+  positions: () => fetchJson<Position[]>('/api/positions'),
+  patchPosition: (id: number, patch: PositionPatch) =>
+    fetchJson<Position>(`/api/positions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deletePosition: (id: number) =>
+    fetchJson<void>(`/api/positions/${id}`, { method: 'DELETE' }),
 };

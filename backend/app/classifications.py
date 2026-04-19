@@ -3,9 +3,14 @@
 YAML is the source of truth in v0.1. The `classifications` DB table stays
 empty until M3 introduces user overrides, at which point user rows take
 precedence over the YAML baseline.
+
+Synthetic tickers (M3 manual entry for non-brokerage assets) use prefixes
+like ``REALESTATE:123Main`` or ``CRYPTO:solana``. They don't belong in the
+YAML -- ``classify()`` resolves them by prefix after the exact-match
+lookup fails.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -21,6 +26,46 @@ class ClassificationEntry:
     sub_class: str | None = None
     sector: str | None = None
     region: str | None = None
+
+
+# Prefix-based classification for synthetic tickers entered through the
+# /manual form. The frontend form emits these prefixes; anything matching
+# here bypasses the YAML lookup. Keys are uppercased before compare so
+# ``realestate:123main`` resolves the same as ``REALESTATE:123Main``.
+_SYNTHETIC_PREFIXES: dict[str, ClassificationEntry] = {
+    "REALESTATE": ClassificationEntry(
+        ticker="REALESTATE",
+        asset_class="real_estate",
+        sub_class="direct",
+        sector="real_estate",
+        region="US",
+    ),
+    "GOLD": ClassificationEntry(
+        ticker="GOLD",
+        asset_class="commodity",
+        sub_class="gold",
+    ),
+    "SILVER": ClassificationEntry(
+        ticker="SILVER",
+        asset_class="commodity",
+        sub_class="silver",
+    ),
+    "CRYPTO": ClassificationEntry(
+        ticker="CRYPTO",
+        asset_class="crypto",
+        sub_class="other",
+    ),
+    "PRIVATE": ClassificationEntry(
+        ticker="PRIVATE",
+        asset_class="private",
+        sub_class="equity",
+    ),
+    "HSA_CASH": ClassificationEntry(
+        ticker="HSA_CASH",
+        asset_class="cash",
+        sub_class="hsa_cash",
+    ),
+}
 
 
 def load_classifications(path: Path = DEFAULT_PATH) -> dict[str, ClassificationEntry]:
@@ -41,3 +86,24 @@ def load_classifications(path: Path = DEFAULT_PATH) -> dict[str, ClassificationE
             region=attrs.get("region"),
         )
     return entries
+
+
+def classify(
+    ticker: str, entries: dict[str, ClassificationEntry]
+) -> ClassificationEntry | None:
+    """Resolve a ticker to a ClassificationEntry.
+
+    Exact YAML match wins. Otherwise, if the ticker is synthetic
+    (``PREFIX:rest``), we map the prefix to a canned entry and return a
+    copy with the real ticker attached so downstream code can still
+    group by ticker label when needed.
+    """
+    exact = entries.get(ticker)
+    if exact is not None:
+        return exact
+    if ":" in ticker:
+        prefix = ticker.split(":", 1)[0].upper()
+        synth = _SYNTHETIC_PREFIXES.get(prefix)
+        if synth is not None:
+            return replace(synth, ticker=ticker)
+    return None
