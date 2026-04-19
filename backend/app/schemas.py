@@ -128,12 +128,33 @@ class PositionPatch(BaseModel):
 
 
 class AllocationSlice(BaseModel):
-    # asset_class name (e.g. "equity"). Sub-class / sector / region arrive
-    # in M4 as additional rings.
+    """One wedge in the 3-ring sunburst.
+
+    ``children`` lets the same schema carry asset_class → sub_class →
+    sector/region nesting. Leaves have ``children=[]`` and contribute
+    their value directly; inner nodes' ``value`` equals the sum of their
+    children.
+    """
+
     name: str
     value: float
     pct: float
-    tickers: list[str]
+    tickers: list[str] = []
+    children: list["AllocationSlice"] = []
+
+
+class FiveNumberSummary(BaseModel):
+    """Hero-strip numbers mandated by roadmap §4 v0.1 acceptance.
+
+    Percentages are of net worth. ``alts`` = real estate + commodity +
+    crypto + private (roadmap §4).
+    """
+
+    net_worth: float
+    cash_pct: float
+    us_equity_pct: float
+    intl_equity_pct: float
+    alts_pct: float
 
 
 class AllocationResult(BaseModel):
@@ -142,3 +163,6 @@ class AllocationResult(BaseModel):
     # Tickers held but not present in data/classifications.yaml. UI flags
     # them so the user knows they're missing from the view.
     unclassified_tickers: list[str]
+    # M4 adds the 5-number summary strip. Optional for back-compat with
+    # M2 clients that pre-date it.
+    summary: FiveNumberSummary | None = None

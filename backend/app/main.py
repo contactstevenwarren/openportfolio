@@ -215,4 +215,4 @@ def delete_position(position_id: int, db: Session = Depends(get_db)) -> None:
 def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
     positions = db.query(Position).all()
     classifications = load_classifications()
-    return aggregate(positions, classifications)
+    return aggregate(positions, classifications, db=db)

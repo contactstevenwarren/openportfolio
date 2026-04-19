@@ -1,24 +1,42 @@
-"""Allocation engine v0.1 stub (roadmap section 6 "effective allocation").
+"""Allocation engine (roadmap §6 "effective allocation").
 
-v0.1 sums by asset_class only -- no sub-class / sector / region rings,
-no fund look-through. M4 adds yfinance look-through and the remaining
-dimensions; this module is a thin aggregator that M4 replaces in place,
-not redesigns.
+For every position:
+  - resolve its dollar value (market_value → cost_basis → 0)
+  - look the ticker up in ``data/classifications.yaml``
+  - optionally pull a fund breakdown from ``lookthrough.get_breakdown``
+  - distribute the dollars across asset_class / sub_class / sector / region
+    buckets using the fund's weights (or 100% to the ticker's own
+    classification when there's no breakdown)
 
-Dollar value per position is resolved in this order:
-    market_value  ->  cost_basis  ->  0.0
+Ring layout for the sunburst:
+    Ring 1  asset_class   (equity / fixed_income / real_estate / ...)
+    Ring 2  sub_class     (us_large_cap / us_aggregate / ...)
+    Ring 3  sector        (technology / financials / ...) for equities
+           region         (US / intl_developed / ...) for non-equity
 
-market_value is the paste-time figure (stored at commit). M4 will layer
-live yfinance prices on top -- when pricing is fresh it takes
-precedence over market_value; when yfinance is down (risk #4) we fall
-back to stored market_value, then cost_basis.
+The 5-number summary is computed from the ring-1 totals with special
+handling for equity split by region (via either fund breakdown or ticker
+classification). Math lives here, never in the LLM.
 """
 
 from collections import defaultdict
+from collections.abc import Iterable
+
+from sqlalchemy.orm import Session
 
 from .classifications import ClassificationEntry, classify
+from .lookthrough import Breakdown, get_breakdown
 from .models import Position
-from .schemas import AllocationResult, AllocationSlice
+from .schemas import AllocationResult, AllocationSlice, FiveNumberSummary
+
+# Asset classes treated as "alternatives" for the 5-number summary.
+ALTS_CLASSES = frozenset({"real_estate", "commodity", "crypto", "private"})
+
+# Used when a fund's breakdown has weight for a dimension but not an
+# exact match (e.g. a bond fund with no sector data). Dollars still need
+# to land somewhere in the ring so the ring total matches the asset
+# class total.
+UNSPECIFIED = "other"
 
 
 def position_value(position: Position) -> float:
@@ -29,46 +47,198 @@ def position_value(position: Position) -> float:
     return 0.0
 
 
+def _bucket_weights(
+    weights: dict[str, float], value: float
+) -> Iterable[tuple[str, float]]:
+    """Yield (bucket, dollar_amount) for the dimension.
+
+    Missing or empty weights collapse to a single "other" bucket carrying
+    the full ``value`` so ring totals stay consistent with ring-1.
+    """
+    if not weights:
+        yield (UNSPECIFIED, value)
+        return
+    total = sum(weights.values())
+    if total <= 0:
+        yield (UNSPECIFIED, value)
+        return
+    for bucket, w in weights.items():
+        yield (bucket, value * (w / total))
+
+
+def _ring3_dim(asset_class_bucket: str) -> str:
+    """Ring-3 is sector for equities, region for everything else."""
+    return "sector" if asset_class_bucket == "equity" else "region"
+
+
+def _classification_weights(
+    entry: ClassificationEntry,
+) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
+    """Build a Breakdown-shaped 4-tuple from a single-ticker classification.
+
+    100% to each non-null dimension; empty dict otherwise so the
+    dimension falls into the "other" bucket downstream.
+    """
+    asset_class = {entry.asset_class: 1.0}
+    sub_class = {entry.sub_class: 1.0} if entry.sub_class else {}
+    sector = {entry.sector: 1.0} if entry.sector else {}
+    region = {entry.region: 1.0} if entry.region else {}
+    return asset_class, sub_class, sector, region
+
+
 def aggregate(
     positions: list[Position],
     classifications: dict[str, ClassificationEntry],
+    db: Session | None = None,
 ) -> AllocationResult:
-    grouped: dict[str, list[Position]] = defaultdict(list)
+    """Produce the 3-ring + 5-number payload for the hero screen."""
+    # Nested dict: [asset_class][sub_class_or_other][ring3_bucket] -> dollars
+    tree: dict[str, dict[str, dict[str, float]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(float))
+    )
+    tickers_by_asset: dict[str, list[str]] = defaultdict(list)
+
+    # Separate accumulators for the 5-number summary. equity splits by
+    # region (US / intl_*); everything else just tracks asset class.
+    totals_by_asset: dict[str, float] = defaultdict(float)
+    equity_by_region: dict[str, float] = defaultdict(float)
+
     unclassified: list[str] = []
+    total = 0.0
+
     for p in positions:
         entry = classify(p.ticker, classifications)
         if entry is None:
             unclassified.append(p.ticker)
             continue
-        grouped[entry.asset_class].append(p)
-
-    slices: list[AllocationSlice] = []
-    total = 0.0
-    for asset_class, plist in grouped.items():
-        value = sum(position_value(p) for p in plist)
-        slices.append(
-            AllocationSlice(
-                name=asset_class,
-                value=value,
-                pct=0.0,
-                tickers=[p.ticker for p in plist],
-            )
-        )
+        value = position_value(p)
+        if value <= 0:
+            # Still record the ticker under its asset class so the
+            # breakdown table reflects positions that have no dollars
+            # attached yet (e.g. pre-market-value commit).
+            tickers_by_asset[entry.asset_class].append(p.ticker)
+            continue
         total += value
 
-    if total > 0:
-        for s in slices:
-            s.pct = 100 * s.value / total
+        # Prefer fund-level breakdown when available.
+        br: Breakdown | None = get_breakdown(p.ticker, db=db)
+        if br is not None:
+            ac_w, sc_w, sec_w, reg_w = (
+                br.asset_class,
+                br.sub_class,
+                br.sector,
+                br.region,
+            )
+        else:
+            ac_w, sc_w, sec_w, reg_w = _classification_weights(entry)
 
-    slices.sort(key=lambda s: s.value, reverse=True)
+        tickers_by_asset.setdefault(entry.asset_class, [])
+        tickers_by_asset[entry.asset_class].append(p.ticker)
 
-    # Stable, deduplicated unclassified list -- preserves first-seen order
-    # so the UI highlights the earliest offender first.
-    seen: set[str] = set()
-    unique_unclassified = [t for t in unclassified if not (t in seen or seen.add(t))]
+        for ac_bucket, ac_value in _bucket_weights(ac_w, value):
+            totals_by_asset[ac_bucket] += ac_value
+            # Ring-2 choice: use sub_class weights if present; otherwise
+            # fall back to a single "other" bucket so the ring still
+            # renders with the right total.
+            for sc_bucket, sc_value in _bucket_weights(sc_w, ac_value):
+                # Ring-3 depends on asset class.
+                ring3_weights = sec_w if ac_bucket == "equity" else reg_w
+                for r3_bucket, r3_value in _bucket_weights(
+                    ring3_weights, sc_value
+                ):
+                    tree[ac_bucket][sc_bucket][r3_bucket] += r3_value
+
+            if ac_bucket == "equity":
+                # Equity region split for the 5-number summary uses the
+                # region weights (fund-level when available, else the
+                # classification's region). Fall back to "US" if neither
+                # provides one -- keeps the sum tight without inventing
+                # an "unknown" bucket on the hero strip.
+                if reg_w:
+                    for reg_bucket, reg_value in _bucket_weights(
+                        reg_w, ac_value
+                    ):
+                        equity_by_region[reg_bucket or "US"] += reg_value
+                else:
+                    equity_by_region[entry.region or "US"] += ac_value
+
+    # --- shape into AllocationSlice tree ----------------------------------
+
+    # Include asset classes that have positions but zero dollars so the
+    # breakdown still surfaces them (e.g. a commodity ticker committed
+    # with no cost basis yet).
+    for ac_bucket in tickers_by_asset:
+        tree.setdefault(ac_bucket, defaultdict(lambda: defaultdict(float)))
+
+    by_asset_class: list[AllocationSlice] = []
+    for ac_bucket, sub_tree in tree.items():
+        ac_value = sum(
+            v
+            for ring2 in sub_tree.values()
+            for v in ring2.values()
+        )
+        sub_slices: list[AllocationSlice] = []
+        for sc_bucket, ring3 in sub_tree.items():
+            sc_value = sum(ring3.values())
+            ring3_slices = [
+                AllocationSlice(
+                    name=r3_bucket,
+                    value=r3_value,
+                    pct=(100 * r3_value / total) if total > 0 else 0.0,
+                )
+                for r3_bucket, r3_value in sorted(
+                    ring3.items(), key=lambda kv: kv[1], reverse=True
+                )
+                if r3_value > 0
+            ]
+            sub_slices.append(
+                AllocationSlice(
+                    name=sc_bucket,
+                    value=sc_value,
+                    pct=(100 * sc_value / total) if total > 0 else 0.0,
+                    children=ring3_slices,
+                )
+            )
+        sub_slices.sort(key=lambda s: s.value, reverse=True)
+        by_asset_class.append(
+            AllocationSlice(
+                name=ac_bucket,
+                value=ac_value,
+                pct=(100 * ac_value / total) if total > 0 else 0.0,
+                tickers=_dedup(tickers_by_asset.get(ac_bucket, [])),
+                children=sub_slices,
+            )
+        )
+    by_asset_class.sort(key=lambda s: s.value, reverse=True)
+
+    # --- 5-number summary -------------------------------------------------
+
+    def pct_of(x: float) -> float:
+        return 100 * x / total if total > 0 else 0.0
+
+    cash_pct = pct_of(totals_by_asset.get("cash", 0.0))
+    us_equity_pct = pct_of(equity_by_region.get("US", 0.0))
+    intl_equity_pct = pct_of(
+        sum(v for region, v in equity_by_region.items() if region != "US")
+    )
+    alts_pct = pct_of(sum(totals_by_asset.get(c, 0.0) for c in ALTS_CLASSES))
+
+    summary = FiveNumberSummary(
+        net_worth=total,
+        cash_pct=cash_pct,
+        us_equity_pct=us_equity_pct,
+        intl_equity_pct=intl_equity_pct,
+        alts_pct=alts_pct,
+    )
 
     return AllocationResult(
         total=total,
-        by_asset_class=slices,
-        unclassified_tickers=unique_unclassified,
+        by_asset_class=by_asset_class,
+        unclassified_tickers=_dedup(unclassified),
+        summary=summary,
     )
+
+
+def _dedup(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    return [x for x in items if not (x in seen or seen.add(x))]
