@@ -11,17 +11,20 @@ from .auth import require_admin_token
 from .classifications import load_classifications
 from .db import Base, engine, get_db
 from .llm import extract_positions
-from .models import Account, Position, Provenance
+from .models import Account, Position, Provenance, Snapshot
 from .schemas import (
     AccountCreate,
     AccountRead,
     AllocationResult,
     CommitResult,
+    ExportResult,
     ExtractionResult,
     ExtractRequest,
     PositionCommit,
     PositionPatch,
     PositionRead,
+    ProvenanceRead,
+    SnapshotRead,
 )
 
 
@@ -216,3 +219,36 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
     positions = db.query(Position).all()
     classifications = load_classifications()
     return aggregate(positions, classifications, db=db)
+
+
+# ----- export (M5) --------------------------------------------------------
+
+
+@app.get("/api/export", dependencies=[Depends(require_admin_token)])
+def export_all(db: Session = Depends(get_db)) -> ExportResult:
+    """Full JSON dump of user-owned state (roadmap §8, risk #9 manual path).
+
+    Excludes fund_holdings (rebuildable from yfinance/YAML) and the YAML
+    classifications (source-controlled). Snapshots are included even
+    though the writer lands in v0.5; dumping them empty keeps v0.1
+    exports forward-compatible.
+    """
+    return ExportResult(
+        exported_at=datetime.now(UTC),
+        accounts=[
+            AccountRead.model_validate(a)
+            for a in db.query(Account).order_by(Account.id).all()
+        ],
+        positions=[
+            PositionRead.model_validate(p)
+            for p in db.query(Position).order_by(Position.id).all()
+        ],
+        provenance=[
+            ProvenanceRead.model_validate(p)
+            for p in db.query(Provenance).order_by(Provenance.id).all()
+        ],
+        snapshots=[
+            SnapshotRead.model_validate(s)
+            for s in db.query(Snapshot).order_by(Snapshot.id).all()
+        ],
+    )

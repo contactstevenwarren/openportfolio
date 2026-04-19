@@ -124,6 +124,47 @@ class PositionPatch(BaseModel):
     market_value: float | None = None
 
 
+# ----- export (M5) --------------------------------------------------------
+
+
+class ProvenanceRead(BaseModel):
+    id: int
+    entity_type: str
+    entity_id: int
+    field: str
+    source: str
+    confidence: float | None
+    llm_span: str | None
+    captured_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SnapshotRead(BaseModel):
+    id: int
+    taken_at: datetime
+    net_worth_usd: float
+    payload_json: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExportResult(BaseModel):
+    """Full JSON dump of user-owned state (roadmap §8 "privacy posture").
+
+    Excludes fund_holdings (derived cache) and the YAML classifications
+    (source-controlled, not user data). Covers the manual-backup case
+    for v0.1 until automated Tigris push lands in v1.0.
+    """
+
+    exported_at: datetime
+    app_version: str = "0.1"
+    accounts: list[AccountRead]
+    positions: list["PositionRead"]
+    provenance: list[ProvenanceRead]
+    snapshots: list[SnapshotRead]
+
+
 # ----- allocation ---------------------------------------------------------
 
 
