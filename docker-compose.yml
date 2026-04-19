@@ -3,3 +3,8 @@ services:
     build: .
     ports:
       - "8080:8080"
+    volumes:
+      - op_data:/data
+
+volumes:
+  op_data:
