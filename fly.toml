@@ -18,6 +18,10 @@ primary_region = "sjc"
     protocol = "http"
     timeout = "5s"
 
+[[mounts]]
+  source = "op_data"
+  destination = "/data"
+
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
