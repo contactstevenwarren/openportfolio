@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # deployment); Ollama arrives in M5. LiteLLM addresses Azure as
     # "azure/<deployment_name>".
     # "azure" | "ollama". Azure is the v0.1 default; Ollama is the local
-    # alternative (roadmap §3 "pluggable LLM providers"). v0.2 adds
+    # alternative (roadmap Principles). Backlog: additional providers;
     # Anthropic / OpenAI-direct / Gemini.
     llm_provider: str = "azure"
     azure_api_key: str = ""
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     llm_model: str = "llama3.1"
     ollama_api_base: str = "http://host.docker.internal:11434"
 
-    # yfinance look-through is authoritative in the roadmap but Yahoo's
+    # yfinance look-through is authoritative in architecture but Yahoo's
     # own taxonomy ("US Stocks", "Bonds") doesn't line up with our
     # classifications (equity/fixed_income/...). M5 will add the
     # normalization layer; until then we keep the yfinance adapter in

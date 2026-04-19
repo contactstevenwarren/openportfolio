@@ -6,7 +6,7 @@ alwaysApply: true
 # OpenPortfolio — Claude Code instructions
 
 ## Project
-`docs/openportfolio-roadmap.md` is authoritative. Read it before any design question. Push back on requests that contradict it — don't silently comply.
+`docs/openportfolio-roadmap.md` is authoritative for phase direction and product scope. `docs/architecture.md` is authoritative for technical constraints (stack, LLM rules, data model, risks). Read both before any design question. Push back on requests that contradict them — don't silently comply.
 
 ## Stack
 - Frontend: Next.js 14 (App Router) + TypeScript, SQLite via Drizzle
@@ -44,4 +44,4 @@ Run everything in containers. Never install on the host (no `npm`, `pip`, `brew`
 ## Skip unless asked
 - UI polish in v0.1 (function over form)
 - Auth beyond magic-link
-- Anything out-of-scope per §4 of the roadmap
+- Anything in the roadmap [Backlog](docs/openportfolio-roadmap.md#41-backlog-unphased) unless the current phase explicitly pulls it in

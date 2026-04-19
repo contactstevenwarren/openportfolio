@@ -1,10 +1,10 @@
-# OpenPortfolio — Roadmap & Spec
+# OpenPortfolio — Roadmap
 
-**Repo:** `github.com/contactstevenwarren/openportfolio`
-**Status:** v1.1 spec · 2026-04-18
+**Repo:** `github.com/contactstevenwarren/openportfolio`  
+**Status:** Roadmap v2 · 2026-04-19  
 **Maintainer:** Solo · Alpha user: Maintainer
 
-> This is a personal design document. Decisions may change as implementation reveals reality. See git log for history.
+> Personal design document. Decisions may change as implementation reveals reality. See git log for history. **Technical rules** (stack, LLM constraints, data model, risks): [architecture.md](architecture.md).
 
 ---
 
@@ -33,200 +33,58 @@ Not differentiators: ETF decomposition, "AI-powered," multi-account tracking.
 ## 3. Principles
 
 - **Visibility, not advice.** Shows what you own. Never recommends trades, suggests new tickers, or predicts prices.
-- **Deterministic math, LLM-assisted extraction.** Percentages and aggregations are Python code. LLM extracts values from pasted text (with verification) and narrates metrics (v0.2+). LLM never computes derived values.
-- **Pluggable LLM providers.** Azure OpenAI and Ollama in v0.1; Anthropic, OpenAI (direct), Google in v0.2. User-selected.
-- **Minimalist UX.** One hero screen. Features earn their place or don't ship.
+- **Deterministic math, LLM-assisted extraction.** Percentages and aggregations are Python code. LLM extracts values from pasted text (with verification). LLM never computes derived values.
+- **Pluggable LLM providers.** Azure OpenAI and Ollama ship first; additional providers are backlog until needed.
+- **Minimalist UX.** One hero screen per phase until a feature earns more surface. Features earn their place or don't ship.
 - **Honest about uncertainty.** Every number carries provenance. Missing data is surfaced, not imputed.
+- **Privacy.** Your data never leaves your deployment except ticker and share counts sent to your chosen LLM during extraction; details in [architecture.md](architecture.md#privacy).
 
 ---
 
-## 4. v0.1 scope — "Portfolio X-Ray"
+## 4. Phases
 
-**Done when:** Maintainer pastes positions from 6 accounts in <3 min, adds non-brokerage assets in <2 min, sees a correct sunburst answering "what fraction is cash?" and "what's my real US equity exposure?"
+One theme per phase. **Done when** is the acceptance bar.
 
-**Hero-viz acceptance test:** a user answers "what fraction is cash?" in under 5 seconds without hovering. If the sunburst fails this during implementation, evaluate a treemap fallback before shipping.
-
-**Assumptions:** USD only. Single user (the maintainer).
-
-### In-scope
-
-- Single-user bootstrap auth (env-var admin token); multi-user magic-link deferred to v0.2
-- User-labeled account buckets (not API-connected)
-- LLM paste parser with schema, confidence, source-span citation, deterministic validation, review-and-confirm UI
-- Manual entry for non-brokerage assets (real estate, gold, crypto, private, HSA cash sleeves)
-- Classification via in-repo YAML (`data/classifications.yaml`, ~50 tickers at launch)
-- Look-through via `yfinance` (primary) + YAML fallback for niche funds
-- Hero screen: 5-number summary strip + 3-ring interactive sunburst (asset class → sub-class → sector/region) + drill-down side panel
-  - 5-number summary: total net worth, cash %, US equity %, intl equity %, alts % (real estate + gold + crypto + private)
-- Provenance labels everywhere (dates, sources, confidence)
-- LLM provider abstraction (Azure OpenAI default, GPT-5.4 deployment; Ollama for local). Anthropic/OpenAI-direct/Gemini adapters deferred to v0.2
-- JSON export
-
-### Non-goals for v0.1
-
-- No performance / returns calculation
-- No benchmark comparison
-- No backtesting
-- No tax-cost-basis or lot tracking
-- No multi-currency
-- No mobile layout
-- No multi-user
-- No AI chat
-- No PDF import
-- No OCR
-- No broker API integrations
-
----
-
-## 5. Phases
-
-| v | Theme | Capability |
-|---|---|---|
-| 0.1 | X-Ray MVP | Paste, classify, decompose, visualize |
-| 0.2 | Targets + AI + multi-user + infra polish | M1-style target pie, deployment calc, AI narration, PDF import, magic-link auth, Anthropic/OpenAI-direct/Gemini adapters, GitHub Actions CI, yfinance taxonomy normalization |
-| 0.3 | OCR + imports | Scanned statements, more brokers |
-| 0.4 | Tax lens | Lots, wash sales, TLH surfacing |
-| 0.5 | Historical | Snapshots, composition drift |
-| 1.0 | Harden | Docs, stability, release, Tigris nightly backup cron |
-| 1.x+ | Extensions | Plaid opt-in, PWA mobile, more brokers |
+| v | Theme | Capability | Done when |
+|---|---|---|---|
+| 0.1 | Foundation (X-Ray MVP) — **shipped** | Paste → classify → decompose → visualize | See [v0.1 execution plan](v0.1/execution_plan.md) acceptance |
+| 0.1.5 | Entity management | User-manageable accounts, asset types, classifications; snapshot-on-commit for later history | Custom asset type → position → sunburst with zero code edits; snapshot row per commit |
+| 0.2 | PDF drag-and-drop | Drop brokerage PDF → LLM proposes accounts / types / positions → review in v0.1.5 UI | One PDF → most positions extracted → committed in under a few minutes |
+| 0.3 | Design and layout | Tokens, shared components, responsive layout | Consistent look across pages; mobile-usable |
+| 0.4 | Targets | Target allocation + next-dollar deployment guidance | Set targets → see drift → get rebalance hints |
+| 0.5 | Auth and multi-user | Magic-link auth; workspaces | Second user signs up and sees only their data |
+| 0.6 | Historical | Timeline and composition drift on accumulated snapshots | Compare allocation over time with real history |
+| 1.0 | Harden | Docs, stability, release, Tigris nightly backup cron | Public release; automated backups |
 
 Ordering is indicative, not a schedule.
 
----
+### 4.1 Backlog (unphased)
 
-## 6. Architecture rules
+Revisit after v1.0 unless a phase explicitly pulls an item in.
 
-### LLM extraction — verification required
+- Tax lens (lots, wash sales, TLH surfacing)
+- OCR for scanned statements
+- Plaid / broker APIs
+- PWA mobile (beyond responsive web)
+- AI narration around deterministic numbers
+- More broker formats
+- `yfinance` → SEC EDGAR migration
+- GitHub Actions CI (beyond Fly deploy)
+- Additional LLM providers (Anthropic, OpenAI direct, Gemini)
 
-LLMs may extract structured values when paired with all of:
-1. Strict JSON schema output (tool-calling / JSON mode)
-2. Per-field confidence signal
-3. Source-span citation for every value
-4. Deterministic validation layer (types, ranges, ticker format, value plausibility)
-5. Mandatory user review via diff UI before commit
+### 4.2 Execution plans
 
-**Confidence semantics:** In v0.1 every row is reviewed regardless of confidence; the confidence signal drives row sort order and color, not auto-commit. v0.2+ may introduce a threshold for auto-staged rows.
+- **v0.1 Foundation:** [v0.1/execution_plan.md](v0.1/execution_plan.md)
+- **v0.1.5 Entity management:** [v0.1.5/execution_plan.md](v0.1.5/execution_plan.md)
 
-**Derived metrics are always Python code** — allocation %, look-through composition, totals, concentration. Never asked of the LLM.
-
-**AI narration constraint (v0.2+):** Narration is rendered from deterministic metrics via templates with prose around numeric slots, never free-form number generation by the LLM.
-
-### LLM abstraction
-
-LiteLLM behind a thin adapter. v0.1 providers: Azure OpenAI (default, `azure/gpt-5.4` deployment), Ollama (local). v0.2 adds Anthropic, OpenAI (direct), Google Gemini. User picks per-workspace. API keys encrypted at rest. CI evals run against real paste fixtures.
-
-**Azure OpenAI config in v0.1:** `AZURE_API_KEY`, `AZURE_API_BASE` (resource endpoint), `AZURE_API_VERSION`, and `AZURE_DEPLOYMENT_NAME` (GPT-5.4 deployment). LiteLLM addresses it as `azure/<deployment_name>`.
-
-### Auth seam
-
-v0.1: FastAPI validates a single admin token from an env var on every request. No sessions, no JWT, no cookies.
-v0.2: Auth.js issues a signed session on the Next.js side; FastAPI validates via shared secret (JWT or signed cookie). Locked in before v0.2 implementation starts.
-
-### Extraction pipeline
-
-```
-Pasted text → LLM extraction (JSON + confidence + spans)
-           → Deterministic validation
-           → Diff vs. current snapshot
-           → Review-and-confirm UI
-           → Commit to SQLite
-```
-
-Same pipeline handles paste (v0.1), text PDFs (v0.2: `pdfplumber` → text → pipeline), and scanned PDFs (v0.3: OCR → text → pipeline).
-
-### Data model sketch
-
-```
-accounts(id, label, type, currency, created_at)
-positions(id, account_id, ticker, shares, cost_basis, as_of, source)
-classifications(ticker, asset_class, sub_class, sector, region, source, updated_at)
-snapshots(id, taken_at, net_worth_usd, payload_json)
-provenance(entity_type, entity_id, field, source, confidence, llm_span, captured_at)
-```
-
-Locked in v0.1; extended (not redesigned) in later phases.
-
-### Classification & look-through
-
-- **Classification:** in-repo YAML, ~50 entries. Split into sibling repo only if it grows past ~500 entries with regular community PRs.
-- **Look-through:** `yfinance` primary, YAML fallback for gaps. SEC EDGAR upgrade path in v0.2.
-- **`yfinance` fragility:** `yfinance` scrapes Yahoo HTML and breaks 2–4x per year. YAML fallback covers the maintainer's ~50 holdings as the safety net; EDGAR migration is moved up to v0.2 rather than left implicit.
-- **User overrides always win** — real estate type, HSA cash/invested split, etc.
-
-### Effective allocation engine
-
-Walk each position → apply look-through if fund → sum effective weights across every dimension. Pure Python, ~200 lines, CI-tested against fixture portfolios.
+Future phases add execution plans here when scoped.
 
 ---
 
-## 7. Stack
-
-| Layer | Choice |
-|---|---|
-| Frontend | Next.js 14 (App Router) |
-| Backend | Python 3.12 + FastAPI |
-| Database | SQLite on Fly.io persistent volume |
-| Auth (v0.1) | Env-var admin token |
-| Auth (v0.2+) | Auth.js (email magic-link) |
-| LLM abstraction | LiteLLM |
-| Local LLM | Ollama |
-| Charts | Apache ECharts (sunburst + drill-down) |
-| Price data | `yfinance` + Alpha Vantage fallback |
-| Fund holdings | `yfinance` + in-repo YAML fallback |
-| Hosting | Fly.io (single platform, one `fly.toml`) |
-| License | AGPL-3.0 |
-
-Local DB management via Beekeeper Studio or Drizzle Studio. Deployed DB accessed via `fly ssh console`.
-
----
-
-## 8. Privacy posture
-
-- Ticker + share count data sent to user's chosen LLM provider during extraction. Provider shown in UI; local Ollama option for zero external data.
-- Paste input is scrubbed client-side for long digit runs (≥6 consecutive digits that aren't plausibly share counts) before send, to catch account numbers users paste accidentally.
-- Classifications, look-through, and derived metrics computed locally — never sent anywhere.
-- Credentials (account numbers, SSN, routing) never entered into the app. Paste parser targets the positions view only.
-- Full JSON export and account deletion at any time.
-
----
-
-## 9. Risks
-
-| # | Risk | Mitigation |
-|---|---|---|
-| 1 | LLM extraction silent failure | §6 scaffolding + CI eval suite |
-| 2 | Broker format drift | Eval suite regression detection; prompt iteration |
-| 3 | LLM API outages | Ollama as v0.1 backstop; multi-provider fallback (Anthropic/OpenAI/Gemini) in v0.2+ |
-| 4 | `yfinance` look-through staleness | "As of" stamps; YAML fallback; EDGAR in v0.2 |
-| 5 | Users reading output as advice | Consistent "informational only" framing |
-| 6 | Incumbent moves (Sharesight / Morningstar / Kubera free tier) | Non-brokerage + transparency are the defenses |
-| 7 | Solo maintainer burnout | Ship small, release often; Path B expectations |
-| 8 | API key security | Encrypted at rest, never logged |
-| 9 | Fly single-region SQLite loss | `GET /api/export` ships in v0.1 so the maintainer can pull a JSON snapshot on demand. Automated nightly push to Tigris is deferred to v1.0. RPO ≤ 24h manual, RTO manual (hours). Acceptable for alpha. |
-| 10 | `yfinance` ToS / scraper fragility | YAML fallback covers core holdings; EDGAR migration moved into v0.2 |
-
----
-
-## 10. Success criteria
+## 5. Success criteria
 
 - **Primary:** maintainer uses it monthly for 6 months post-launch.
 - **Secondary:** 5 target-persona users return at least quarterly for 6 months.
 - **Realistic first-year:** 200–500 stars, 20–100 MAU, 3–5 external contributors.
 
 Not a growth-phenomenon project. Expected niche: open, transparent, non-brokerage-aware users — not displacing incumbents.
-
----
-
-## 11. Decisions resolved
-
-- Repo: `github.com/contactstevenwarren/openportfolio`
-- Hosting: Fly.io, single platform
-- DB: SQLite on persistent volume
-- Auth in v0.1: single-user env-var admin token. Magic-link in v0.2.
-- LLM default: Azure OpenAI GPT-5.4 (default) + Ollama (local) in v0.1; Anthropic/OpenAI-direct/Gemini in v0.2
-- Classification: in-repo YAML
-- Look-through: `yfinance` + YAML fallback; EDGAR in v0.2
-- Review UI: every change needs explicit user confirmation in v0.1
-- Cost model: users bring their own LLM API key; infra costs personal during alpha
-- Currency: USD only in v0.1
-- License: AGPL-3.0

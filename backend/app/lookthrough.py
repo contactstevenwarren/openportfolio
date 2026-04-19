@@ -4,12 +4,12 @@ A fund position (e.g. VTI) doesn't live on one point on the 3-ring sunburst;
 it fans out across asset classes, sub classes, sectors, and regions. This
 module returns those weight breakdowns for a ticker.
 
-Resolution order (roadmap §6 "classification & look-through"):
+Resolution order (docs/architecture.md classification and look-through):
     1. 24h SQLite cache in the ``fund_holdings`` table.
     2. yfinance live fetch -- primary data source when reachable.
     3. YAML fallback in ``data/lookthrough.yaml`` -- covers the maintainer's
        core holdings, used when yfinance is down or the ticker isn't in
-       Yahoo's dataset (roadmap risk #4 + #10).
+       Yahoo's dataset (architecture risks #4 + #10).
 
 Direct holdings (individual stocks, crypto coins) aren't funds -- ``breakdown``
 returns ``None`` for those, and the allocation engine falls back to the
@@ -104,7 +104,7 @@ def reload_yaml() -> None:
 def _fetch_from_yfinance(ticker: str) -> Breakdown | None:  # pragma: no cover
     """Best-effort pull of fund composition from yfinance.
 
-    Yahoo's HTML scraper breaks 2-4x a year (roadmap risk #10) so any
+    Yahoo's HTML scraper breaks 2-4x a year (architecture risk #10) so any
     exception is swallowed and treated as "not available" -- the caller
     then falls back to the YAML. Return None if the ticker has no
     ``funds_data`` (i.e. it's an individual stock, not a fund).

@@ -1,6 +1,6 @@
 'use client';
 
-// Paste review-and-confirm flow (roadmap section 6 extraction pipeline).
+// Paste review-and-confirm flow (docs/architecture.md extraction pipeline).
 // User pastes broker text -> Extract -> rows land in the review table
 // sorted by confidence ascending so the riskiest ones are on top ->
 // user edits / deselects -> Commit persists selected rows with a

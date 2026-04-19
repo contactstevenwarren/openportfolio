@@ -123,7 +123,7 @@ def commit_positions(
 
         # Provenance rows for every numeric field we persisted. ticker is
         # a label, not a number, so it doesn't get a provenance row
-        # (roadmap principle: every *number* carries provenance).
+        # (roadmap Principles: every *number* carries provenance).
         for field, value in (
             ("shares", row.shares),
             ("cost_basis", row.cost_basis),
@@ -226,7 +226,7 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
 
 @app.get("/api/export", dependencies=[Depends(require_admin_token)])
 def export_all(db: Session = Depends(get_db)) -> ExportResult:
-    """Full JSON dump of user-owned state (roadmap §8, risk #9 manual path).
+    """Full JSON dump of user-owned state (architecture Privacy + risk #9 manual path).
 
     Excludes fund_holdings (rebuildable from yfinance/YAML) and the YAML
     classifications (source-controlled). Snapshots are included even

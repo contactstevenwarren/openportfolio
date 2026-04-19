@@ -1,4 +1,4 @@
-"""YAML-backed ticker classifications (roadmap section 6).
+"""YAML-backed ticker classifications (docs/architecture.md classification and look-through).
 
 YAML is the source of truth in v0.1. The `classifications` DB table stays
 empty until M3 introduces user overrides, at which point user rows take

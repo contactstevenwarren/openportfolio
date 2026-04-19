@@ -1,4 +1,4 @@
-// Client-side PII scrub for pasted brokerage text (roadmap section 8).
+// Client-side PII scrub for pasted brokerage text (architecture Privacy).
 //
 // Replaces any run of 6+ consecutive digits with [REDACTED], unless the
 // run is part of a decimal number (e.g. "123456.789" share counts, or a

@@ -1,4 +1,4 @@
-"""Allocation engine (roadmap §6 "effective allocation").
+"""Allocation engine (docs/architecture.md effective allocation engine).
 
 For every position:
   - resolve its dollar value (market_value → cost_basis → 0)

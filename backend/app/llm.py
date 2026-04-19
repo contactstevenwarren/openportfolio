@@ -1,4 +1,4 @@
-"""LiteLLM-backed position extraction (roadmap section 6).
+"""LiteLLM-backed position extraction (docs/architecture.md LLM extraction).
 
 v0.1 default provider is Azure OpenAI (GPT-5.4 deployment). The LLM is
 asked for strict JSON-schema output with per-field confidence and a

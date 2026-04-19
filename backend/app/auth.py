@@ -1,4 +1,4 @@
-"""Single-user admin-token auth for v0.1 (roadmap section 6 auth seam).
+"""Single-user admin-token auth for v0.1 (docs/architecture.md auth seam).
 
 v0.2 replaces this with Auth.js magic-link sessions validated via shared
 secret. Until then, every protected endpoint takes an X-Admin-Token header

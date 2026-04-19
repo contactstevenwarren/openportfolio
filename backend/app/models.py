@@ -1,8 +1,8 @@
-"""ORM models matching roadmap section 6 data model.
+"""ORM models matching docs/architecture.md data model.
 
 Schema is locked for v0.1; later phases extend (not redesign) these tables.
 Every user-visible field must have a corresponding Provenance row so hover
-tooltips can show source + confidence (roadmap section 3 principle).
+tooltips can show source + confidence (roadmap Principles).
 """
 
 from datetime import datetime
@@ -39,7 +39,7 @@ class Position(Base):
     cost_basis: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Paste-time market value in USD. M4 layers live yfinance pricing on
     # top; this column remains as the fallback when yfinance is down
-    # (roadmap risk #4). Roadmap section 6 data model schema is "locked
+    # (architecture risk #4). Data model schema is "locked
     # in v0.1, extended in later phases" -- this nullable column is an
     # extension, not a redesign.
     market_value: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -96,7 +96,7 @@ class FundHolding(Base):
     is one of {"asset_class", "sub_class", "sector", "region"} and bucket
     is the value within that dimension (e.g. "us_large_cap", "technology").
     weight is 0..1. fetched_at drives the 24h cache; rows older than that
-    are refetched before use. Roadmap data-model schema says "locked in
+    are refetched before use. Architecture data-model rule: "locked in
     v0.1, extended in later phases" -- this is a pure extension.
     """
 
