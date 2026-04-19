@@ -47,7 +47,7 @@ def azure_configured() -> None:
 
 def test_raises_when_provider_unsupported() -> None:
     settings.llm_provider = "anthropic"
-    with pytest.raises(LLMNotConfiguredError, match="azure only"):
+    with pytest.raises(LLMNotConfiguredError, match="not supported"):
         extract_positions("anything")
 
 
@@ -56,6 +56,33 @@ def test_raises_when_deployment_missing() -> None:
     settings.azure_deployment_name = ""
     with pytest.raises(LLMNotConfiguredError, match="AZURE_DEPLOYMENT_NAME"):
         extract_positions("anything")
+
+
+def test_raises_when_ollama_model_missing() -> None:
+    settings.llm_provider = "ollama"
+    settings.llm_model = ""
+    with pytest.raises(LLMNotConfiguredError, match="LLM_MODEL"):
+        extract_positions("anything")
+
+
+def test_ollama_model_string_and_api_base() -> None:
+    settings.llm_provider = "ollama"
+    settings.llm_model = "llama3.1"
+    settings.ollama_api_base = "http://ollama:11434"
+    text, llm_json = _load("vanguard")
+
+    with patch(
+        "app.llm.litellm.completion", return_value=_mock_response(llm_json)
+    ) as mock:
+        result = extract_positions(text)
+
+    assert result.model == "ollama/llama3.1"
+    kwargs = mock.call_args.kwargs
+    assert kwargs["model"] == "ollama/llama3.1"
+    assert kwargs["api_base"] == "http://ollama:11434"
+    # Azure-only kwargs must not leak through to Ollama.
+    assert "api_key" not in kwargs
+    assert "api_version" not in kwargs
 
 
 @pytest.mark.parametrize(

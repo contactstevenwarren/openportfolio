@@ -83,11 +83,11 @@ Not differentiators: ETF decomposition, "AI-powered," multi-account tracking.
 | v | Theme | Capability |
 |---|---|---|
 | 0.1 | X-Ray MVP | Paste, classify, decompose, visualize |
-| 0.2 | Targets + AI + multi-user | M1-style target pie, deployment calc, AI narration, PDF import, magic-link auth, Anthropic/OpenAI-direct/Gemini adapters |
+| 0.2 | Targets + AI + multi-user + infra polish | M1-style target pie, deployment calc, AI narration, PDF import, magic-link auth, Anthropic/OpenAI-direct/Gemini adapters, GitHub Actions CI, yfinance taxonomy normalization |
 | 0.3 | OCR + imports | Scanned statements, more brokers |
 | 0.4 | Tax lens | Lots, wash sales, TLH surfacing |
 | 0.5 | Historical | Snapshots, composition drift |
-| 1.0 | Harden | Docs, stability, release |
+| 1.0 | Harden | Docs, stability, release, Tigris nightly backup cron |
 | 1.x+ | Extensions | Plaid opt-in, PWA mobile, more brokers |
 
 Ordering is indicative, not a schedule.
@@ -202,7 +202,7 @@ Local DB management via Beekeeper Studio or Drizzle Studio. Deployed DB accessed
 | 6 | Incumbent moves (Sharesight / Morningstar / Kubera free tier) | Non-brokerage + transparency are the defenses |
 | 7 | Solo maintainer burnout | Ship small, release often; Path B expectations |
 | 8 | API key security | Encrypted at rest, never logged |
-| 9 | Fly single-region SQLite loss | Daily JSON exports to object storage (Tigris). RPO ≤ 24h, RTO manual (hours). Acceptable for alpha; revisit at v1.0 |
+| 9 | Fly single-region SQLite loss | `GET /api/export` ships in v0.1 so the maintainer can pull a JSON snapshot on demand. Automated nightly push to Tigris is deferred to v1.0. RPO ≤ 24h manual, RTO manual (hours). Acceptable for alpha. |
 | 10 | `yfinance` ToS / scraper fragility | YAML fallback covers core holdings; EDGAR migration moved into v0.2 |
 
 ---
