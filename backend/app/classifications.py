@@ -65,6 +65,45 @@ _SYNTHETIC_PREFIXES: dict[str, ClassificationEntry] = {
         asset_class="cash",
         sub_class="hsa_cash",
     ),
+    # Generic cash pool for checking / savings / brokerage sweep cash that
+    # isn't tied to an HSA (e.g. ``CASH:ally``, ``CASH:wf-checking``).
+    "CASH": ClassificationEntry(
+        ticker="CASH",
+        asset_class="cash",
+        sub_class="cash",
+    ),
+    # Directly-held Treasury notes / bills (brokerage shows the CUSIP, not
+    # an ETF ticker). ``TREASURY:91282CKE0`` is the natural encoding.
+    "TREASURY": ClassificationEntry(
+        ticker="TREASURY",
+        asset_class="fixed_income",
+        sub_class="us_treasury",
+        region="US",
+    ),
+    # Treasury Inflation-Protected Securities held directly (TreasuryDirect).
+    "TIPS": ClassificationEntry(
+        ticker="TIPS",
+        asset_class="fixed_income",
+        sub_class="us_tips",
+        region="US",
+    ),
+    # FDIC-insured CDs held inside a brokerage (Schwab, Vanguard, etc.).
+    # Treated as cash-equivalent for the 5-number summary.
+    "CD": ClassificationEntry(
+        ticker="CD",
+        asset_class="cash",
+        sub_class="cd",
+    ),
+    # Employer stock held through an ESPP / RSU grant. Classified as a
+    # generic US large-cap equity; user can override via /positions if
+    # the employer is small/mid/foreign.
+    "ESPP": ClassificationEntry(
+        ticker="ESPP",
+        asset_class="equity",
+        sub_class="us_large_cap",
+        sector="diversified",
+        region="US",
+    ),
 }
 
 

@@ -80,8 +80,16 @@ def test_non_mapping_top_level_raises(tmp_path: Path) -> None:
 
 def test_seed_expanded_to_maintainer_holdings() -> None:
     # M3 growth: real individual stocks + more ETFs + cash-equivalents.
+    # M5 acceptance pass: Schwab Fundamental family + SWPPX/SWAGX/SWISX
+    # mutual funds + VT + money markets + target-date VFIFX.
     entries = load_classifications()
-    for t in ("MSFT", "NVDA", "BRK.B", "VOO", "SCHD", "BNDX", "SPAXX"):
+    for t in (
+        "MSFT", "NVDA", "BRK.B", "VOO", "SCHD", "BNDX", "SPAXX",
+        "VT", "SWPPX", "SWAGX", "SWISX", "SNSXX", "BIL", "VFIFX",
+        "CMF", "FNDX", "FNDE", "FNDA", "FNDF", "FNDC", "SCHE", "SCHC",
+        "SCHA", "SCHG", "SCHH", "PXF", "PRF", "PRFZ", "IJH", "IJR",
+        "IXUS", "USRT", "HAUZ", "EBND", "ADA", "ICP",
+    ):
         assert t in entries, f"expected {t} in classifications YAML"
 
 
@@ -131,6 +139,42 @@ def test_classify_synthetic_hsa_cash() -> None:
     assert entry is not None
     assert entry.asset_class == "cash"
     assert entry.sub_class == "hsa_cash"
+
+
+def test_classify_synthetic_cash_pool() -> None:
+    entry = classify("CASH:ally-checking", {})
+    assert entry is not None
+    assert entry.asset_class == "cash"
+    assert entry.sub_class == "cash"
+
+
+def test_classify_synthetic_treasury_note() -> None:
+    entry = classify("TREASURY:91282CKE0", {})
+    assert entry is not None
+    assert entry.asset_class == "fixed_income"
+    assert entry.sub_class == "us_treasury"
+    assert entry.region == "US"
+
+
+def test_classify_synthetic_tips() -> None:
+    entry = classify("TIPS:treasury-direct", {})
+    assert entry is not None
+    assert entry.asset_class == "fixed_income"
+    assert entry.sub_class == "us_tips"
+
+
+def test_classify_synthetic_cd() -> None:
+    entry = classify("CD:ubs-bank-2026", {})
+    assert entry is not None
+    assert entry.asset_class == "cash"
+    assert entry.sub_class == "cd"
+
+
+def test_classify_synthetic_espp() -> None:
+    entry = classify("ESPP:employer-stock", {})
+    assert entry is not None
+    assert entry.asset_class == "equity"
+    assert entry.region == "US"
 
 
 def test_classify_prefix_case_insensitive() -> None:

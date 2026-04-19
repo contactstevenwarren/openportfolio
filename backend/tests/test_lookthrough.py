@@ -76,10 +76,35 @@ def test_yaml_sector_weights_sum_to_one_for_equity_funds() -> None:
 
 def test_yaml_asset_class_weights_sum_to_one() -> None:
     with patch("app.lookthrough._fetch_from_yfinance", return_value=None):
-        for ticker in ("VTI", "BND", "VNQ", "VTIVX"):
+        for ticker in (
+            "VTI", "BND", "VNQ", "VTIVX", "VFIFX", "VT", "IXUS",
+            "SWPPX", "SWAGX", "SWISX", "BIL", "CMF",
+        ):
             br = get_breakdown(ticker)
-            assert br is not None
+            assert br is not None, f"{ticker} missing from lookthrough YAML"
             assert 0.99 <= sum(br.asset_class.values()) <= 1.01
+
+
+def test_vt_splits_us_vs_intl() -> None:
+    # VT is the "global equity" gotcha: without lookthrough it'd be
+    # attributed to a single region (global) and mis-report US equity %.
+    # With lookthrough it splits ~60/30/10 US/developed/emerging.
+    with patch("app.lookthrough._fetch_from_yfinance", return_value=None):
+        br = get_breakdown("VT")
+    assert br is not None
+    assert br.region.get("US", 0) > 0.5
+    assert br.region.get("intl_developed", 0) > 0.2
+    assert 0.99 <= sum(br.region.values()) <= 1.01
+
+
+def test_vfifx_is_mostly_equity_mostly_us() -> None:
+    # VFIFX (Target 2050) is the maintainer's biggest position
+    # ($628K across HSA + 401k + Roth 401k). Gate the glidepath shape.
+    with patch("app.lookthrough._fetch_from_yfinance", return_value=None):
+        br = get_breakdown("VFIFX")
+    assert br is not None
+    assert br.asset_class.get("equity", 0) >= 0.85
+    assert br.region.get("US", 0) >= 0.5
 
 
 # ---- yfinance adapter (mocked) -------------------------------------------
