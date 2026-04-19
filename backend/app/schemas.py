@@ -94,6 +94,36 @@ class CommitResult(BaseModel):
     position_ids: list[int]
 
 
+# ----- position read / patch ----------------------------------------------
+
+
+class PositionRead(BaseModel):
+    id: int
+    account_id: int
+    ticker: str
+    shares: float
+    cost_basis: float | None
+    market_value: float | None
+    as_of: datetime
+    source: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PositionPatch(BaseModel):
+    """User override for a committed position (M3).
+
+    All fields optional; only the ones present in the body are applied.
+    The HSA cash/invested split is the motivating case -- user edits
+    ``market_value`` or splits one row into two via delete + manual add.
+    """
+
+    ticker: str | None = None
+    shares: float | None = None
+    cost_basis: float | None = None
+    market_value: float | None = None
+
+
 # ----- allocation ---------------------------------------------------------
 
 

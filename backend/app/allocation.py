@@ -16,7 +16,7 @@ back to stored market_value, then cost_basis.
 
 from collections import defaultdict
 
-from .classifications import ClassificationEntry
+from .classifications import ClassificationEntry, classify
 from .models import Position
 from .schemas import AllocationResult, AllocationSlice
 
@@ -36,7 +36,7 @@ def aggregate(
     grouped: dict[str, list[Position]] = defaultdict(list)
     unclassified: list[str] = []
     for p in positions:
-        entry = classifications.get(p.ticker)
+        entry = classify(p.ticker, classifications)
         if entry is None:
             unclassified.append(p.ticker)
             continue
