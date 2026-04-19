@@ -16,5 +16,14 @@ class Settings(BaseSettings):
     azure_api_version: str = ""
     azure_deployment_name: str = ""
 
+    # yfinance look-through is authoritative in the roadmap but Yahoo's
+    # own taxonomy ("US Stocks", "Bonds") doesn't line up with our
+    # classifications (equity/fixed_income/...). M5 will add the
+    # normalization layer; until then we keep the yfinance adapter in
+    # place but off, and treat data/lookthrough.yaml as the source of
+    # truth. Flipping this to true before M5 lands will produce garbage
+    # rings -- tested here only via mocks.
+    lookthrough_yfinance_enabled: bool = False
+
 
 settings = Settings()
