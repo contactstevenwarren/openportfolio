@@ -9,7 +9,20 @@ import { useEffect, useState } from 'react';
 
 import { api, type Account } from '../lib/api';
 
-type AssetKind = 'REALESTATE' | 'GOLD' | 'SILVER' | 'CRYPTO' | 'PRIVATE' | 'HSA_CASH';
+// Mirrors the backend synthetic prefix table in
+// backend/app/classifications.py. Keep in sync when either side changes.
+type AssetKind =
+  | 'REALESTATE'
+  | 'GOLD'
+  | 'SILVER'
+  | 'CRYPTO'
+  | 'PRIVATE'
+  | 'HSA_CASH'
+  | 'CASH'
+  | 'TREASURY'
+  | 'TIPS'
+  | 'CD'
+  | 'ESPP';
 
 const KIND_LABELS: Record<AssetKind, string> = {
   REALESTATE: 'Real estate',
@@ -18,6 +31,11 @@ const KIND_LABELS: Record<AssetKind, string> = {
   CRYPTO: 'Crypto (non-ticker)',
   PRIVATE: 'Private holding',
   HSA_CASH: 'HSA cash sleeve',
+  CASH: 'Cash (checking, savings, brokerage sweep)',
+  TREASURY: 'Treasury note / bill (held directly)',
+  TIPS: 'TIPS (TreasuryDirect)',
+  CD: 'CD (FDIC-insured)',
+  ESPP: 'Employer stock (ESPP / RSU)',
 };
 
 export default function ManualPage() {
