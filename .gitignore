@@ -1,0 +1,19 @@
+# Node
+node_modules/
+.next/
+next-env.d.ts
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
+
+# Fly
+fly.pid
