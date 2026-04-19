@@ -21,6 +21,11 @@ class ExtractedPosition(BaseModel):
     ticker: str
     shares: float
     cost_basis: float | None = None
+    # Paste-time market value in USD. Extracted verbatim from the paste when
+    # shown (brokerage statements usually include it). Used by the M2
+    # allocation stub to weight slices; M4 swaps in live yfinance prices
+    # and keeps market_value as the disaster fallback if yfinance is down.
+    market_value: float | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     source_span: str
     validation_errors: list[str] = Field(default_factory=list)

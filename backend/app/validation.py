@@ -45,17 +45,25 @@ def validate_shares(shares: float) -> list[str]:
     return errors
 
 
-def validate_cost_basis(cost_basis: float | None) -> list[str]:
-    if cost_basis is None:
+def _validate_nonneg_dollar(value: float | None, field: str) -> list[str]:
+    if value is None:
         return []
     errors: list[str] = []
-    if cost_basis < 0:
-        errors.append(f"cost_basis must be >= 0 (got {cost_basis})")
-    if cost_basis > MAX_COST_BASIS:
+    if value < 0:
+        errors.append(f"{field} must be >= 0 (got {value})")
+    if value > MAX_COST_BASIS:
         errors.append(
-            f"cost_basis {cost_basis} exceeds plausibility bound {MAX_COST_BASIS:g}"
+            f"{field} {value} exceeds plausibility bound {MAX_COST_BASIS:g}"
         )
     return errors
+
+
+def validate_cost_basis(cost_basis: float | None) -> list[str]:
+    return _validate_nonneg_dollar(cost_basis, "cost_basis")
+
+
+def validate_market_value(market_value: float | None) -> list[str]:
+    return _validate_nonneg_dollar(market_value, "market_value")
 
 
 def validate_source_span(source_span: str) -> list[str]:
@@ -72,6 +80,7 @@ def validate_position(position: ExtractedPosition) -> list[str]:
         *validate_ticker(position.ticker),
         *validate_shares(position.shares),
         *validate_cost_basis(position.cost_basis),
+        *validate_market_value(position.market_value),
         *validate_source_span(position.source_span),
     ]
 

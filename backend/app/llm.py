@@ -25,6 +25,7 @@ Return a JSON object {"positions": [...]}. For each holding include:
 - ticker: exact symbol shown, uppercase (e.g. "VTI", "BRK.B", "BTC-USD")
 - shares: number of shares or units as a float
 - cost_basis: total cost basis in USD if shown, else null
+- market_value: total market value / current value in USD if shown, else null
 - confidence: 0.0-1.0 reflecting your certainty
 - source_span: exact substring from the paste you extracted this row from
 
@@ -49,6 +50,7 @@ _JSON_SCHEMA = {
                         "ticker": {"type": "string"},
                         "shares": {"type": "number"},
                         "cost_basis": {"type": ["number", "null"]},
+                        "market_value": {"type": ["number", "null"]},
                         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                         "source_span": {"type": "string"},
                     },
@@ -56,6 +58,7 @@ _JSON_SCHEMA = {
                         "ticker",
                         "shares",
                         "cost_basis",
+                        "market_value",
                         "confidence",
                         "source_span",
                     ],
