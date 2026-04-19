@@ -37,6 +37,12 @@ class Position(Base):
     ticker: Mapped[str] = mapped_column(String(64), index=True)
     shares: Mapped[float] = mapped_column(Float)
     cost_basis: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Paste-time market value in USD. M4 layers live yfinance pricing on
+    # top; this column remains as the fallback when yfinance is down
+    # (roadmap risk #4). Roadmap section 6 data model schema is "locked
+    # in v0.1, extended in later phases" -- this nullable column is an
+    # extension, not a redesign.
+    market_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     as_of: Mapped[datetime] = mapped_column(DateTime)
     # source = "paste" | "manual" | "override"
     source: Mapped[str] = mapped_column(String(50))
