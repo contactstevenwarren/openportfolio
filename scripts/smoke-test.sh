@@ -30,7 +30,9 @@ info() { printf "    \033[90m%s\033[0m\n" "$*"; }
 cleanup() {
     # Best-effort cleanup. Runs on success, failure, or Ctrl-C.
     say "Cleanup"
-    for pid in "${POSITION_IDS[@]}"; do
+    # ${arr[@]+"${arr[@]}"} pattern avoids "unbound variable" when the
+    # array is empty and the script ran under set -u.
+    for pid in ${POSITION_IDS[@]+"${POSITION_IDS[@]}"}; do
         curl -fsS -X DELETE "${HDR[@]}" "${URL}/api/positions/${pid}" >/dev/null 2>&1 \
             && info "deleted position #${pid}" \
             || info "position #${pid} already gone"

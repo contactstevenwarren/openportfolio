@@ -12,13 +12,16 @@ import {
   api,
   type ClassificationPatch,
   type ClassificationRow,
+  type Position,
   type TaxonomyOption,
 } from '../lib/api';
+import { REGION_OPTIONS, humanize } from '../lib/labels';
 
 type SourceFilter = 'all' | 'yaml' | 'user';
 
 export default function ClassificationsPage() {
   const [rows, setRows] = useState<ClassificationRow[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
   const [taxonomy, setTaxonomy] = useState<TaxonomyOption[]>([]);
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
@@ -38,6 +41,13 @@ export default function ClassificationsPage() {
         // Token may not be set yet; page still renders the list with
         // whatever refresh() returns.
       });
+    // Deeplink from /positions: ?ticker=X pre-fills the search box so
+    // the user lands on the row they were looking at.
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const t = params.get('ticker');
+      if (t) setSearch(t);
+    }
   }, []);
 
   function refresh() {
@@ -45,7 +55,34 @@ export default function ClassificationsPage() {
       .classifications()
       .then(setRows)
       .catch((e) => setStatus({ kind: 'err', message: (e as Error).message }));
+    // Positions are used for the "N holdings" column and to scope the
+    // editing-impact hint. Loaded separately so a failure here doesn't
+    // break the main table.
+    api.positions().then(setPositions).catch(() => {});
   }
+
+  // Ticker -> number of Position rows pointing at it. Drives the
+  // "Holdings" column so YAML rows you don't own show as 0, and a
+  // user-invented ticker with real positions can't be deleted silently.
+  const positionCountByTicker = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of positions) m.set(p.ticker, (m.get(p.ticker) ?? 0) + 1);
+    return m;
+  }, [positions]);
+
+  // Datalist options for the sub_class / sector edit inputs, scoped to
+  // the draft's currently-selected asset_class where it matters.
+  const subClassSuggestions = useMemo(() => {
+    const values = rows
+      .filter((r) => r.asset_class === editDraft.asset_class && r.sub_class)
+      .map((r) => r.sub_class as string);
+    return Array.from(new Set(values)).sort();
+  }, [rows, editDraft.asset_class]);
+
+  const sectorSuggestions = useMemo(() => {
+    const values = rows.filter((r) => r.sector).map((r) => r.sector as string);
+    return Array.from(new Set(values)).sort();
+  }, [rows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -204,6 +241,17 @@ export default function ClassificationsPage() {
         </p>
       )}
 
+      <datalist id="classifications-subclass">
+        {subClassSuggestions.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
+      <datalist id="classifications-sector">
+        {sectorSuggestions.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
+
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>
@@ -213,12 +261,14 @@ export default function ClassificationsPage() {
             <th style={th}>Sector</th>
             <th style={th}>Region</th>
             <th style={th}>Source</th>
+            <th style={th}>Holdings</th>
             <th style={th}>Actions</th>
           </tr>
         </thead>
         <tbody>
           {filtered.map((r) => {
             const isEditing = editing === r.ticker;
+            const holdingCount = positionCountByTicker.get(r.ticker) ?? 0;
             return (
               <tr key={r.ticker} style={{ borderBottom: '1px solid #eee' }}>
                 <td style={td}>
@@ -247,6 +297,7 @@ export default function ClassificationsPage() {
                         onChange={(e) =>
                           setEditDraft((d) => ({ ...d, sub_class: e.target.value }))
                         }
+                        list="classifications-subclass"
                         style={{ padding: '0.3rem 0.4rem', width: 140 }}
                       />
                     </td>
@@ -256,25 +307,38 @@ export default function ClassificationsPage() {
                         onChange={(e) =>
                           setEditDraft((d) => ({ ...d, sector: e.target.value }))
                         }
+                        list="classifications-sector"
                         style={{ padding: '0.3rem 0.4rem', width: 110 }}
                       />
                     </td>
                     <td style={td}>
-                      <input
+                      <select
                         value={editDraft.region ?? ''}
                         onChange={(e) =>
                           setEditDraft((d) => ({ ...d, region: e.target.value }))
                         }
-                        style={{ padding: '0.3rem 0.4rem', width: 110 }}
-                      />
+                        style={{ padding: '0.3rem 0.4rem', width: 130 }}
+                      >
+                        {REGION_OPTIONS.map((o) => (
+                          <option key={o.value || 'none'} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                   </>
                 ) : (
                   <>
-                    <td style={td}>{r.asset_class}</td>
-                    <td style={td}>{r.sub_class ?? <span style={mutedDash}>—</span>}</td>
-                    <td style={td}>{r.sector ?? <span style={mutedDash}>—</span>}</td>
-                    <td style={td}>{r.region ?? <span style={mutedDash}>—</span>}</td>
+                    <td style={td}>{humanize(r.asset_class)}</td>
+                    <td style={td}>
+                      {r.sub_class ? humanize(r.sub_class) : <span style={mutedDash}>—</span>}
+                    </td>
+                    <td style={td}>
+                      {r.sector ? humanize(r.sector) : <span style={mutedDash}>—</span>}
+                    </td>
+                    <td style={td}>
+                      {r.region ? humanize(r.region) : <span style={mutedDash}>—</span>}
+                    </td>
                   </>
                 )}
                 <td style={td}>
@@ -284,6 +348,19 @@ export default function ClassificationsPage() {
                     </span>
                   ) : (
                     <span style={badgeYaml}>yaml</span>
+                  )}
+                </td>
+                <td style={td}>
+                  {holdingCount === 0 ? (
+                    <span style={mutedDash}>0</span>
+                  ) : (
+                    <a
+                      href={`/positions?ticker=${encodeURIComponent(r.ticker)}`}
+                      style={{ color: '#111' }}
+                      title={`${holdingCount} position(s) held`}
+                    >
+                      {holdingCount}
+                    </a>
                   )}
                 </td>
                 <td style={td}>
