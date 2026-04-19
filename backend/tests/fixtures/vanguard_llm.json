@@ -1,0 +1,25 @@
+{
+  "positions": [
+    {
+      "ticker": "VTI",
+      "shares": 200.0,
+      "cost_basis": null,
+      "confidence": 0.95,
+      "source_span": "Vanguard Total Stock Market Index (VTI)         200.0000      $245.32     $49,064.00"
+    },
+    {
+      "ticker": "BND",
+      "shares": 75.0,
+      "cost_basis": null,
+      "confidence": 0.95,
+      "source_span": "Vanguard Total Bond Market Index (BND)           75.0000       $72.45      $5,433.75"
+    },
+    {
+      "ticker": "VXUS",
+      "shares": 150.0,
+      "cost_basis": null,
+      "confidence": 0.95,
+      "source_span": "Vanguard Total International Stock (VXUS)       150.0000       $62.18      $9,327.00"
+    }
+  ]
+}
