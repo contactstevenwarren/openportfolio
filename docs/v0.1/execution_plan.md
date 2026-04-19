@@ -138,6 +138,7 @@ From roadmap §4: maintainer pastes 6 accounts in <3 min, adds non-brokerage ass
 - [x] **M1 auth** — `backend/app/auth.py` `require_admin_token` (constant-time `hmac.compare_digest`, 503 when unconfigured to prevent empty-token footgun). 4 pytest cases covering missing/wrong/correct token + unconfigured server. Dev deps in `[dependency-groups].dev` so `uv sync --no-dev` keeps prod image lean.
 - [ ] **M2 classifications seed** — `data/classifications.yaml` with ~10 seed tickers.
 - [ ] **M2 LLM extract** — `llm.py` LiteLLM Azure wrapper + `validation.py` + `POST /api/extract` with schema/confidence/spans.
+  - [x] **M2.2a schemas + validation** — `backend/app/schemas.py` Pydantic `ExtractedPosition`/`ExtractionResult` (confidence 0-1 enforced at parse). `backend/app/validation.py` pure validators: ticker regex, shares>0 + plausibility, cost_basis>=0 + plausibility, 6+ digit run PII heuristic. Advisory (annotates `validation_errors`, never rejects). 23 unit tests cover each validator + composition + immutability.
 - [ ] **M2 allocation stub** — `allocation.py` stub + `GET /api/allocation` + `POST /api/positions/commit` + account CRUD.
 - [ ] **M2 extract tests** — 3 paste fixtures + `test_extract.py` + `test_allocation.py`.
 - [ ] **M2 frontend paste** — `echarts` + `swr` deps, `lib/api.ts`, `/paste` review-and-confirm UI sorted by confidence.
