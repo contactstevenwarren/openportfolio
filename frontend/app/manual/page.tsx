@@ -1,6 +1,6 @@
 'use client';
 
-// Manual entry for non-brokerage assets (roadmap section 4 in-scope).
+// Manual entry for non-brokerage assets (v0.1 Foundation in-scope).
 // Turns a short form into a committed Position with source="manual" and a
 // synthetic ticker like REALESTATE:123Main so the classifier picks it up
 // without a YAML edit.

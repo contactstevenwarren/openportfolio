@@ -1,6 +1,6 @@
 // Wraps a user-visible value with a tooltip showing its provenance
 // (source, confidence, capture time). Every number on screen is
-// supposed to carry one of these per roadmap section 3 principle
+// supposed to carry one of these per roadmap Principles
 // "every number shows provenance." In v0.1 we use the native `title`
 // attribute -- zero dependency, works on mouse hover. M3+ may upgrade
 // to a richer hover card.

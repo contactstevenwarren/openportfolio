@@ -6,7 +6,7 @@
 //   Ring 3  sub_class     (us_large_cap / us_aggregate / cd / direct / ...)
 //
 // The 5-number summary strip on top is the acceptance bar from roadmap
-// section 4 -- a user must answer "what fraction is cash?" in <5s
+// phase 0.1 -- a user must answer "what fraction is cash?" in <5s
 // without hovering.
 
 import dynamic from 'next/dynamic';

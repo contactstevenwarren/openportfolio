@@ -1,6 +1,6 @@
 """Pydantic schemas for LLM extraction output.
 
-Shape mirrors roadmap section 6 "extraction pipeline" requirements: every
+Shape mirrors docs/architecture.md extraction pipeline requirements: every
 extracted row carries confidence and a source span, and deterministic
 validation errors ride alongside the row so the review UI can surface
 them (v0.1 review-and-confirm is mandatory regardless of confidence).
@@ -150,7 +150,7 @@ class SnapshotRead(BaseModel):
 
 
 class ExportResult(BaseModel):
-    """Full JSON dump of user-owned state (roadmap §8 "privacy posture").
+    """Full JSON dump of user-owned state (architecture Privacy).
 
     Excludes fund_holdings (derived cache) and the YAML classifications
     (source-controlled, not user data). Covers the manual-backup case
@@ -185,10 +185,10 @@ class AllocationSlice(BaseModel):
 
 
 class FiveNumberSummary(BaseModel):
-    """Hero-strip numbers mandated by roadmap §4 v0.1 acceptance.
+    """Hero-strip numbers mandated by v0.1 Foundation acceptance (roadmap phase 0.1).
 
     Percentages are of net worth. ``alts`` = real estate + commodity +
-    crypto + private (roadmap §4).
+    crypto + private (v0.1 scope).
     """
 
     net_worth: float

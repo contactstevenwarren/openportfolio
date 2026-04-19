@@ -1,7 +1,7 @@
 # OpenPortfolio v0.1 Execution Plan
 
 **Status:** draft · 2026-04-18
-**Authoritative spec:** [../openportfolio-roadmap.md](../openportfolio-roadmap.md)
+**Authoritative product spec:** [../openportfolio-roadmap.md](../openportfolio-roadmap.md) · **Technical spec:** [../architecture.md](../architecture.md)
 **Sequencing:** vertical thin slice first — each milestone ends in something visibly working on https://openportfolio.fly.dev
 
 ---
@@ -59,11 +59,11 @@ Goal: persistent volume mounted, all secrets set, deploy still green.
 
 ### M1 — Data model + admin-token auth
 
-Goal: schema from roadmap §6 exists; FastAPI rejects unauthenticated calls.
+Goal: schema from [architecture.md](../architecture.md#data-model) exists; FastAPI rejects unauthenticated calls.
 
 - Add deps to [backend/pyproject.toml](../../backend/pyproject.toml): `sqlalchemy>=2`, `pydantic-settings`. Skip Alembic for v0.1 and use `Base.metadata.create_all` (minimum code; revisit at v1.0).
 - `backend/app/db.py`: engine pointing at `sqlite:////data/openportfolio.db` (env-overridable to `./dev.db` locally).
-- `backend/app/models.py`: `Account`, `Position`, `Classification`, `Snapshot`, `Provenance` per roadmap §6 data model.
+- `backend/app/models.py`: `Account`, `Position`, `Classification`, `Snapshot`, `Provenance` per [architecture.md](../architecture.md#data-model) data model.
 - `backend/app/auth.py`: `require_admin_token` FastAPI dependency reading `ADMIN_TOKEN` from env, compares against `X-Admin-Token` header (constant-time).
 - `backend/app/main.py`: call `Base.metadata.create_all` on startup, wire dependency globally (health endpoint stays unauthenticated).
 - Tests: `backend/tests/test_auth.py` covering 401 without token, 200 with correct token.
@@ -114,7 +114,7 @@ Goal: paste positions from one account, confirm, see a single-ring sunburst colo
 - Extend `allocation.py` to walk fund holdings → sum effective weights across `asset_class`, `sub_class`, `sector`, `region`.
 - Test fixtures: `backend/tests/fixtures/portfolios/` with expected allocations for 3 portfolios (all-VTI, 60/40, real-world mix). Locks math.
 - Frontend: hero screen now shows 5-number summary strip + 3-ring interactive sunburst (asset → sub → sector/region) + drill-down side panel.
-- **Acceptance gate (roadmap §4):** user answers "what fraction is cash?" in <5 seconds without hovering. If sunburst fails, evaluate treemap fallback before M5.
+- **Acceptance gate (v0.1 Foundation — [roadmap](../openportfolio-roadmap.md) phase 0.1):** user answers "what fraction is cash?" in <5 seconds without hovering. If sunburst fails, evaluate treemap fallback before M5.
 
 ### M5 — Ship-ready: Ollama, paste scrub, export, README
 
@@ -124,20 +124,20 @@ Goal: paste positions from one account, confirm, see a single-ring sunburst colo
 - README covering setup, admin-token flow, LLM provider config, manual backup workflow.
 
 **Deferred to later phases:**
-- Nightly Tigris backup cron (roadmap §5: v1.0 "Harden"). `/api/export` covers the manual case.
-- `.github/workflows/test.yml` (roadmap §5: v0.2 "infra polish"). Local `./scripts/docker-test.sh` covers the dev loop; Fly deploy workflow stays.
-- yfinance taxonomy normalization (roadmap §5: v0.2). Adapter is wired + gated; flip one config flag after normalization lands.
+- Nightly Tigris backup cron ([roadmap](../openportfolio-roadmap.md) phase 1.0 Harden). `/api/export` covers the manual case.
+- `.github/workflows/test.yml` ([roadmap backlog](../openportfolio-roadmap.md#41-backlog-unphased): GitHub Actions CI). Local `./scripts/docker-test.sh` covers the dev loop; Fly deploy workflow stays.
+- yfinance taxonomy normalization ([roadmap backlog](../openportfolio-roadmap.md#41-backlog-unphased)). Adapter is wired + gated; flip one config flag after normalization lands.
 
 ### Acceptance (v0.1 "done")
 
-From roadmap §4: maintainer pastes 6 accounts in <3 min, adds non-brokerage assets in <2 min, sees correct sunburst, answers "what fraction is cash?" and "what's my real US equity exposure?" Hero-viz test passes the 5-second check.
+From v0.1 Foundation acceptance ([roadmap](../openportfolio-roadmap.md) phase 0.1): maintainer pastes 6 accounts in <3 min, adds non-brokerage assets in <2 min, sees correct sunburst, answers "what fraction is cash?" and "what's my real US equity exposure?" Hero-viz test passes the 5-second check.
 
 ---
 
 ## Task checklist
 
 - [x] **M0 infra** — Fly `sjc` volume `op_data` (1GB, `vol_4ojknjom2pgo8wor`), `/data` mount verified (`lost+found` visible), scaled to 1 machine (SQLite single-writer), 6 secrets deployed (`ADMIN_TOKEN`, `LLM_PROVIDER=azure`, 4 Azure vars), `/health` green.
-- [x] **M1 schema** — `sqlalchemy` 2.0.49 + `pydantic-settings` 2.13.1 deps, `backend/app/db.py` + `models.py` (5 tables per roadmap section 6), `create_all` on FastAPI startup lifespan. `docker-compose.yml` mounts named volume at `/data` to match prod.
+- [x] **M1 schema** — `sqlalchemy` 2.0.49 + `pydantic-settings` 2.13.1 deps, `backend/app/db.py` + `models.py` (5 tables per [architecture.md](../architecture.md#data-model)), `create_all` on FastAPI startup lifespan. `docker-compose.yml` mounts named volume at `/data` to match prod.
 - [x] **M1 auth** — `backend/app/auth.py` `require_admin_token` (constant-time `hmac.compare_digest`, 503 when unconfigured to prevent empty-token footgun). 4 pytest cases covering missing/wrong/correct token + unconfigured server. Dev deps in `[dependency-groups].dev` so `uv sync --no-dev` keeps prod image lean.
 - [x] **M2 classifications seed** — `data/classifications.yaml` (10 tickers: VTI/VXUS/BND/VNQ/GLD/BTC/SPY/QQQ/AAPL/CASH). `backend/app/classifications.py` YAML loader returns frozen `ClassificationEntry` dataclasses, path resolves identically in dev (`repo_root/data`) and prod (`/app/data`). `pyyaml`+`types-pyyaml` added, `uv.lock` regenerated. Dockerfile `COPY data/ /app/data/` verified in image. 8 loader tests + 4 pre-existing auth tests green.
 - [x] **M2 LLM extract** — `llm.py` LiteLLM Azure wrapper + `validation.py` + `POST /api/extract` with schema/confidence/spans.
@@ -147,7 +147,7 @@ From roadmap §4: maintainer pastes 6 accounts in <3 min, adds non-brokerage ass
   - Allocation: `position_value` precedence `market_value > cost_basis > 0`; `aggregate` groups by `asset_class`, sorts slices by value desc, surfaces `unclassified_tickers` (stable de-dup). 16 unit/endpoint tests lock the math.
   - Commit: auto-seeds "Default" brokerage on first commit per Decision 1(a); writes one `Provenance` row per numeric field (shares/cost_basis/market_value), skipping nulls. ticker is a label, not a number — no provenance row. 8 tests cover auth, account resolution, DB writes, null handling, batch commit.
   - Accounts: `GET /api/accounts`, `POST /api/accounts` (defaults type=brokerage). 5 tests.
-  - `models.Position.market_value` added (nullable) — schema extension per roadmap §6 ("locked; extended in later phases"). **Ops note:** existing Fly DB must be recreated (`fly ssh console -C 'rm /data/openportfolio.db'`) since there's no Alembic; no data loss (no positions committed yet).
+  - `models.Position.market_value` added (nullable) — schema extension per [architecture.md](../architecture.md#data-model) ("locked; extended in later phases"). **Ops note:** existing Fly DB must be recreated (`fly ssh console -C 'rm /data/openportfolio.db'`) since there's no Alembic; no data loss (no positions committed yet).
   - `conftest.py` — shared `client` + `test_db` fixtures (fresh SQLite per test via `tmp_path` + `dependency_overrides`).
 - [x] **M2 extract tests** — 3 paste fixtures + `test_extract.py` + `test_allocation.py`. (Delivered across M2.2b + M2.3.)
 - [x] **M2 frontend paste** — `echarts` + `echarts-for-react` + `swr` deps; `frontend/app/lib/api.ts` typed client (admin token in `localStorage`, one-time prompt, 401 clears token); `frontend/app/lib/provenance.tsx` native-title hover wrapper for every on-screen number; `frontend/app/paste/page.tsx` textarea → Extract → editable review table (rows sorted confidence asc, color-coded by confidence + validation errors, per-row selection) → Commit; account dropdown with "Default (auto-create)" fallback. `nginx.conf` proxies `/api/` → backend. Root nav links in `layout.tsx`. Next.js standalone build green (`docker build`); 86 backend tests still green.
@@ -161,11 +161,15 @@ From roadmap §4: maintainer pastes 6 accounts in <3 min, adds non-brokerage ass
 - [x] **M5 Ollama** — `llm._provider_config()` now dispatches on `settings.llm_provider` (azure | ollama), model string becomes `ollama/<LLM_MODEL>` with `OLLAMA_API_BASE` routed to LiteLLM. 2 new tests (missing model + kwargs passthrough); no Azure kwargs leak.
 - [x] **M5 scrub + export** — `frontend/app/lib/scrub.ts` replaces `\b\d{6,}(?!\.\d)\b` runs with `[REDACTED]` before every `/api/extract` POST; `/paste` surfaces the redaction count. `GET /api/export` (admin-token guarded) dumps accounts + positions + provenance + snapshots; excludes the yfinance cache + source-controlled YAMLs. 4 new endpoint tests.
 - [x] **M5 README** — `README.md` covers setup, local/docker workflow, Fly deploy, Azure + Ollama config, data-file editing, manual backup via `/api/export`. `.env.example` checked in.
-- [ ] **M5 acceptance** — run roadmap §4 end-to-end (6 accounts <3min, non-brokerage <2min, cash % in <5s). *Requires real maintainer paste data + Azure quota; gated on M5 PR merge + redeploy.*
-- **Deferred** (roadmap §5): nightly Tigris snapshot → v1.0; GitHub Actions CI + yfinance normalization → v0.2.
+- [ ] **M5 acceptance** — run v0.1 Foundation acceptance end-to-end (6 accounts <3min, non-brokerage <2min, cash % in <5s). *Requires real maintainer paste data + Azure quota; gated on M5 PR merge + redeploy.*
+- **Deferred** ([roadmap](../openportfolio-roadmap.md)): nightly Tigris snapshot → v1.0; GitHub Actions CI + yfinance normalization → [backlog](../openportfolio-roadmap.md#41-backlog-unphased).
 
 ---
 
 ## Scope discipline
 
-Explicitly **not** shipping in v0.1 (roadmap §4 non-goals): returns, benchmarks, backtesting, tax lots, multi-currency, mobile, multi-user, AI chat, PDF, OCR, broker APIs. If any of those creep into a PR, stop and split.
+Explicitly **not** shipping in v0.1 Foundation (original v0.1 non-goals; still see [roadmap backlog](../openportfolio-roadmap.md#41-backlog-unphased)): returns, benchmarks, backtesting, tax lots, multi-currency, mobile, multi-user, AI chat, PDF, OCR, broker APIs. If any of those creep into a PR, stop and split.
+
+---
+
+**Next:** [v0.1.5 Entity management](../v0.1.5/execution_plan.md)

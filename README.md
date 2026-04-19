@@ -5,8 +5,10 @@ An open-source portfolio x-ray for US DIY investors with fragmented accounts and
 **See what you actually own — including the parts that aren't on any brokerage.**
 
 - Live: https://openportfolio.fly.dev
-- Roadmap & spec: [docs/openportfolio-roadmap.md](docs/openportfolio-roadmap.md)
+- Roadmap: [docs/openportfolio-roadmap.md](docs/openportfolio-roadmap.md)
+- Architecture (stack, LLM rules, risks): [docs/architecture.md](docs/architecture.md)
 - v0.1 execution plan: [docs/v0.1/execution_plan.md](docs/v0.1/execution_plan.md)
+- v0.1.5 execution plan: [docs/v0.1.5/execution_plan.md](docs/v0.1.5/execution_plan.md)
 - License: AGPL-3.0
 
 ---
@@ -160,7 +162,7 @@ curl -H "X-Admin-Token: $ADMIN_TOKEN" \
 
 The dump includes accounts, positions, provenance rows, and snapshots. The source-controlled YAMLs and the fund_holdings cache are intentionally excluded — the YAMLs live in git and the cache rebuilds on demand.
 
-Automated nightly push to a Tigris bucket is deferred to v1.0 ("Harden"). The risk is called out in [roadmap risk #9](docs/openportfolio-roadmap.md#9-risks). RPO is "whenever you last ran the curl above."
+Automated nightly push to a Tigris bucket is deferred to v1.0 ("Harden"). The risk is called out in [architecture risk #9](docs/architecture.md#risks). RPO is "whenever you last ran the curl above."
 
 ---
 

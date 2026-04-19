@@ -1,4 +1,4 @@
-"""Tests for GET /api/export (M5 manual backup path, roadmap §8)."""
+"""Tests for GET /api/export (M5 manual backup path, architecture Privacy + risk #9)."""
 
 from datetime import UTC, datetime
 

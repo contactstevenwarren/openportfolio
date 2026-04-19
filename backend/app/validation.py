@@ -1,4 +1,4 @@
-"""Deterministic validation for LLM-extracted positions (roadmap section 6).
+"""Deterministic validation for LLM-extracted positions (docs/architecture.md LLM extraction).
 
 Pure functions, no I/O. Each validator returns a list of human-readable
 error strings; empty list means valid. Validators never mutate or reject
@@ -10,7 +10,7 @@ Rules implemented for v0.1 M2:
 - shares > 0 and below an implausibility ceiling
 - cost_basis, if present, >= 0 and below an implausibility ceiling
 - source_span contains no run of 6+ consecutive digits (PII heuristic;
-  catches account / routing numbers pasted accidentally -- roadmap §8)
+  catches account / routing numbers pasted accidentally -- architecture Privacy)
 
 Synthetic tickers introduced in M3 manual entry (e.g. "REALESTATE:123Main")
 skip this module by construction: they never flow through /api/extract.
