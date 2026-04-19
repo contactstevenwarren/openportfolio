@@ -12,7 +12,7 @@ alwaysApply: true
 - Frontend: Next.js 14 (App Router) + TypeScript, SQLite via Drizzle
 - Backend: Python 3.12 + FastAPI, `uv` for packaging, SQLite via SQLAlchemy
 - Host: Fly.io, single `fly.toml` at repo root
-- LLM: LiteLLM wrapper, default Anthropic Claude Haiku
+- LLM: LiteLLM wrapper, default Azure OpenAI GPT-5.4 (`azure/<deployment>`); Ollama as local alternative
 
 ## Hard rules
 1. Math in Python, never in the LLM.
@@ -20,6 +20,11 @@ alwaysApply: true
 3. Every user-visible number shows provenance on hover.
 4. v0.1 = paste / manual entry only. No broker APIs.
 5. Tests for every extraction fixture and allocation calc.
+
+## Deployment
+- Prod: https://openportfolio.fly.dev (Fly.io app `openportfolio`, region `sjc`)
+- Auto-deploys on push to `main` via `.github/workflows/fly-deploy.yml`
+- Health check: `GET /health` → `{"ok": true}`
 
 ## Docker only
 Run everything in containers. Never install on the host (no `npm`, `pip`, `brew`, `apt`, `cargo`, `gem`, etc.). New tools go in `Dockerfile` / `docker-compose.yml`. If it can't run in a container, ask first.

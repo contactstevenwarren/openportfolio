@@ -34,7 +34,7 @@ Not differentiators: ETF decomposition, "AI-powered," multi-account tracking.
 
 - **Visibility, not advice.** Shows what you own. Never recommends trades, suggests new tickers, or predicts prices.
 - **Deterministic math, LLM-assisted extraction.** Percentages and aggregations are Python code. LLM extracts values from pasted text (with verification) and narrates metrics (v0.2+). LLM never computes derived values.
-- **Pluggable LLM providers.** Anthropic and Ollama in v0.1; OpenAI, Azure, Google in v0.2. User-selected.
+- **Pluggable LLM providers.** Azure OpenAI and Ollama in v0.1; Anthropic, OpenAI (direct), Google in v0.2. User-selected.
 - **Minimalist UX.** One hero screen. Features earn their place or don't ship.
 - **Honest about uncertainty.** Every number carries provenance. Missing data is surfaced, not imputed.
 
@@ -59,7 +59,7 @@ Not differentiators: ETF decomposition, "AI-powered," multi-account tracking.
 - Hero screen: 5-number summary strip + 3-ring interactive sunburst (asset class → sub-class → sector/region) + drill-down side panel
   - 5-number summary: total net worth, cash %, US equity %, intl equity %, alts % (real estate + gold + crypto + private)
 - Provenance labels everywhere (dates, sources, confidence)
-- LLM provider abstraction (Anthropic default, Haiku model; Ollama for local). OpenAI/Azure/Gemini adapters deferred to v0.2
+- LLM provider abstraction (Azure OpenAI default, GPT-5.4 deployment; Ollama for local). Anthropic/OpenAI-direct/Gemini adapters deferred to v0.2
 - JSON export
 
 ### Non-goals for v0.1
@@ -83,7 +83,7 @@ Not differentiators: ETF decomposition, "AI-powered," multi-account tracking.
 | v | Theme | Capability |
 |---|---|---|
 | 0.1 | X-Ray MVP | Paste, classify, decompose, visualize |
-| 0.2 | Targets + AI + multi-user | M1-style target pie, deployment calc, AI narration, PDF import, magic-link auth, OpenAI/Azure/Gemini adapters |
+| 0.2 | Targets + AI + multi-user | M1-style target pie, deployment calc, AI narration, PDF import, magic-link auth, Anthropic/OpenAI-direct/Gemini adapters |
 | 0.3 | OCR + imports | Scanned statements, more brokers |
 | 0.4 | Tax lens | Lots, wash sales, TLH surfacing |
 | 0.5 | Historical | Snapshots, composition drift |
@@ -113,7 +113,9 @@ LLMs may extract structured values when paired with all of:
 
 ### LLM abstraction
 
-LiteLLM behind a thin adapter. v0.1 providers: Anthropic (default), Ollama (local). v0.2 adds OpenAI, Azure OpenAI, Google Gemini. User picks per-workspace. API keys encrypted at rest. CI evals run against real paste fixtures.
+LiteLLM behind a thin adapter. v0.1 providers: Azure OpenAI (default, `azure/gpt-5.4` deployment), Ollama (local). v0.2 adds Anthropic, OpenAI (direct), Google Gemini. User picks per-workspace. API keys encrypted at rest. CI evals run against real paste fixtures.
+
+**Azure OpenAI config in v0.1:** `AZURE_API_KEY`, `AZURE_API_BASE` (resource endpoint), `AZURE_API_VERSION`, and `AZURE_DEPLOYMENT_NAME` (GPT-5.4 deployment). LiteLLM addresses it as `azure/<deployment_name>`.
 
 ### Auth seam
 
@@ -194,7 +196,7 @@ Local DB management via Beekeeper Studio or Drizzle Studio. Deployed DB accessed
 |---|---|---|
 | 1 | LLM extraction silent failure | §6 scaffolding + CI eval suite |
 | 2 | Broker format drift | Eval suite regression detection; prompt iteration |
-| 3 | LLM API outages | Multi-provider fallback (v0.2+); Ollama as v0.1 backstop |
+| 3 | LLM API outages | Ollama as v0.1 backstop; multi-provider fallback (Anthropic/OpenAI/Gemini) in v0.2+ |
 | 4 | `yfinance` look-through staleness | "As of" stamps; YAML fallback; EDGAR in v0.2 |
 | 5 | Users reading output as advice | Consistent "informational only" framing |
 | 6 | Incumbent moves (Sharesight / Morningstar / Kubera free tier) | Non-brokerage + transparency are the defenses |
@@ -221,7 +223,7 @@ Not a growth-phenomenon project. Expected niche: open, transparent, non-brokerag
 - Hosting: Fly.io, single platform
 - DB: SQLite on persistent volume
 - Auth in v0.1: single-user env-var admin token. Magic-link in v0.2.
-- LLM default: Anthropic Haiku (default) + Ollama (local) in v0.1; OpenAI/Azure/Gemini in v0.2
+- LLM default: Azure OpenAI GPT-5.4 (default) + Ollama (local) in v0.1; Anthropic/OpenAI-direct/Gemini in v0.2
 - Classification: in-repo YAML
 - Look-through: `yfinance` + YAML fallback; EDGAR in v0.2
 - Review UI: every change needs explicit user confirmation in v0.1
