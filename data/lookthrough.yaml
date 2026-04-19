@@ -159,8 +159,11 @@ VNQ:
   sector: {real_estate: 1.0}
   region: {US: 1.0}
 
-# Target-date funds (approximate 2055-target glidepath: 90/10 equity/bonds).
-VTIVX:
+# Target-date funds. Each one uses the Vanguard glidepath approximated at
+# its current point (2026-04). Long-dated funds are near-100% equity; the
+# blend ramps to ~50/50 bonds by the target year. Updating these annually
+# is fine while the list stays small.
+VTIVX:  # 2055 target
   asset_class:
     equity: 0.90
     fixed_income: 0.10
@@ -173,3 +176,147 @@ VTIVX:
     US: 0.61
     intl_developed: 0.27
     intl_emerging: 0.12
+
+VFIFX:  # 2050 target (HSA + 401k + Roth 401k for the maintainer)
+  asset_class:
+    equity: 0.90
+    fixed_income: 0.10
+  sub_class:
+    us_total_market: 0.54
+    intl_total_market: 0.36
+    us_aggregate: 0.07
+    intl_aggregate: 0.03
+  region:
+    US: 0.61
+    intl_developed: 0.27
+    intl_emerging: 0.12
+
+VFFVX:  # 2055 target
+  asset_class:
+    equity: 0.90
+    fixed_income: 0.10
+  sub_class:
+    us_total_market: 0.54
+    intl_total_market: 0.36
+    us_aggregate: 0.07
+    intl_aggregate: 0.03
+  region:
+    US: 0.61
+    intl_developed: 0.27
+    intl_emerging: 0.12
+
+VLXVX:  # 2065 target
+  asset_class:
+    equity: 0.90
+    fixed_income: 0.10
+  sub_class:
+    us_total_market: 0.54
+    intl_total_market: 0.36
+    us_aggregate: 0.07
+    intl_aggregate: 0.03
+  region:
+    US: 0.61
+    intl_developed: 0.27
+    intl_emerging: 0.12
+
+# Vanguard Total World -- ~60/40 US/intl with emerging inside the intl slice.
+VT:
+  asset_class: {equity: 1.0}
+  sub_class:
+    us_large_cap: 0.48
+    us_mid_cap: 0.07
+    us_small_cap: 0.05
+    intl_developed: 0.30
+    intl_emerging: 0.10
+  sector:
+    technology: 0.24
+    financials: 0.16
+    industrials: 0.10
+    consumer_discretionary: 0.11
+    healthcare: 0.11
+    communication_services: 0.07
+    consumer_staples: 0.06
+    energy: 0.05
+    materials: 0.05
+    utilities: 0.03
+    real_estate: 0.02
+  region:
+    US: 0.60
+    intl_developed: 0.30
+    intl_emerging: 0.10
+
+# iShares Core MSCI Total International (ex-US).
+IXUS:
+  asset_class: {equity: 1.0}
+  sub_class:
+    intl_developed: 0.75
+    intl_emerging: 0.25
+  sector:
+    financials: 0.21
+    technology: 0.13
+    industrials: 0.13
+    consumer_discretionary: 0.11
+    healthcare: 0.09
+    consumer_staples: 0.07
+    communication_services: 0.06
+    materials: 0.07
+    energy: 0.06
+    utilities: 0.04
+    real_estate: 0.03
+  region:
+    intl_developed: 0.75
+    intl_emerging: 0.25
+
+# Schwab S&P 500 Index (mutual fund) -- same composition as VOO/SPY.
+SWPPX:
+  asset_class: {equity: 1.0}
+  sub_class: {us_large_cap: 1.0}
+  sector:
+    technology: 0.32
+    financials: 0.13
+    consumer_discretionary: 0.11
+    healthcare: 0.11
+    communication_services: 0.09
+    industrials: 0.08
+    consumer_staples: 0.06
+    energy: 0.04
+    real_estate: 0.02
+    utilities: 0.02
+    materials: 0.02
+  region: {US: 1.0}
+
+# Schwab US Aggregate Bond (mutual fund) -- same composition as BND/AGG.
+SWAGX:
+  asset_class: {fixed_income: 1.0}
+  sub_class: {us_aggregate: 1.0}
+  region: {US: 1.0}
+
+# Schwab International Index (developed-markets equity).
+SWISX:
+  asset_class: {equity: 1.0}
+  sub_class: {intl_developed: 1.0}
+  sector:
+    financials: 0.22
+    industrials: 0.16
+    consumer_discretionary: 0.11
+    healthcare: 0.11
+    technology: 0.09
+    consumer_staples: 0.08
+    materials: 0.07
+    energy: 0.05
+    communication_services: 0.05
+    utilities: 0.04
+    real_estate: 0.02
+  region: {intl_developed: 1.0}
+
+# SPDR 1-3 Month T-Bill -- effectively short-duration Treasuries.
+BIL:
+  asset_class: {fixed_income: 1.0}
+  sub_class: {us_treasury_short: 1.0}
+  region: {US: 1.0}
+
+# iShares California Muni Bond.
+CMF:
+  asset_class: {fixed_income: 1.0}
+  sub_class: {us_municipal: 1.0}
+  region: {US: 1.0}

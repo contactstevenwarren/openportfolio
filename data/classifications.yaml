@@ -92,6 +92,51 @@ VIOO:
   sub_class: us_small_cap
   sector: diversified
   region: US
+IJH:
+  asset_class: equity
+  sub_class: us_mid_cap
+  sector: diversified
+  region: US
+IJR:
+  asset_class: equity
+  sub_class: us_small_cap
+  sector: diversified
+  region: US
+SCHA:
+  asset_class: equity
+  sub_class: us_small_cap
+  sector: diversified
+  region: US
+SCHG:
+  asset_class: equity
+  sub_class: us_large_cap_growth
+  sector: diversified
+  region: US
+SWPPX:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: diversified
+  region: US
+FNDX:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: diversified
+  region: US
+FNDA:
+  asset_class: equity
+  sub_class: us_small_cap
+  sector: diversified
+  region: US
+PRF:
+  asset_class: equity
+  sub_class: us_large_cap
+  sector: diversified
+  region: US
+PRFZ:
+  asset_class: equity
+  sub_class: us_small_cap
+  sector: diversified
+  region: US
 
 # ---- sector ETFs ----------------------------------------------------------
 
@@ -153,6 +198,51 @@ IEMG:
   sub_class: intl_emerging
   sector: diversified
   region: intl_emerging
+SCHE:
+  asset_class: equity
+  sub_class: intl_emerging
+  sector: diversified
+  region: intl_emerging
+FNDE:
+  asset_class: equity
+  sub_class: intl_emerging
+  sector: diversified
+  region: intl_emerging
+SWISX:
+  asset_class: equity
+  sub_class: intl_developed
+  sector: diversified
+  region: intl_developed
+FNDF:
+  asset_class: equity
+  sub_class: intl_developed
+  sector: diversified
+  region: intl_developed
+PXF:
+  asset_class: equity
+  sub_class: intl_developed
+  sector: diversified
+  region: intl_developed
+SCHC:
+  asset_class: equity
+  sub_class: intl_developed_small_cap
+  sector: diversified
+  region: intl_developed
+FNDC:
+  asset_class: equity
+  sub_class: intl_developed_small_cap
+  sector: diversified
+  region: intl_developed
+IXUS:
+  asset_class: equity
+  sub_class: intl_total_market
+  sector: diversified
+  region: intl_developed
+VT:
+  asset_class: equity
+  sub_class: world
+  sector: diversified
+  region: global
 
 # ---- individual US equities ----------------------------------------------
 
@@ -231,6 +321,22 @@ VTEB:
   asset_class: fixed_income
   sub_class: us_municipal
   region: US
+CMF:
+  asset_class: fixed_income
+  sub_class: us_municipal
+  region: US
+SWAGX:
+  asset_class: fixed_income
+  sub_class: us_aggregate
+  region: US
+BIL:
+  asset_class: fixed_income
+  sub_class: us_treasury_short
+  region: US
+EBND:
+  asset_class: fixed_income
+  sub_class: em_bonds
+  region: intl_emerging
 
 # ---- real estate ----------------------------------------------------------
 
@@ -240,6 +346,21 @@ VNQ:
   sector: real_estate
   region: US
 VNQI:
+  asset_class: real_estate
+  sub_class: intl_reits
+  sector: real_estate
+  region: intl_developed
+USRT:
+  asset_class: real_estate
+  sub_class: us_reits
+  sector: real_estate
+  region: US
+SCHH:
+  asset_class: real_estate
+  sub_class: us_reits
+  sector: real_estate
+  region: US
+HAUZ:
   asset_class: real_estate
   sub_class: intl_reits
   sector: real_estate
@@ -277,8 +398,14 @@ ETH-USD:
 IBIT:
   asset_class: crypto
   sub_class: bitcoin
+ADA:
+  asset_class: crypto
+  sub_class: other
+ICP:
+  asset_class: crypto
+  sub_class: other
 
-# ---- target-date funds (look-through in M4) -------------------------------
+# ---- target-date funds (look-through in lookthrough.yaml) -----------------
 
 VTIVX:
   asset_class: equity
@@ -289,6 +416,10 @@ VFFVX:
   sub_class: target_date
   region: global
 VLXVX:
+  asset_class: equity
+  sub_class: target_date
+  region: global
+VFIFX:
   asset_class: equity
   sub_class: target_date
   region: global
@@ -307,3 +438,12 @@ VMFXX:
 FDRXX:
   asset_class: cash
   sub_class: money_market
+SNSXX:
+  asset_class: cash
+  sub_class: money_market
+USD:
+  asset_class: cash
+  sub_class: cash
+USDT:
+  asset_class: cash
+  sub_class: stablecoin
