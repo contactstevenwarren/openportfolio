@@ -134,8 +134,8 @@ From roadmap §4: maintainer pastes 6 accounts in <3 min, adds non-brokerage ass
 ## Task checklist
 
 - [x] **M0 infra** — Fly `sjc` volume `op_data` (1GB, `vol_4ojknjom2pgo8wor`), `/data` mount verified (`lost+found` visible), scaled to 1 machine (SQLite single-writer), 6 secrets deployed (`ADMIN_TOKEN`, `LLM_PROVIDER=azure`, 4 Azure vars), `/health` green.
-- [ ] **M1 schema** — `sqlalchemy` + `pydantic-settings` deps, `db.py` + `models.py` (accounts, positions, classifications, snapshots, provenance), `create_all` on startup.
-- [ ] **M1 auth** — `auth.py` admin-token dependency, wired globally, 401/200 tests.
+- [x] **M1 schema** — `sqlalchemy` 2.0.49 + `pydantic-settings` 2.13.1 deps, `backend/app/db.py` + `models.py` (5 tables per roadmap section 6), `create_all` on FastAPI startup lifespan. `docker-compose.yml` mounts named volume at `/data` to match prod.
+- [x] **M1 auth** — `backend/app/auth.py` `require_admin_token` (constant-time `hmac.compare_digest`, 503 when unconfigured to prevent empty-token footgun). 4 pytest cases covering missing/wrong/correct token + unconfigured server. Dev deps in `[dependency-groups].dev` so `uv sync --no-dev` keeps prod image lean.
 - [ ] **M2 classifications seed** — `data/classifications.yaml` with ~10 seed tickers.
 - [ ] **M2 LLM extract** — `llm.py` LiteLLM Azure wrapper + `validation.py` + `POST /api/extract` with schema/confidence/spans.
 - [ ] **M2 allocation stub** — `allocation.py` stub + `GET /api/allocation` + `POST /api/positions/commit` + account CRUD.
