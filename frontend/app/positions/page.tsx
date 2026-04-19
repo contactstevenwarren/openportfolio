@@ -8,28 +8,45 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { api, type Account, type Position } from '../lib/api';
+import { api, type Account, type ClassificationRow, type Position } from '../lib/api';
+import { humanize } from '../lib/labels';
 import { Provenance } from '../lib/provenance';
 
 export default function PositionsPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [classifications, setClassifications] = useState<ClassificationRow[]>([]);
   const [drafts, setDrafts] = useState<Record<number, Position>>({});
   const [busyId, setBusyId] = useState<number | null>(null);
   const [busyBatch, setBusyBatch] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  // Filters
+  // Filters. ticker filter is populated from a ?ticker= query param
+  // when navigating in from /classifications so the Holdings link lands
+  // on the filtered view.
   const [filterAccountId, setFilterAccountId] = useState<number | 'all'>('all');
   const [filterSource, setFilterSource] = useState('');
   const [filterFrom, setFilterFrom] = useState('');
   const [filterTo, setFilterTo] = useState('');
+  const [filterTicker, setFilterTicker] = useState('');
 
   useEffect(() => {
     refresh();
     api.accounts().then(setAccounts).catch(() => {});
+    api.classifications().then(setClassifications).catch(() => {});
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const t = params.get('ticker');
+      if (t) setFilterTicker(t);
+    }
   }, []);
+
+  const classificationByTicker = useMemo(() => {
+    const m = new Map<string, ClassificationRow>();
+    for (const c of classifications) m.set(c.ticker, c);
+    return m;
+  }, [classifications]);
 
   function refresh() {
     api
@@ -46,15 +63,17 @@ export default function PositionsPage() {
 
   const filtered = useMemo(() => {
     const srcQuery = filterSource.trim().toLowerCase();
+    const tickerQuery = filterTicker.trim().toLowerCase();
     return positions.filter((p) => {
       if (filterAccountId !== 'all' && p.account_id !== filterAccountId) return false;
       if (srcQuery && !p.source.toLowerCase().includes(srcQuery)) return false;
+      if (tickerQuery && !p.ticker.toLowerCase().includes(tickerQuery)) return false;
       const asOf = p.as_of.slice(0, 10);
       if (filterFrom && asOf < filterFrom) return false;
       if (filterTo && asOf > filterTo) return false;
       return true;
     });
-  }, [positions, filterAccountId, filterSource, filterFrom, filterTo]);
+  }, [positions, filterAccountId, filterSource, filterTicker, filterFrom, filterTo]);
 
   const allFilteredSelected =
     filtered.length > 0 && filtered.every((p) => selected.has(p.id));
@@ -90,8 +109,10 @@ export default function PositionsPage() {
     const original = positions.find((p) => p.id === id);
     if (!original) return;
 
+    // ticker is intentionally read-only (v0.1.5.1): mutating it can
+    // silently unclassify the position or orphan a user-created
+    // Classification row. Users fix bad tickers by deleting + re-entering.
     const changed: Record<string, number | string | null> = {};
-    if (draft.ticker !== original.ticker) changed.ticker = draft.ticker;
     if (draft.shares !== original.shares) changed.shares = draft.shares;
     if (draft.cost_basis !== original.cost_basis) changed.cost_basis = draft.cost_basis;
     if (draft.market_value !== original.market_value) changed.market_value = draft.market_value;
@@ -214,6 +235,15 @@ export default function PositionsPage() {
           </datalist>
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={{ fontSize: '0.8rem', color: '#666' }}>Ticker contains</span>
+          <input
+            value={filterTicker}
+            onChange={(e) => setFilterTicker(e.target.value)}
+            placeholder="VTI, wine..."
+            style={{ padding: '0.35rem 0.4rem', width: 150 }}
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={{ fontSize: '0.8rem', color: '#666' }}>As of from</span>
           <input
             type="date"
@@ -236,6 +266,7 @@ export default function PositionsPage() {
           onClick={() => {
             setFilterAccountId('all');
             setFilterSource('');
+            setFilterTicker('');
             setFilterFrom('');
             setFilterTo('');
           }}
@@ -311,6 +342,7 @@ export default function PositionsPage() {
                 <th style={th}>#</th>
                 <th style={th}>Account</th>
                 <th style={th}>Ticker</th>
+                <th style={th}>Asset class</th>
                 <th style={th}>Shares</th>
                 <th style={th}>Cost basis</th>
                 <th style={th}>Market value</th>
@@ -322,6 +354,7 @@ export default function PositionsPage() {
             <tbody>
               {filtered.map((p) => {
                 const d = drafts[p.id] ?? p;
+                const cls = classificationByTicker.get(p.ticker);
                 return (
                   <tr key={p.id} style={{ borderBottom: '1px solid #eee' }}>
                     <td style={td}>
@@ -336,12 +369,30 @@ export default function PositionsPage() {
                     <td style={td} title={accountLabel(p.account_id)}>
                       {accountLabel(p.account_id)}
                     </td>
+                    <td style={{ ...td, color: '#333' }} title="Read-only: delete + re-enter to change">
+                      <code>{p.ticker}</code>
+                    </td>
                     <td style={td}>
-                      <input
-                        value={d.ticker}
-                        onChange={(e) => patchDraft(p.id, { ticker: e.target.value })}
-                        style={{ width: 160 }}
-                      />
+                      {cls ? (
+                        <a
+                          href={`/classifications?ticker=${encodeURIComponent(p.ticker)}`}
+                          style={{ color: '#111', textDecoration: 'none' }}
+                          title={`${humanize(cls.asset_class)}${cls.sub_class ? ` / ${humanize(cls.sub_class)}` : ''}${cls.source === 'user' ? ' (your override)' : ''}`}
+                        >
+                          {humanize(cls.asset_class)}
+                          {cls.source === 'user' && (
+                            <span style={overrideBadge} title="Your override">·</span>
+                          )}
+                        </a>
+                      ) : (
+                        <a
+                          href="/classifications"
+                          style={unclassifiedBadge}
+                          title="No classification for this ticker; click to manage"
+                        >
+                          unclassified
+                        </a>
+                      )}
                     </td>
                     <td style={td}>
                       <input
@@ -411,3 +462,17 @@ export default function PositionsPage() {
 
 const th = { padding: '0.5rem 0.25rem', fontWeight: 600 };
 const td = { padding: '0.35rem 0.25rem', verticalAlign: 'top' as const };
+const overrideBadge = {
+  marginLeft: 4,
+  color: '#9a7b1f',
+  fontWeight: 700,
+} as const;
+const unclassifiedBadge = {
+  padding: '0.1rem 0.5rem',
+  background: '#fde7ea',
+  color: 'crimson',
+  border: '1px solid #f0b4bc',
+  borderRadius: 3,
+  fontSize: '0.75rem',
+  textDecoration: 'none',
+} as const;

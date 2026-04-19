@@ -14,6 +14,7 @@ import { useState } from 'react';
 import useSWR from 'swr';
 
 import { api, type AllocationResult, type AllocationSlice } from './lib/api';
+import { humanize } from './lib/labels';
 import { Provenance } from './lib/provenance';
 
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false });
@@ -104,14 +105,18 @@ export default function Home() {
               tooltip: {
                 trigger: 'item',
                 formatter: (p: { name: string; value: number }) =>
-                  `${p.name}: ${formatUSD(p.value)} (${((p.value / data.total) * 100).toFixed(1)}%)`,
+                  `${humanize(p.name)}: ${formatUSD(p.value)} (${((p.value / data.total) * 100).toFixed(1)}%)`,
               },
               series: [
                 {
                   type: 'sunburst',
                   radius: [20, '92%'],
                   data: buildSunburstData(data.by_asset_class),
-                  label: { rotate: 'radial', minAngle: 18 },
+                  label: {
+                    rotate: 'radial',
+                    minAngle: 18,
+                    formatter: (p: { name: string }) => humanize(p.name),
+                  },
                   levels: [
                     {},
                     { r0: '0%', r: '35%', itemStyle: { borderWidth: 2 } },
@@ -206,7 +211,9 @@ function DrillPanel({
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <h3 style={{ marginTop: 0, fontSize: '1rem' }}>{drill.join(' › ')}</h3>
+        <h3 style={{ marginTop: 0, fontSize: '1rem' }}>
+          {drill.map(humanize).join(' › ')}
+        </h3>
         <button onClick={onReset} style={{ fontSize: '0.8rem' }}>
           Reset
         </button>
@@ -214,7 +221,7 @@ function DrillPanel({
       {slice ? (
         <>
           <p style={{ fontSize: '1.2rem', fontWeight: 600, margin: '0.5rem 0' }}>
-            <Provenance source={`wedge: ${drill.join(' › ')}`}>
+            <Provenance source={`wedge: ${drill.map(humanize).join(' › ')}`}>
               {formatUSD(slice.value)}
             </Provenance>{' '}
             <span style={{ color: '#666', fontWeight: 400, fontSize: '0.9rem' }}>
@@ -277,7 +284,7 @@ function DrillPanel({
               <ul style={{ paddingLeft: '1.25rem', margin: '0.25rem 0' }}>
                 {slice.children.map((c) => (
                   <li key={c.name}>
-                    {c.name} — {formatUSD(c.value)} ({c.pct.toFixed(1)}%)
+                    {humanize(c.name)} — {formatUSD(c.value)} ({c.pct.toFixed(1)}%)
                   </li>
                 ))}
               </ul>
@@ -307,7 +314,7 @@ function BreakdownTable({ data }: { data: AllocationResult }) {
         <tbody>
           {data.by_asset_class.map((s) => (
             <tr key={s.name} style={{ borderBottom: '1px solid #eee' }}>
-              <td style={td}>{s.name}</td>
+              <td style={td}>{humanize(s.name)}</td>
               <td style={td}>
                 <Provenance
                   source={`sum of ${s.tickers?.length ?? 0} position(s): ${(s.tickers ?? []).join(', ') || '—'}`}

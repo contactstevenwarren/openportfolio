@@ -12,7 +12,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { api, type Account, type TaxonomyOption } from '../lib/api';
+import { api, type Account, type ClassificationRow, type TaxonomyOption } from '../lib/api';
+import { REGION_OPTIONS } from '../lib/labels';
 
 export default function ManualPage() {
   const [label, setLabel] = useState('');
@@ -25,6 +26,7 @@ export default function ManualPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountId, setAccountId] = useState<number | null>(null);
   const [taxonomy, setTaxonomy] = useState<TaxonomyOption[]>([]);
+  const [classifications, setClassifications] = useState<ClassificationRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
 
@@ -39,7 +41,27 @@ export default function ManualPage() {
       .taxonomy()
       .then((t) => setTaxonomy(t.asset_classes))
       .catch(() => {});
+    // Pull existing classifications so we can suggest sub_class / sector
+    // values the user (or the bundled YAML) has already used.
+    api.classifications().then(setClassifications).catch(() => {});
   }, []);
+
+  // Datalist options: existing sub_class values for the currently-
+  // selected asset_class, and existing sector values (all asset classes;
+  // sector is equity-biased but not strictly). Sorted, de-duplicated.
+  const subClassSuggestions = useMemo(() => {
+    const values = classifications
+      .filter((c) => c.asset_class === assetClass && c.sub_class)
+      .map((c) => c.sub_class as string);
+    return Array.from(new Set(values)).sort();
+  }, [classifications, assetClass]);
+
+  const sectorSuggestions = useMemo(() => {
+    const values = classifications
+      .filter((c) => c.sector)
+      .map((c) => c.sector as string);
+    return Array.from(new Set(values)).sort();
+  }, [classifications]);
 
   const proposedTicker = useMemo(() => slug(label), [label]);
 
@@ -149,13 +171,19 @@ export default function ManualPage() {
         </label>
 
         <label style={field}>
-          <span style={fieldLabel}>Sub-class (free text)</span>
+          <span style={fieldLabel}>Sub-class (free text, suggestions below)</span>
           <input
             value={subClass}
             onChange={(e) => setSubClass(e.target.value)}
+            list="manual-subclass"
             placeholder="direct, gold, wine, hsa_cash..."
             style={input}
           />
+          <datalist id="manual-subclass">
+            {subClassSuggestions.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
         </label>
 
         <label style={field}>
@@ -163,19 +191,30 @@ export default function ManualPage() {
           <input
             value={sector}
             onChange={(e) => setSector(e.target.value)}
-            placeholder="real_estate, technology..."
+            list="manual-sector"
+            placeholder="technology, real_estate..."
             style={input}
           />
+          <datalist id="manual-sector">
+            {sectorSuggestions.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
         </label>
 
         <label style={field}>
           <span style={fieldLabel}>Region (optional)</span>
-          <input
+          <select
             value={region}
             onChange={(e) => setRegion(e.target.value)}
-            placeholder="US, intl_developed, global..."
             style={input}
-          />
+          >
+            {REGION_OPTIONS.map((o) => (
+              <option key={o.value || 'none'} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label style={field}>

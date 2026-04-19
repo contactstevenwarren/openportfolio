@@ -28,6 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/positions" style={{ color: '#111' }}>
             Positions
           </a>
+          <a href="/classifications" style={{ color: '#111' }}>
+            Classifications
+          </a>
         </nav>
         {children}
       </body>
