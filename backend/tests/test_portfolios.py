@@ -165,6 +165,32 @@ def test_real_world_mix() -> None:
     # Alts = real estate 400k + gold 10k + crypto 5k = 415k
     assert abs(summary.alts_pct - (415_000.0 / expected_total * 100)) < 0.01
 
+    # Equity sector_breakdown: VTI + VXUS pull from lookthrough.yaml,
+    # AAPL contributes 100% to its classifications.yaml sector (tech).
+    # Sector names must come from the equity tickers' sector data, and
+    # the rollup must sum back to the equity slice value.
+    equity = next(s for s in result.by_asset_class if s.name == "equity")
+    assert equity.sector_breakdown, "expected non-empty equity sector_breakdown"
+    expected_sectors = {
+        "technology",
+        "financials",
+        "consumer_discretionary",
+        "healthcare",
+        "industrials",
+        "communication_services",
+        "consumer_staples",
+        "energy",
+        "real_estate",
+        "utilities",
+        "materials",
+    }
+    sector_names = {s.name for s in equity.sector_breakdown}
+    assert sector_names <= expected_sectors, (
+        f"unexpected sectors: {sector_names - expected_sectors}"
+    )
+    sector_sum = sum(s.value for s in equity.sector_breakdown)
+    assert abs(sector_sum - equity.value) < 0.01
+
 
 def test_real_world_ring_nesting_is_three_deep() -> None:
     positions = [

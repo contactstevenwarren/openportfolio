@@ -1,13 +1,21 @@
 'use client';
 
-// M4 hero screen.
-//   Ring 1  asset_class   (equity / fixed_income / real_estate / ...)
-//   Ring 2  region        (US / intl_developed / emerging / global / other)
-//   Ring 3  sub_class     (us_large_cap / us_aggregate / cd / direct / ...)
+// v0.1.6 hero: single donut + context-aware one-level drill-down.
 //
-// The 5-number summary strip on top is the acceptance bar from roadmap
-// phase 0.1 -- a user must answer "what fraction is cash?" in <5s
-// without hovering.
+// Root view shows one slice per asset class. Click a drillable slice (or
+// its table row) and the same chart re-renders for that class's natural
+// sub-breakdown:
+//   equity        → Geography (regions) | Sector (look-through)
+//   fixed_income  → sub_class (Treasury / TIPS / Corporate / ...)
+//   real_estate   → sub_class (Direct / REITs / ...)
+//   cash          → sub_class (MM / CDs / Checking / ...)
+//   crypto        → sub_class (BTC / ETH / ...)
+//   commodity     → not drillable
+//   private       → not drillable
+//
+// Percentages at root are % of net worth. Percentages inside a drill are
+// % of the parent asset class's total, so they sum to 100% within the
+// drill.
 
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
@@ -19,12 +27,27 @@ import { Provenance } from './lib/provenance';
 
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false });
 
+type Dim = 'geography' | 'sector' | 'sub_class';
+type Drill = { assetClass: string; dim: Dim } | null;
+
+// Which asset classes are drillable and which dimensions each supports.
+// First dim is the default when the user drills in. Asset classes absent
+// from this map render without the `›` chevron and ignore slice/row
+// clicks (commodity, private).
+const DRILL_CONFIG: Record<string, Dim[]> = {
+  equity: ['geography', 'sector'],
+  fixed_income: ['sub_class'],
+  real_estate: ['sub_class'],
+  cash: ['sub_class'],
+  crypto: ['sub_class'],
+};
+
 export default function Home() {
   const { data, error, isLoading } = useSWR<AllocationResult>(
     '/api/allocation',
     api.allocation,
   );
-  const [drill, setDrill] = useState<string[] | null>(null);
+  const [drill, setDrill] = useState<Drill>(null);
 
   if (isLoading) return <Frame>Loading…</Frame>;
   if (error) {
@@ -39,48 +62,79 @@ export default function Home() {
   }
   if (!data) return <Frame>No data.</Frame>;
 
-  const summary = data.summary;
+  const root = data.by_asset_class;
+  const parentSlice = drill ? root.find((s) => s.name === drill.assetClass) ?? null : null;
+  const drillSlices = drill ? getDrillSlices(root, drill) : [];
+  const tableRows: AllocationSlice[] = drill ? drillSlices : root.filter((s) => s.value > 0);
+
+  const onDrillInto = (name: string) => {
+    if (drill) return;
+    const dims = DRILL_CONFIG[name];
+    if (!dims) return;
+    setDrill({ assetClass: name, dim: dims[0] });
+  };
+
+  const centerTop = drill ? humanize(drill.assetClass) : '';
+  const centerBottom = drill && parentSlice ? formatUSDCompact(parentSlice.value) : '';
+  const emptyDrill = drill !== null && tableRows.length === 0;
 
   return (
     <Frame>
-      {/* 5-number summary strip */}
-      {summary && (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
-            gap: '0.75rem',
-            margin: '0 0 1.5rem',
-            padding: '1rem',
-            borderRadius: 6,
-            background: '#f5f7fa',
-          }}
-        >
-          <SummaryCell
-            label="Net worth"
-            value={formatUSD(summary.net_worth)}
-            provenance="sum of committed positions (market_value → cost_basis fallback)"
-          />
-          <SummaryCell
-            label="Cash"
-            value={formatPct(summary.cash_pct)}
-            provenance="cash asset class ÷ net worth"
-          />
-          <SummaryCell
-            label="US equity"
-            value={formatPct(summary.us_equity_pct)}
-            provenance="equity (region=US, look-through weighted) ÷ net worth"
-          />
-          <SummaryCell
-            label="Intl equity"
-            value={formatPct(summary.intl_equity_pct)}
-            provenance="equity (region≠US, look-through weighted) ÷ net worth"
-          />
-          <SummaryCell
-            label="Alts"
-            value={formatPct(summary.alts_pct)}
-            provenance="real_estate + commodity + crypto + private ÷ net worth"
-          />
+      <h1 style={{ fontSize: '1.4rem', fontWeight: 500, margin: '0 0 1rem' }}>
+        Net worth ·{' '}
+        <Provenance source="sum of committed positions (market_value → cost_basis fallback)">
+          {formatUSD(data.total)}
+        </Provenance>
+      </h1>
+
+      <div style={{ minHeight: '1.5rem', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+        {drill ? (
+          <>
+            <button
+              onClick={() => setDrill(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                color: '#2563eb',
+                cursor: 'pointer',
+                font: 'inherit',
+              }}
+            >
+              ← Portfolio
+            </button>
+            <span style={{ color: '#666' }}>
+              {' / '}
+              {humanize(drill.assetClass)}
+            </span>
+          </>
+        ) : (
+          <span style={{ color: '#888' }}>Click a slice or row to drill in</span>
+        )}
+      </div>
+
+      {drill?.assetClass === 'equity' && (
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          {(['geography', 'sector'] as const).map((d) => {
+            const active = drill.dim === d;
+            return (
+              <button
+                key={d}
+                onClick={() => setDrill({ ...drill, dim: d })}
+                style={{
+                  padding: '0.25rem 0.75rem',
+                  fontSize: '0.85rem',
+                  border: '1px solid #ccc',
+                  borderRadius: 4,
+                  background: active ? '#222' : '#fff',
+                  color: active ? '#fff' : '#222',
+                  cursor: 'pointer',
+                }}
+              >
+                {humanize(d)}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -88,52 +142,117 @@ export default function Home() {
         <p style={{ color: '#555' }}>
           No positions committed yet. Start at <a href="/positions">/positions</a>.
         </p>
+      ) : emptyDrill ? (
+        <p style={{ color: '#888' }}>
+          No {humanize(drill!.dim)} data for {humanize(drill!.assetClass)}.
+        </p>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.5rem' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(320px, 1fr) minmax(0, 1fr)',
+            gap: '1.5rem',
+            alignItems: 'start',
+          }}
+        >
           <ReactECharts
-            style={{ height: 520 }}
+            style={{ height: 420 }}
             onEvents={{
-              click: (p: { treePathInfo?: Array<{ name: string }> }) => {
-                if (p.treePathInfo && p.treePathInfo.length > 1) {
-                  // path[0] is the synthetic root -- skip it.
-                  setDrill(p.treePathInfo.slice(1).map((n) => n.name));
-                }
-              },
+              click: (p: { name: string }) => onDrillInto(p.name),
             }}
             option={{
               tooltip: {
                 trigger: 'item',
-                formatter: (p: { name: string; value: number }) =>
-                  `${humanize(p.name)}: ${formatUSD(p.value)} (${((p.value / data.total) * 100).toFixed(1)}%)`,
+                formatter: (p: { name: string; value: number; percent: number }) =>
+                  `${humanize(p.name)}: ${formatUSD(p.value)} (${p.percent}%)`,
               },
               series: [
                 {
-                  type: 'sunburst',
-                  radius: [20, '92%'],
-                  data: buildSunburstData(data.by_asset_class),
+                  type: 'pie',
+                  radius: ['55%', '85%'],
+                  avoidLabelOverlap: true,
+                  itemStyle: { borderColor: '#fff', borderWidth: 2 },
                   label: {
-                    rotate: 'radial',
-                    minAngle: 18,
+                    show: true,
                     formatter: (p: { name: string }) => humanize(p.name),
                   },
-                  levels: [
-                    {},
-                    { r0: '0%', r: '35%', itemStyle: { borderWidth: 2 } },
-                    { r0: '35%', r: '65%', itemStyle: { borderWidth: 2 } },
-                    { r0: '65%', r: '92%', itemStyle: { borderWidth: 2 } },
-                  ],
-                  itemStyle: { borderColor: '#fff', borderWidth: 2 },
-                  emphasis: { focus: 'ancestor' },
+                  labelLine: { show: true },
+                  emphasis: { itemStyle: { opacity: 0.8 } },
+                  data: tableRows.map((s) => ({ name: s.name, value: s.value })),
+                },
+              ],
+              graphic: [
+                {
+                  type: 'text',
+                  left: 'center',
+                  top: '43%',
+                  style: { text: centerTop, fontSize: 11, fill: '#666' },
+                },
+                {
+                  type: 'text',
+                  left: 'center',
+                  top: '50%',
+                  style: { text: centerBottom, fontSize: 20, fontWeight: 500, fill: '#222' },
                 },
               ],
             }}
           />
 
-          <DrillPanel data={data} drill={drill} onReset={() => setDrill(null)} />
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>
+                <th style={th}>{drill ? 'Sub-category' : 'Category'}</th>
+                <th style={th}>Value ($)</th>
+                <th style={th}>{drill ? '% of parent' : '% of portfolio'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map((s) => {
+                const drillable = !drill && s.name in DRILL_CONFIG;
+                return (
+                  <tr
+                    key={s.name}
+                    onClick={drillable ? () => onDrillInto(s.name) : undefined}
+                    style={{
+                      borderBottom: '1px solid #eee',
+                      cursor: drillable ? 'pointer' : 'default',
+                    }}
+                  >
+                    <td style={td}>
+                      {humanize(s.name)}
+                      {drillable && (
+                        <span style={{ color: '#aaa', marginLeft: 6 }}>›</span>
+                      )}
+                    </td>
+                    <td style={td}>
+                      <Provenance
+                        source={
+                          drill
+                            ? `${humanize(drill.assetClass)} · ${humanize(drill.dim)} · ${s.name}`
+                            : `sum of ${s.tickers?.length ?? 0} position(s): ${(s.tickers ?? []).join(', ') || '—'}`
+                        }
+                      >
+                        {formatUSD(s.value)}
+                      </Provenance>
+                    </td>
+                    <td style={td}>
+                      <Provenance
+                        source={
+                          drill
+                            ? `${formatUSD(s.value)} ÷ ${humanize(drill.assetClass)} total`
+                            : `${formatUSD(s.value)} ÷ net worth`
+                        }
+                      >
+                        {s.pct.toFixed(1)}%
+                      </Provenance>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
-
-      <BreakdownTable data={data} />
 
       {data.unclassified_tickers.length > 0 && (
         <p
@@ -153,210 +272,45 @@ export default function Home() {
   );
 }
 
-function SummaryCell({
-  label,
-  value,
-  provenance,
-}: {
-  label: string;
-  value: string;
-  provenance: string;
-}) {
-  return (
-    <div>
-      <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: '#666' }}>{label}</div>
-      <div style={{ fontSize: '1.4rem', fontWeight: 700, marginTop: 2 }}>
-        <Provenance source={provenance}>{value}</Provenance>
-      </div>
-    </div>
-  );
-}
+// Pure-function derivation of a drill-down view from the root slice tree.
+// Percentages are re-computed against the parent asset class total so
+// they sum to 100% within the drill (not the root's % of net worth).
+function getDrillSlices(
+  root: AllocationSlice[],
+  drill: { assetClass: string; dim: Dim },
+): AllocationSlice[] {
+  const slice = root.find((s) => s.name === drill.assetClass);
+  if (!slice) return [];
+  const parentValue = slice.value;
 
-function DrillPanel({
-  data,
-  drill,
-  onReset,
-}: {
-  data: AllocationResult;
-  drill: string[] | null;
-  onReset: () => void;
-}) {
-  if (!drill) {
-    return (
-      <aside
-        style={{
-          padding: '1rem',
-          border: '1px solid #ddd',
-          borderRadius: 6,
-          background: '#fafafa',
-          fontSize: '0.9rem',
-          color: '#555',
-        }}
-      >
-        <h3 style={{ marginTop: 0, fontSize: '1rem' }}>Drill-down</h3>
-        <p>Click a wedge to see the positions contributing to it.</p>
-      </aside>
-    );
-  }
-
-  const slice = findSlice(data.by_asset_class, drill);
-  return (
-    <aside
-      style={{
-        padding: '1rem',
-        border: '1px solid #ddd',
-        borderRadius: 6,
-        background: '#fafafa',
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <h3 style={{ marginTop: 0, fontSize: '1rem' }}>
-          {drill.map(humanize).join(' › ')}
-        </h3>
-        <button onClick={onReset} style={{ fontSize: '0.8rem' }}>
-          Reset
-        </button>
-      </div>
-      {slice ? (
-        <>
-          <p style={{ fontSize: '1.2rem', fontWeight: 600, margin: '0.5rem 0' }}>
-            <Provenance source={`wedge: ${drill.map(humanize).join(' › ')}`}>
-              {formatUSD(slice.value)}
-            </Provenance>{' '}
-            <span style={{ color: '#666', fontWeight: 400, fontSize: '0.9rem' }}>
-              ({slice.pct.toFixed(1)}%)
-            </span>
-          </p>
-          {drill.length === 1 && slice.tickers && slice.tickers.length > 0 && (
-            <>
-              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.75rem' }}>
-                Contributing tickers
-              </div>
-              <ul style={{ paddingLeft: '1.25rem', margin: '0.25rem 0' }}>
-                {slice.tickers.map((t) => {
-                  const src = data.classification_sources[t];
-                  return (
-                    <li key={t}>
-                      <code>{t}</code>
-                      {src === 'user' && (
-                        <span
-                          style={{
-                            marginLeft: 6,
-                            padding: '0 0.4rem',
-                            fontSize: '0.7rem',
-                            background: '#fff5d6',
-                            border: '1px solid #e0c873',
-                            borderRadius: 3,
-                          }}
-                          title="Classification overridden on /classifications"
-                        >
-                          your override
-                        </span>
-                      )}
-                      {src === 'prefix' && (
-                        <span
-                          style={{
-                            marginLeft: 6,
-                            padding: '0 0.4rem',
-                            fontSize: '0.7rem',
-                            background: '#f0f0f0',
-                            border: '1px solid #ccc',
-                            borderRadius: 3,
-                            color: '#666',
-                          }}
-                          title="Synthetic prefix fallback; will migrate in v0.1.5 M4"
-                        >
-                          prefix
-                        </span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </>
-          )}
-          {slice.children && slice.children.length > 0 && (
-            <>
-              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.75rem' }}>
-                Children
-              </div>
-              <ul style={{ paddingLeft: '1.25rem', margin: '0.25rem 0' }}>
-                {slice.children.map((c) => (
-                  <li key={c.name}>
-                    {humanize(c.name)} — {formatUSD(c.value)} ({c.pct.toFixed(1)}%)
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </>
-      ) : (
-        <p style={{ color: '#888' }}>No data for that wedge.</p>
-      )}
-    </aside>
-  );
-}
-
-function BreakdownTable({ data }: { data: AllocationResult }) {
-  return (
-    <>
-      <h2 style={{ marginTop: '1.5rem', fontSize: '1.1rem' }}>Breakdown (asset class)</h2>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>
-            <th style={th}>Asset class</th>
-            <th style={th}>Value</th>
-            <th style={th}>%</th>
-            <th style={th}>Holdings</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.by_asset_class.map((s) => (
-            <tr key={s.name} style={{ borderBottom: '1px solid #eee' }}>
-              <td style={td}>{humanize(s.name)}</td>
-              <td style={td}>
-                <Provenance
-                  source={`sum of ${s.tickers?.length ?? 0} position(s): ${(s.tickers ?? []).join(', ') || '—'}`}
-                >
-                  {formatUSD(s.value)}
-                </Provenance>
-              </td>
-              <td style={td}>{s.pct.toFixed(1)}%</td>
-              <td style={{ ...td, color: '#555' }}>{(s.tickers ?? []).join(', ')}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </>
-  );
-}
-
-type SunburstNode = {
-  name: string;
-  value: number;
-  children?: SunburstNode[];
-};
-
-function buildSunburstData(root: AllocationSlice[]): SunburstNode[] {
-  function toNode(s: AllocationSlice): SunburstNode {
-    if (!s.children || s.children.length === 0) {
-      return { name: s.name, value: s.value };
+  let raw: { name: string; value: number }[];
+  if (drill.dim === 'geography') {
+    raw = (slice.children ?? []).map((c) => ({ name: c.name, value: c.value }));
+  } else if (drill.dim === 'sector') {
+    raw = (slice.sector_breakdown ?? []).map((c) => ({ name: c.name, value: c.value }));
+  } else {
+    // sub_class: flatten children.children (region → sub_class) and sum
+    // by sub_class name. The backend already emits a region ring for
+    // every asset class, so this collapses the region dimension.
+    const sums = new Map<string, number>();
+    for (const region of slice.children ?? []) {
+      for (const sub of region.children ?? []) {
+        sums.set(sub.name, (sums.get(sub.name) ?? 0) + sub.value);
+      }
     }
-    return { name: s.name, value: s.value, children: s.children.map(toNode) };
+    raw = Array.from(sums, ([name, value]) => ({ name, value }));
   }
-  return root.filter((s) => s.value > 0).map(toNode);
-}
 
-function findSlice(root: AllocationSlice[], path: string[]): AllocationSlice | null {
-  let current: AllocationSlice[] = root;
-  let match: AllocationSlice | null = null;
-  for (const name of path) {
-    const found = current.find((s) => s.name === name);
-    if (!found) return null;
-    match = found;
-    current = found.children ?? [];
-  }
-  return match;
+  return raw
+    .filter((s) => s.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .map((s) => ({
+      name: s.name,
+      value: s.value,
+      pct: parentValue > 0 ? (s.value / parentValue) * 100 : 0,
+      tickers: [],
+      children: [],
+    }));
 }
 
 function Frame({ children }: { children: React.ReactNode }) {
@@ -367,8 +321,10 @@ function formatUSD(n: number): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function formatPct(n: number): string {
-  return `${n.toFixed(1)}%`;
+function formatUSDCompact(n: number): string {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
 }
 
 const th = { padding: '0.5rem 0.25rem', fontWeight: 600 };

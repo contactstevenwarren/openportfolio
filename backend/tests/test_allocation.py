@@ -220,6 +220,56 @@ def test_ring_layout_falls_back_to_other_when_region_or_sub_class_missing() -> N
     assert cash.children[0].value == 10000.0
 
 
+# --- equity sector_breakdown (v0.1.6 PR 1) --------------------------------
+
+
+def test_equity_sector_breakdown_populated() -> None:
+    # VTI has a sector dict in data/lookthrough.yaml; BND and GLD don't.
+    # The equity slice should carry a non-empty sector_breakdown; all
+    # non-equity slices keep the default empty list.
+    result = aggregate(
+        [
+            _position("VTI", market_value=60000.0),
+            _position("BND", market_value=30000.0),
+            _position("GLD", market_value=10000.0),
+        ],
+        load_classifications(),
+    )
+
+    equity = next(s for s in result.by_asset_class if s.name == "equity")
+    assert equity.sector_breakdown, "expected equity sector_breakdown to be populated"
+
+    sector_total = sum(s.value for s in equity.sector_breakdown)
+    assert abs(sector_total - equity.value) < 0.01
+
+    values = [s.value for s in equity.sector_breakdown]
+    assert values == sorted(values, reverse=True)
+
+    for s in result.by_asset_class:
+        if s.name != "equity":
+            assert s.sector_breakdown == []
+
+
+def test_equity_sector_breakdown_empty_without_lookthrough() -> None:
+    # Direct equity ticker with no sector data -- user-owned override so
+    # get_breakdown is suppressed and _classification_weights yields
+    # sec_w={} (entry.sector is None). sector_breakdown should stay empty.
+    entries = {
+        "MYSTOCK": ClassificationEntry(
+            ticker="MYSTOCK",
+            asset_class="equity",
+            sub_class="us_large_cap",
+            region="US",
+            source="user",
+        ),
+    }
+    result = aggregate(
+        [_position("MYSTOCK", market_value=50000.0)], entries
+    )
+    equity = next(s for s in result.by_asset_class if s.name == "equity")
+    assert equity.sector_breakdown == []
+
+
 # --- GET /api/allocation --------------------------------------------------
 
 

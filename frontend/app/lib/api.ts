@@ -67,8 +67,11 @@ export type AllocationSlice = {
   pct: number;
   tickers: string[];
   children?: AllocationSlice[];
+  sector_breakdown?: AllocationSlice[];
 };
 
+// Deprecated on the hero in v0.1.6 (donut redesign). Shape is still on the
+// response for backward compat with any external tooling.
 export type FiveNumberSummary = {
   net_worth: number;
   cash_pct: number;

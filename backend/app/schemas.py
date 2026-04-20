@@ -218,6 +218,10 @@ class AllocationSlice(BaseModel):
     pct: float
     tickers: list[str] = []
     children: list["AllocationSlice"] = []
+    # Populated only on the equity top-level slice; contains one
+    # AllocationSlice per sector with name=sector key, value=dollars,
+    # pct=% of net worth. Empty on every other slice and at nested rings.
+    sector_breakdown: list["AllocationSlice"] = []
 
 
 class FiveNumberSummary(BaseModel):
