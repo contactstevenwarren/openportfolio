@@ -61,6 +61,8 @@ export type CommitResult = {
   tickers: string[];
 };
 
+export type DriftBand = 'on_target' | 'minor' | 'major';
+
 export type AllocationSlice = {
   name: string;
   value: number;
@@ -68,6 +70,9 @@ export type AllocationSlice = {
   tickers: string[];
   children?: AllocationSlice[];
   sector_breakdown?: AllocationSlice[];
+  target_pct?: number | null;
+  drift_pct?: number | null;
+  drift_band?: DriftBand;
 };
 
 // Deprecated on the hero in v0.1.6 (donut redesign). Shape is still on the
@@ -80,6 +85,11 @@ export type FiveNumberSummary = {
   alts_pct: number;
 };
 
+export type DriftThresholds = {
+  minor_pct: number;
+  major_pct: number;
+};
+
 export type AllocationResult = {
   total: number;
   by_asset_class: AllocationSlice[];
@@ -88,6 +98,10 @@ export type AllocationResult = {
   // Per-ticker classification provenance: "yaml" | "user" | "prefix".
   // Drives sunburst hover tooltip provenance labels.
   classification_sources: Record<string, string>;
+  max_drift?: number | null;
+  max_drift_band?: DriftBand;
+  /** When absent, UI uses 1% / 3% absolute drift for band thresholds. */
+  drift_thresholds?: DriftThresholds;
 };
 
 export type BreakdownBucket = {
@@ -154,6 +168,10 @@ export type PositionPatch = {
   market_value?: number | null;
 };
 
+export type TargetRow = { path: string; pct: number };
+
+export type TargetsPayload = { root: TargetRow[]; groups: Record<string, TargetRow[]> };
+
 function getAdminToken(): string {
   if (typeof window === 'undefined') return '';
   let token = window.localStorage.getItem(TOKEN_KEY);
@@ -214,6 +232,32 @@ export const api = {
   deleteAccount: (id: number) =>
     fetchJson<void>(`/api/accounts/${id}`, { method: 'DELETE' }),
   allocation: () => fetchJson<AllocationResult>('/api/allocation'),
+  getTargets: async (): Promise<TargetsPayload> => {
+    if (typeof window === 'undefined') return { root: [], groups: {} };
+    try {
+      const res = await fetch('/api/targets', {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Token': getAdminToken(),
+        },
+      });
+      if (res.status === 401) {
+        clearAdminToken();
+        throw new Error('Admin token rejected. Reload the page to re-enter.');
+      }
+      if (res.status === 404) return { root: [], groups: {} };
+      if (!res.ok) return { root: [], groups: {} };
+      return (await res.json()) as TargetsPayload;
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('Admin token')) throw e;
+      return { root: [], groups: {} };
+    }
+  },
+  putTargets: (body: TargetsPayload) =>
+    fetchJson<TargetsPayload>('/api/targets', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
   positions: () => fetchJson<Position[]>('/api/positions'),
   patchPosition: (id: number, patch: PositionPatch) =>
     fetchJson<Position>(`/api/positions/${id}`, {
