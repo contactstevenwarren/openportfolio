@@ -45,16 +45,16 @@ Not differentiators: ETF decomposition, "AI-powered," multi-account tracking.
 
 One theme per phase. **Done when** is the acceptance bar.
 
-| v | Theme | Capability | Done when |
-|---|---|---|---|
-| 0.1 | Foundation (X-Ray MVP) — **shipped** | Paste → classify → decompose → visualize | See [v0.1 execution plan](v0.1/execution_plan.md) acceptance |
-| 0.1.5 | Entity management | User-manageable accounts, asset types, classifications; snapshot-on-commit for later history | Custom asset type → position → sunburst with zero code edits; snapshot row per commit |
-| 0.2 | PDF drag-and-drop | Drop brokerage PDF → LLM proposes accounts / types / positions → review in v0.1.5 UI | One PDF → most positions extracted → committed in under a few minutes |
-| 0.3 | Design and layout | Tokens, shared components, responsive layout | Consistent look across pages; mobile-usable |
-| 0.4 | Targets | Target allocation + next-dollar deployment guidance | Set targets → see drift → get rebalance hints |
-| 0.5 | Auth and multi-user | Magic-link auth; workspaces | Second user signs up and sees only their data |
-| 0.6 | Historical | Timeline and composition drift on accumulated snapshots | Compare allocation over time with real history |
-| 1.0 | Harden | Docs, stability, release, Tigris nightly backup cron | Public release; automated backups |
+| v | Theme | User Value |
+|---|---|---|
+| 0.1 | Foundation (Shipped) | Instantly visualize your true asset allocation by pasting raw portfolio data. |
+| 0.1.5 | Entity Management | Track custom non-brokerage assets and save manual snapshots of your portfolio. |
+| 0.2 | PDF Import | Eliminate manual data entry by dragging and dropping brokerage statements to extract positions. |
+| 0.3 | Design & Polish | Access and understand your portfolio seamlessly across both desktop and mobile devices. |
+| 0.4 | Targets & Guidance | Keep your portfolio on track with target allocations and smart rebalancing hints. |
+| 0.5 | Auth & Workspaces | Securely save your data across sessions and manage multiple independent portfolios. |
+| 0.6 | Historical Timeline | Visualize how your asset allocation and wealth drift over time. |
+| 1.0 | Public Release | Rely on a production-grade, fully documented platform with automated backups. |
 
 Ordering is indicative, not a schedule.
 
