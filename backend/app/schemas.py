@@ -73,18 +73,22 @@ class AccountRead(BaseModel):
 
 
 class InlineClassification(BaseModel):
-    """Classification fields submitted alongside a manual-entry position.
+    """Classification fields submitted alongside a position commit.
 
-    Set by /manual so the user's choice of asset_class / sub_class /
-    sector / region lands in the Classification table in the same
-    transaction as the Position. /paste leaves it None -- pasted tickers
-    look up classification from YAML or user DB rows.
+    /manual: ``auto_suffix`` defaults True (slug collision suffixing).
+    /paste: sends ``auto_suffix=False`` with optional LLM suggestion meta
+    for provenance on the classification row.
     """
 
     asset_class: str
     sub_class: str | None = None
     sector: str | None = None
     region: str | None = None
+    # True = manual slug flow (suffix on Classification collision). False =
+    # market tickers: never suffix; skip DB write if a row already exists.
+    auto_suffix: bool = True
+    suggestion_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    suggestion_reasoning: str | None = None
 
 
 class CommitPosition(BaseModel):
@@ -94,9 +98,8 @@ class CommitPosition(BaseModel):
     already resolved them). confidence + source_span travel with the row
     so the commit endpoint can persist them in the provenance table.
 
-    ``classification`` is set by /manual entries and triggers a
-    Classification upsert + auto-suffix for ticker collisions. /paste
-    leaves it None.
+    ``classification`` is set by /manual (auto_suffix default) or /paste
+    (auto_suffix false + optional LLM suggestion fields).
     """
 
     ticker: str
@@ -310,6 +313,25 @@ class ClassificationPatch(BaseModel):
     sub_class: str | None = None
     sector: str | None = None
     region: str | None = None
+
+
+class ClassificationSuggestRequest(BaseModel):
+    """Batch ticker classification hints for the paste review UI."""
+
+    tickers: list[str] = Field(min_length=1, max_length=64)
+
+
+class ClassificationSuggestItem(BaseModel):
+    """One row from POST /api/classifications/suggest."""
+
+    ticker: str
+    source: Literal["existing", "llm", "none"]
+    asset_class: str | None = None
+    sub_class: str | None = None
+    sector: str | None = None
+    region: str | None = None
+    confidence: float | None = None
+    reasoning: str | None = None
 
 
 class TaxonomyOption(BaseModel):

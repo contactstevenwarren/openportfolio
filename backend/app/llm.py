@@ -11,13 +11,17 @@ endpoint is only hit via a separate manual eval script (not in CI).
 """
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import litellm
 
 from .config import settings
-from .schemas import ExtractedPosition, ExtractionResult
+from .schemas import ASSET_CLASS_OPTIONS, ExtractedPosition, ExtractionResult
 from .validation import annotate
+
+_ASSET_CLASS_ENUM: list[str] = [o.value for o in ASSET_CLASS_OPTIONS]
+_VALID_ASSET_CLASS_SET: frozenset[str] = frozenset(_ASSET_CLASS_ENUM)
 
 _SYSTEM_PROMPT = """You extract stock/ETF/fund positions from pasted portfolio text.
 
@@ -70,6 +74,38 @@ _JSON_SCHEMA = {
         "additionalProperties": False,
     },
 }
+
+_CLASSIFY_SYSTEM_PROMPT = """You classify a single market ticker into OpenPortfolio's asset_class taxonomy.
+
+Return a JSON object with:
+- asset_class: exactly one of the allowed enum values
+- confidence: 0.0-1.0 (use low values when the symbol is ambiguous or unknown)
+- reasoning: one short factual sentence (no numbers, no advice)
+
+You only receive the ticker symbol — use general knowledge of common ETFs, stocks, and funds."""
+
+_CLASSIFY_JSON_SCHEMA = {
+    "name": "ticker_classify",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "asset_class": {"type": "string", "enum": _ASSET_CLASS_ENUM},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "reasoning": {"type": "string"},
+        },
+        "required": ["asset_class", "confidence", "reasoning"],
+        "additionalProperties": False,
+    },
+}
+
+
+@dataclass(frozen=True)
+class TickerClassificationResult:
+    asset_class: str
+    confidence: float
+    reasoning: str
+    model: str
 
 
 class LLMNotConfiguredError(RuntimeError):
@@ -128,3 +164,40 @@ def extract_positions(text: str) -> ExtractionResult:
         model=model,
         extracted_at=datetime.now(UTC),
     )
+
+
+def classify_ticker(ticker: str) -> TickerClassificationResult | None:
+    """LLM-only asset_class hint for a ticker (paste review). Returns None on failure."""
+    try:
+        model, kwargs = _provider_config()
+        response = litellm.completion(
+            model=model,
+            messages=[
+                {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f'Ticker: "{ticker.strip()}"\nReturn the JSON object.',
+                },
+            ],
+            response_format={"type": "json_schema", "json_schema": _CLASSIFY_JSON_SCHEMA},
+            **kwargs,
+        )
+        content = response.choices[0].message.content
+        raw = json.loads(content)
+        ac = raw["asset_class"]
+        if ac not in _VALID_ASSET_CLASS_SET:
+            return None
+        conf = float(raw["confidence"])
+        if conf < 0 or conf > 1:
+            return None
+        return TickerClassificationResult(
+            asset_class=ac,
+            confidence=conf,
+            reasoning=str(raw["reasoning"]),
+            model=model,
+        )
+    except (LLMNotConfiguredError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
+    except Exception:
+        # LiteLLM / network — treat as unavailable (tests mock success path only).
+        return None

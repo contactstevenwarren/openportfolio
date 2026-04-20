@@ -6,10 +6,12 @@ silently unclassifying held positions.
 """
 
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.llm import TickerClassificationResult
 from app.models import Account, Classification, Position, Provenance
 
 
@@ -38,6 +40,10 @@ def _position(test_db: Session, ticker: str) -> None:
 def test_endpoints_require_admin_token(client: TestClient) -> None:
     assert client.get("/api/classifications").status_code == 401
     assert client.get("/api/classifications/taxonomy").status_code == 401
+    assert (
+        client.post("/api/classifications/suggest", json={"tickers": ["X"]}).status_code
+        == 401
+    )
     assert (
         client.patch("/api/classifications/VTI", json={"asset_class": "equity"}).status_code
         == 401
@@ -337,3 +343,60 @@ def test_delete_noop_when_no_user_row(
     # VTI is yaml-only; delete is a safe no-op (idempotent).
     r = client.delete("/api/classifications/VTI", headers=auth_headers)
     assert r.status_code == 204
+
+
+# --- suggest (paste review) ------------------------------------------------
+
+
+def test_suggest_returns_existing_yaml_row(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    r = client.post(
+        "/api/classifications/suggest",
+        json={"tickers": ["VTI"]},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "VTI"
+    assert rows[0]["source"] == "existing"
+    assert rows[0]["asset_class"] == "equity"
+
+
+def test_suggest_calls_llm_for_unknown_ticker(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    fake = TickerClassificationResult(
+        asset_class="equity",
+        confidence=0.82,
+        reasoning="Large-cap US equity ETF.",
+        model="azure/test-deployment",
+    )
+    with patch("app.main.classify_ticker", return_value=fake):
+        r = client.post(
+            "/api/classifications/suggest",
+            json={"tickers": ["ZZNOTINSEED99"]},
+            headers=auth_headers,
+        )
+    assert r.status_code == 200
+    row = r.json()[0]
+    assert row["source"] == "llm"
+    assert row["asset_class"] == "equity"
+    assert row["confidence"] == 0.82
+    assert row["reasoning"] == "Large-cap US equity ETF."
+
+
+def test_suggest_none_when_llm_returns_null(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    with patch("app.main.classify_ticker", return_value=None):
+        r = client.post(
+            "/api/classifications/suggest",
+            json={"tickers": ["ZZNOTINSEED99"]},
+            headers=auth_headers,
+        )
+    assert r.status_code == 200
+    row = r.json()[0]
+    assert row["source"] == "none"
+    assert row.get("asset_class") in (None, "")

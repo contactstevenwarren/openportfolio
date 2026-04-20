@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
-from app.llm import LLMNotConfiguredError, extract_positions
+from app.llm import LLMNotConfiguredError, classify_ticker, extract_positions
 from app.main import app
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -200,3 +200,36 @@ def test_recorded_fixtures_parse_as_valid_json() -> None:
         parsed = json.loads(llm_json)
         assert "positions" in parsed
         assert len(parsed["positions"]) > 0
+
+
+# --- classify_ticker -------------------------------------------------------
+
+
+def test_classify_ticker_parses_llm_response(azure_configured: None) -> None:
+    llm_json = json.dumps(
+        {
+            "asset_class": "equity",
+            "confidence": 0.9,
+            "reasoning": "US total market ETF.",
+        }
+    )
+    with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
+        result = classify_ticker("VTI")
+    assert result is not None
+    assert result.asset_class == "equity"
+    assert result.confidence == 0.9
+    assert "ETF" in result.reasoning
+
+
+def test_classify_ticker_returns_none_on_invalid_asset_class(
+    azure_configured: None,
+) -> None:
+    llm_json = json.dumps(
+        {
+            "asset_class": "not_a_real_class",
+            "confidence": 0.9,
+            "reasoning": "bad",
+        }
+    )
+    with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
+        assert classify_ticker("X") is None

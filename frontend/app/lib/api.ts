@@ -34,6 +34,10 @@ export type InlineClassification = {
   sub_class?: string | null;
   sector?: string | null;
   region?: string | null;
+  /** false = paste/market ticker (no suffix; skip DB row if exists / YAML match) */
+  auto_suffix?: boolean;
+  suggestion_confidence?: number | null;
+  suggestion_reasoning?: string | null;
 };
 
 export type CommitPosition = {
@@ -148,6 +152,17 @@ export type TaxonomyOption = {
 
 export type Taxonomy = {
   asset_classes: TaxonomyOption[];
+};
+
+export type ClassificationSuggestItem = {
+  ticker: string;
+  source: 'existing' | 'llm' | 'none';
+  asset_class?: string | null;
+  sub_class?: string | null;
+  sector?: string | null;
+  region?: string | null;
+  confidence?: number | null;
+  reasoning?: string | null;
 };
 
 export type Position = {
@@ -268,6 +283,11 @@ export const api = {
     fetchJson<void>(`/api/positions/${id}`, { method: 'DELETE' }),
   classifications: () => fetchJson<ClassificationRow[]>('/api/classifications'),
   taxonomy: () => fetchJson<Taxonomy>('/api/classifications/taxonomy'),
+  suggestClassifications: (tickers: string[]) =>
+    fetchJson<ClassificationSuggestItem[]>('/api/classifications/suggest', {
+      method: 'POST',
+      body: JSON.stringify({ tickers }),
+    }),
   patchClassification: (ticker: string, patch: ClassificationPatch) =>
     fetchJson<ClassificationRow>(`/api/classifications/${encodeURIComponent(ticker)}`, {
       method: 'PATCH',

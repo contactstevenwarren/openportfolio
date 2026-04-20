@@ -14,12 +14,13 @@ from .auth import require_admin_token
 from .config import settings
 from .drift import apply_drift
 from .classifications import (
+    ClassificationEntry,
     load_classifications,
     load_user_classifications,
     migrate_synthetic_positions,
 )
 from .db import Base, SessionLocal, engine, get_db
-from .llm import extract_positions
+from .llm import classify_ticker, extract_positions
 from .lookthrough import Breakdown, get_yaml_breakdowns
 from .models import Account, Classification, Position, Provenance, Snapshot, Target
 from .schemas import (
@@ -31,6 +32,8 @@ from .schemas import (
     BreakdownBucket,
     ClassificationPatch,
     ClassificationRow,
+    ClassificationSuggestItem,
+    ClassificationSuggestRequest,
     CommitResult,
     DriftThresholds,
     ExportResult,
@@ -404,44 +407,94 @@ def commit_positions(
         # intentionally (two brokerages both holding VTI).
         ticker = row.ticker
         if row.classification is not None:
-            if row.classification.asset_class not in _VALID_ASSET_CLASSES:
+            cls_in = row.classification
+            if cls_in.asset_class not in _VALID_ASSET_CLASSES:
                 raise HTTPException(
                     status_code=422,
                     detail=(
                         f"asset_class must be one of "
                         f"{sorted(_VALID_ASSET_CLASSES)}; "
-                        f"got {row.classification.asset_class!r}"
+                        f"got {cls_in.asset_class!r}"
                     ),
                 )
-            ticker = _resolve_ticker(db, ticker)
-            db.add(
-                Classification(
-                    ticker=ticker,
-                    asset_class=row.classification.asset_class,
-                    sub_class=row.classification.sub_class,
-                    sector=row.classification.sector,
-                    region=row.classification.region,
-                    source="user",
-                )
-            )
-            for field, value in (
-                ("asset_class", row.classification.asset_class),
-                ("sub_class", row.classification.sub_class),
-                ("sector", row.classification.sector),
-                ("region", row.classification.region),
-            ):
+            if cls_in.auto_suffix:
+                ticker = _resolve_ticker(db, ticker)
                 db.add(
-                    Provenance(
-                        entity_type="classification",
-                        entity_id=0,
-                        entity_key=ticker,
-                        field=field,
-                        source=body.source,
-                        confidence=1.0,
-                        llm_span=None,
-                        captured_at=now,
+                    Classification(
+                        ticker=ticker,
+                        asset_class=cls_in.asset_class,
+                        sub_class=cls_in.sub_class,
+                        sector=cls_in.sector,
+                        region=cls_in.region,
+                        source="user",
                     )
                 )
+                for field, value in (
+                    ("asset_class", cls_in.asset_class),
+                    ("sub_class", cls_in.sub_class),
+                    ("sector", cls_in.sector),
+                    ("region", cls_in.region),
+                ):
+                    db.add(
+                        Provenance(
+                            entity_type="classification",
+                            entity_id=0,
+                            entity_key=ticker,
+                            field=field,
+                            source=body.source,
+                            confidence=1.0,
+                            llm_span=None,
+                            captured_at=now,
+                        )
+                    )
+            else:
+                # Paste / market tickers: never suffix; skip if a user row
+                # exists; skip redundant user row when YAML already matches.
+                existing_c = db.get(Classification, ticker)
+                if existing_c is None:
+                    yaml_entries = load_classifications()
+                    yaml_hit = yaml_entries.get(ticker)
+                    same_as_yaml = (
+                        yaml_hit is not None
+                        and yaml_hit.asset_class == cls_in.asset_class
+                    )
+                    if not same_as_yaml:
+                        db.add(
+                            Classification(
+                                ticker=ticker,
+                                asset_class=cls_in.asset_class,
+                                sub_class=cls_in.sub_class,
+                                sector=cls_in.sector,
+                                region=cls_in.region,
+                                source="user",
+                            )
+                        )
+                        sc = cls_in.suggestion_confidence
+                        sr = cls_in.suggestion_reasoning
+                        for field, value in (
+                            ("asset_class", cls_in.asset_class),
+                            ("sub_class", cls_in.sub_class),
+                            ("sector", cls_in.sector),
+                            ("region", cls_in.region),
+                        ):
+                            conf = (
+                                sc
+                                if field == "asset_class" and sc is not None
+                                else 1.0
+                            )
+                            span = sr if field == "asset_class" else None
+                            db.add(
+                                Provenance(
+                                    entity_type="classification",
+                                    entity_id=0,
+                                    entity_key=ticker,
+                                    field=field,
+                                    source=body.source,
+                                    confidence=conf,
+                                    llm_span=span,
+                                    captured_at=now,
+                                )
+                            )
 
         position = Position(
             account_id=account.id,
@@ -646,6 +699,53 @@ def get_taxonomy() -> Taxonomy:
     (v0.1.5 M4). Frontend renders ``label``, sends ``value``.
     """
     return Taxonomy(asset_classes=ASSET_CLASS_OPTIONS)
+
+
+@app.post("/api/classifications/suggest", dependencies=[Depends(require_admin_token)])
+def suggest_classifications(
+    body: ClassificationSuggestRequest, db: Session = Depends(get_db)
+) -> list[ClassificationSuggestItem]:
+    """LLM hints for tickers not in merged YAML + user classifications.
+
+    Sends each unknown ticker to the configured LLM (ticker symbol only).
+    """
+    yaml_entries = load_classifications()
+    user_entries = load_user_classifications(db)
+    merged: dict[str, ClassificationEntry] = {**yaml_entries, **user_entries}
+    seen: set[str] = set()
+    out: list[ClassificationSuggestItem] = []
+    for raw in body.tickers:
+        ticker = raw.strip()
+        if not ticker or ticker in seen:
+            continue
+        seen.add(ticker)
+        if ticker in merged:
+            ent = merged[ticker]
+            out.append(
+                ClassificationSuggestItem(
+                    ticker=ticker,
+                    source="existing",
+                    asset_class=ent.asset_class,
+                    sub_class=ent.sub_class,
+                    sector=ent.sector,
+                    region=ent.region,
+                )
+            )
+            continue
+        res = classify_ticker(ticker)
+        if res is None:
+            out.append(ClassificationSuggestItem(ticker=ticker, source="none"))
+        else:
+            out.append(
+                ClassificationSuggestItem(
+                    ticker=ticker,
+                    source="llm",
+                    asset_class=res.asset_class,
+                    confidence=res.confidence,
+                    reasoning=res.reasoning,
+                )
+            )
+    return out
 
 
 def _full_breakdown(br: Breakdown) -> FundBreakdown:
