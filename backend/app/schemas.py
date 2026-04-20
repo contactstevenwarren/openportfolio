@@ -338,6 +338,14 @@ ASSET_CLASS_OPTIONS: list[TaxonomyOption] = [
 ]
 
 
+class DriftThresholds(BaseModel):
+    """Minor/major drift bands from settings, exposed so the UI can
+    colour ring-2 slices the same way the backend classifies them."""
+
+    minor_pct: int
+    major_pct: int
+
+
 class AllocationResult(BaseModel):
     total: float
     by_asset_class: list[AllocationSlice]
@@ -356,14 +364,24 @@ class AllocationResult(BaseModel):
     # v0.2: largest absolute ring-1 drift vs targets (None if no targets).
     max_drift: float | None = None
     max_drift_band: DriftBand | None = None
+    # v0.2: drift bands from settings so the frontend can honour env
+    # overrides (DRIFT_MINOR_PCT / DRIFT_MAJOR_PCT) without shipping its
+    # own defaults. None only for older responses that predate the field.
+    drift_thresholds: DriftThresholds | None = None
 
 
 # ----- targets (v0.2) -----------------------------------------------------
 
 
 class TargetRow(BaseModel):
+    # Dotted path; see _TARGET_PATH_RE in main.py for validation.
     path: str
-    pct: float
+    # Integer percent 0..100. Root targets sum to 100 (% of portfolio);
+    # each non-empty group sums to 100 (% of parent asset class). Pydantic
+    # v2 lax-int rejects floats with a fractional part (e.g. 53.8) at
+    # parse time; exact integers like ``53`` or floats equal to integers
+    # (``53.0`` from older clients) coerce cleanly.
+    pct: int = Field(ge=0, le=100)
 
 
 class TargetsPayload(BaseModel):

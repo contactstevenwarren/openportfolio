@@ -124,14 +124,15 @@ class Target(Base):
 
     ``path`` is the stable key: top-level asset class for ring-1
     (``equity``) or a dotted drill path (``equity.US``,
-    ``fixed_income.us_aggregate``). Percentages are portfolio-level
-    weights (0..100) validated on write.
+    ``fixed_income.us_aggregate``). Root targets are % of portfolio;
+    group targets (``<ac>.<leaf>``) are % of parent asset class.
+    Percentages are integers 0..100 validated on write.
     """
 
     __tablename__ = "targets"
 
     path: Mapped[str] = mapped_column(String(128), primary_key=True)
-    pct: Mapped[float] = mapped_column(Float)
+    pct: Mapped[int] = mapped_column(Integer)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )

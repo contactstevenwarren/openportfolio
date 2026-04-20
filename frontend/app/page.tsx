@@ -63,21 +63,21 @@ function bandFromAbs(abs: number, t: { minor_pct: number; major_pct: number }): 
   return 'major';
 }
 
-function groupKey(drill: Drill): string {
-  if (!drill) return 'root';
-  return `${drill.assetClass}:${drill.dim}`;
+// Backend contract: root rows use bare asset-class paths ("equity"); group
+// rows use bare asset-class keys ("equity") with dotted leaf paths
+// ("equity.US"). <leaf> is exactly slice.name.
+function rowPath(drill: Drill, sliceName: string): string {
+  return drill ? `${drill.assetClass}.${sliceName}` : sliceName;
 }
 
 function getGroupRows(payload: TargetsPayload, drill: Drill): TargetRow[] {
   if (!drill) return payload.root;
-  const k = groupKey(drill);
-  return payload.groups[k] ?? [];
+  return payload.groups[drill.assetClass] ?? [];
 }
 
 function setGroupRows(payload: TargetsPayload, drill: Drill, rows: TargetRow[]): TargetsPayload {
   if (!drill) return { ...payload, root: rows };
-  const k = groupKey(drill);
-  return { ...payload, groups: { ...payload.groups, [k]: rows } };
+  return { ...payload, groups: { ...payload.groups, [drill.assetClass]: rows } };
 }
 
 function sumTargetPct(rows: TargetRow[]): number {
@@ -86,8 +86,7 @@ function sumTargetPct(rows: TargetRow[]): number {
 
 function targetSumOk(rows: TargetRow[]): boolean {
   if (rows.length === 0) return true;
-  const s = sumTargetPct(rows);
-  return s >= 99.9 && s <= 100.1;
+  return sumTargetPct(rows) === 100;
 }
 
 function entirePayloadValid(p: TargetsPayload): boolean {
@@ -100,28 +99,31 @@ function entirePayloadValid(p: TargetsPayload): boolean {
 
 function effectiveTarget(
   rows: TargetRow[],
+  drill: Drill,
   slice: AllocationSlice,
 ): number | null {
-  const local = rows.find((r) => r.path === slice.name);
+  const path = rowPath(drill, slice.name);
+  const local = rows.find((r) => r.path === path);
   if (local) return local.pct;
   if (slice.target_pct != null) return slice.target_pct;
   return null;
 }
 
-function effectiveDrift(rows: TargetRow[], slice: AllocationSlice): number | null {
+function effectiveDrift(rows: TargetRow[], drill: Drill, slice: AllocationSlice): number | null {
   if (slice.drift_pct != null) return slice.drift_pct;
-  const t = effectiveTarget(rows, slice);
+  const t = effectiveTarget(rows, drill, slice);
   if (t == null) return null;
   return slice.pct - t;
 }
 
 function effectiveBand(
   rows: TargetRow[],
+  drill: Drill,
   slice: AllocationSlice,
   t: { minor_pct: number; major_pct: number },
 ): DriftBand | null {
   if (slice.drift_band) return slice.drift_band;
-  const d = effectiveDrift(rows, slice);
+  const d = effectiveDrift(rows, drill, slice);
   if (d == null) return null;
   return bandFromAbs(Math.abs(d), t);
 }
@@ -138,6 +140,7 @@ export default function Home() {
   const [targets, setTargets] = useState<TargetsPayload>(EMPTY_TARGETS);
   const [targetsDirty, setTargetsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (remoteTargets == null) return;
@@ -176,7 +179,7 @@ export default function Home() {
     let m = 0;
     let any = false;
     for (const s of root.filter((x) => x.value > 0)) {
-      const d = effectiveDrift(targets.root, s);
+      const d = effectiveDrift(targets.root, null, s);
       if (d != null) {
         any = true;
         m = Math.max(m, Math.abs(d));
@@ -191,7 +194,7 @@ export default function Home() {
     let m = 0;
     let any = false;
     for (const s of tableRows) {
-      const d = effectiveDrift(targetRows, s);
+      const d = effectiveDrift(targetRows, drill, s);
       if (d != null) {
         any = true;
         m = Math.max(m, Math.abs(d));
@@ -204,8 +207,10 @@ export default function Home() {
   const statusPill = drill ? maxDriftDrill : maxDriftRoot;
 
   const patchTargetPct = useCallback(
-    (path: string, pct: number) => {
+    (sliceName: string, pct: number) => {
+      setSaveError(null);
       setTargetsDirty(true);
+      const path = rowPath(drill, sliceName);
       setTargets((prev) => {
         const rows = getGroupRows(prev, drill);
         const i = rows.findIndex((r) => r.path === path);
@@ -222,11 +227,16 @@ export default function Home() {
   );
 
   const setTargetsFromActuals = useCallback(() => {
+    if (tableRows.length === 0) return;
+    setSaveError(null);
     setTargetsDirty(true);
     setTargets((prev) => {
-      const nextRows: TargetRow[] = tableRows.map((s) => ({
-        path: s.name,
-        pct: Math.round(s.pct * 100) / 100,
+      const rounded = tableRows.map((s) => Math.round(s.pct));
+      const sumOthers = rounded.slice(0, -1).reduce((a, n) => a + n, 0);
+      rounded[rounded.length - 1] = 100 - sumOthers;
+      const nextRows: TargetRow[] = tableRows.map((s, i) => ({
+        path: rowPath(drill, s.name),
+        pct: rounded[i],
       }));
       return setGroupRows(prev, drill, nextRows);
     });
@@ -234,6 +244,7 @@ export default function Home() {
 
   const clearTargetsForGroup = useCallback(() => {
     if (!confirm('Clear saved targets for this view?')) return;
+    setSaveError(null);
     setTargetsDirty(true);
     setTargets((prev) => setGroupRows(prev, drill, []));
   }, [drill]);
@@ -241,10 +252,13 @@ export default function Home() {
   const saveTargets = useCallback(async () => {
     if (!entirePayloadValid(targets)) return;
     setSaving(true);
+    setSaveError(null);
     try {
       await api.putTargets(targets);
       setTargetsDirty(false);
       await mutateTargets();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -253,13 +267,13 @@ export default function Home() {
   const chartOption = useMemo(() => {
     const inner = tableRows.map((s) => ({ name: s.name, value: s.value }));
     const outer = tableRows.map((s) => {
-      const band = sectorInfoOnly ? null : effectiveBand(targetRows, s, thresholds);
+      const band = sectorInfoOnly ? null : effectiveBand(targetRows, drill, s, thresholds);
       let color = '#d1d5db';
       if (!sectorInfoOnly) {
         if (band === 'on_target') color = '#22c55e';
         else if (band === 'minor') color = '#f59e0b';
         else if (band === 'major') color = '#ef4444';
-        else if (effectiveTarget(targetRows, s) == null) color = '#d1d5db';
+        else if (effectiveTarget(targetRows, drill, s) == null) color = '#d1d5db';
       }
       return { name: s.name, value: s.value, itemStyle: { color } };
     });
@@ -309,7 +323,7 @@ export default function Home() {
         },
       ],
     };
-  }, [tableRows, targetRows, thresholds, sectorInfoOnly, centerTop, centerBottom]);
+  }, [tableRows, targetRows, drill, thresholds, sectorInfoOnly, centerTop, centerBottom]);
 
   if (isLoading) return <Frame>Loading…</Frame>;
   if (error) {
@@ -328,7 +342,7 @@ export default function Home() {
   const sumLine =
     targetRows.length > 0 ? (
       <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: targetSumOk(targetRows) ? '#15803d' : '#b45309' }}>
-        Targets sum: {targetSum.toFixed(1)}%{targetSumOk(targetRows) ? ' · within 100±0.1' : ' · must be 100±0.1 to save'}
+        Targets sum: {targetSum}%{targetSumOk(targetRows) ? ' · within 100' : ' · must equal 100 to save'}
       </p>
     ) : null;
 
@@ -434,6 +448,11 @@ export default function Home() {
           <button type="button" onClick={clearTargetsForGroup} style={btnGhost}>
             Clear targets
           </button>
+          {saveError && (
+            <span style={{ fontSize: '0.85rem', color: 'crimson' }}>
+              Save failed: {saveError}
+            </span>
+          )}
         </div>
       )}
 
@@ -476,8 +495,8 @@ export default function Home() {
               <tbody>
                 {tableRows.map((s) => {
                   const drillable = !drill && s.name in DRILL_CONFIG;
-                  const tgt = effectiveTarget(targetRows, s);
-                  const drift = effectiveDrift(targetRows, s);
+                  const tgt = effectiveTarget(targetRows, drill, s);
+                  const drift = effectiveDrift(targetRows, drill, s);
                   return (
                     <tr
                       key={s.name}
@@ -494,16 +513,23 @@ export default function Home() {
                         )}
                       </td>
                       {!sectorInfoOnly && (
-                        <td style={td}>
+                        <td
+                          style={td}
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
                           <input
                             type="number"
                             min={0}
                             max={100}
-                            step={0.1}
+                            step={1}
                             value={tgt ?? ''}
+                            onClick={(e) => e.stopPropagation()}
+                            onMouseDown={(e) => e.stopPropagation()}
                             onChange={(e) => {
-                              const v = parseFloat(e.target.value);
-                              if (Number.isNaN(v)) return;
+                              const raw = parseFloat(e.target.value);
+                              if (Number.isNaN(raw)) return;
+                              const v = Math.max(0, Math.min(100, Math.round(raw)));
                               patchTargetPct(s.name, v);
                             }}
                             style={{ width: '4.5rem', fontSize: '0.9rem' }}

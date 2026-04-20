@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from sqlalchemy import Float as SAFloat
 from sqlalchemy import delete, inspect, text
 from sqlalchemy.orm import Session
 
@@ -31,6 +32,7 @@ from .schemas import (
     ClassificationPatch,
     ClassificationRow,
     CommitResult,
+    DriftThresholds,
     ExportResult,
     ExtractionResult,
     ExtractRequest,
@@ -53,11 +55,19 @@ _TARGET_PATH_RE = re.compile(
 )
 
 
-def _targets_sum_ok(pcts: list[float], tol: float = 0.1) -> bool:
-    return abs(sum(pcts) - 100.0) <= tol + 1e-9
+def _targets_sum_ok(pcts: list[int]) -> bool:
+    # Targets are integers; require exact 100 so the user's input matches
+    # what's persisted (no hidden +/- rounding slop).
+    return sum(pcts) == 100
 
 
 def _validate_put_targets(body: TargetsPayload, result: AllocationResult) -> None:
+    """Enforce the v0.2 targets contract.
+
+    Root targets are ``% of portfolio`` and must cover every funded
+    asset class; each per-group list is ``% of parent asset class`` and
+    must cover every funded drill slice. Both scopes sum to exactly 100.
+    """
     paths: list[str] = []
     for r in body.root:
         paths.append(r.path)
@@ -123,7 +133,7 @@ def _validate_put_targets(body: TargetsPayload, result: AllocationResult) -> Non
         if not _targets_sum_ok([r.pct for r in body.root]):
             raise HTTPException(
                 status_code=422,
-                detail="root targets must sum to 100 (+/- 0.1)",
+                detail="root targets must sum to 100",
             )
 
     by_name = {s.name: s for s in result.by_asset_class}
@@ -156,7 +166,10 @@ def _validate_put_targets(body: TargetsPayload, result: AllocationResult) -> Non
         if not _targets_sum_ok([r.pct for r in rows]):
             raise HTTPException(
                 status_code=422,
-                detail=f"group {gkey!r} targets must sum to 100 (+/- 0.1)",
+                detail=(
+                    f"group {gkey!r} targets must sum to 100 "
+                    "(% of parent asset class)"
+                ),
             )
 
 
@@ -165,11 +178,14 @@ def _targets_get_payload(db: Session) -> dict[str, object]:
     root: list[dict[str, object]] = []
     groups: dict[str, list[dict[str, object]]] = {}
     for r in rows:
+        # Round-trip as int; the column is Integer now but a pre-migration
+        # read could still surface a float from an un-migrated legacy row.
+        pct = int(round(float(r.pct)))
         if "." not in r.path:
-            root.append({"path": r.path, "pct": r.pct})
+            root.append({"path": r.path, "pct": pct})
         else:
             key, _rest = r.path.split(".", 1)
-            groups.setdefault(key, []).append({"path": r.path, "pct": r.pct})
+            groups.setdefault(key, []).append({"path": r.path, "pct": pct})
     for _k, lst in groups.items():
         lst.sort(key=lambda x: str(x["path"]))
     return {"root": root, "groups": groups}
@@ -186,16 +202,61 @@ def _migrate_sqlite_schema() -> None:
     migration tool.
     """
     inspector = inspect(engine)
-    if "provenance" not in inspector.get_table_names():
+    if "provenance" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("provenance")}
+        if "entity_key" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE provenance ADD COLUMN entity_key VARCHAR(64)")
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_provenance_entity_key "
+                        "ON provenance(entity_key)"
+                    )
+                )
+    _migrate_targets_pct_to_int()
+
+
+def _migrate_targets_pct_to_int() -> None:
+    """v0.2 fix: Target.pct flipped from Float to Integer.
+
+    SQLite can't change a column's type in place, so when we find a
+    legacy Float ``pct`` we copy rows out, drop the table, let
+    ``create_all`` recreate it with the new Integer schema, and write
+    the rows back with rounded integer pct. Idempotent: an already-
+    Integer column is a no-op.
+    """
+    inspector = inspect(engine)
+    if "targets" not in inspector.get_table_names():
         return
-    cols = {c["name"] for c in inspector.get_columns("provenance")}
-    if "entity_key" in cols:
+    pct_col = next(
+        (c for c in inspector.get_columns("targets") if c["name"] == "pct"),
+        None,
+    )
+    if pct_col is None or not isinstance(pct_col["type"], SAFloat):
         return
     with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE provenance ADD COLUMN entity_key VARCHAR(64)"))
-        conn.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_provenance_entity_key ON provenance(entity_key)")
-        )
+        legacy = conn.execute(
+            text("SELECT path, pct, updated_at FROM targets")
+        ).all()
+        conn.execute(text("DROP TABLE targets"))
+    Target.__table__.create(bind=engine)
+    if not legacy:
+        return
+    with engine.begin() as conn:
+        for path, pct, updated_at in legacy:
+            conn.execute(
+                text(
+                    "INSERT INTO targets (path, pct, updated_at) "
+                    "VALUES (:path, :pct, :updated_at)"
+                ),
+                {
+                    "path": path,
+                    "pct": int(round(float(pct))),
+                    "updated_at": updated_at,
+                },
+            )
 
 
 @asynccontextmanager
@@ -534,12 +595,21 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
     # the allocator surfaces per-ticker for sunburst hover.
     classifications = {**load_classifications(), **load_user_classifications(db)}
     result = aggregate(positions, classifications, db=db)
-    targets = {t.path: t.pct for t in db.query(Target).all()}
-    return apply_drift(
+    targets = {t.path: float(t.pct) for t in db.query(Target).all()}
+    result = apply_drift(
         result,
         targets,
         drift_minor_pct=settings.drift_minor_pct,
         drift_major_pct=settings.drift_major_pct,
+    )
+    return result.model_copy(
+        update={
+            "drift_thresholds": DriftThresholds(
+                minor_pct=int(settings.drift_minor_pct),
+                major_pct=int(settings.drift_major_pct),
+            ),
+        },
+        deep=False,
     )
 
 
