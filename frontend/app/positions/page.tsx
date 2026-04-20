@@ -22,9 +22,9 @@ export default function PositionsPage() {
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  // Filters. ticker filter is populated from a ?ticker= query param
-  // when navigating in from /classifications so the Holdings link lands
-  // on the filtered view.
+  // Filters. ticker and account filters are populated from query params
+  // when navigating in from /classifications or /accounts so the link
+  // lands on the filtered view.
   const [filterAccountId, setFilterAccountId] = useState<number | 'all'>('all');
   const [filterSource, setFilterSource] = useState('');
   const [filterFrom, setFilterFrom] = useState('');
@@ -39,6 +39,8 @@ export default function PositionsPage() {
       const params = new URLSearchParams(window.location.search);
       const t = params.get('ticker');
       if (t) setFilterTicker(t);
+      const a = params.get('account');
+      if (a) setFilterAccountId(Number(a));
     }
   }, []);
 
@@ -184,7 +186,38 @@ export default function PositionsPage() {
 
   return (
     <main style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>
-      <h1>Positions</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <h1>Positions</h1>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <a
+            href="/paste"
+            style={{
+              padding: '0.5rem 1rem',
+              background: '#111',
+              color: '#fff',
+              textDecoration: 'none',
+              borderRadius: 4,
+              fontWeight: 600,
+            }}
+          >
+            + Paste from Brokerage
+          </a>
+          <a
+            href="/manual"
+            style={{
+              padding: '0.5rem 1rem',
+              background: '#f0f0f0',
+              color: '#111',
+              textDecoration: 'none',
+              borderRadius: 4,
+              border: '1px solid #ccc',
+              fontWeight: 600,
+            }}
+          >
+            + Add Custom Asset
+          </a>
+        </div>
+      </div>
       <p style={{ color: '#555' }}>
         Every committed row. Edit inline (writes an override provenance entry) or delete.
         Filter to scope the view; batch-delete for cleanup after a paste.
@@ -371,6 +404,18 @@ export default function PositionsPage() {
                     </td>
                     <td style={{ ...td, color: '#333' }} title="Read-only: delete + re-enter to change">
                       <code>{p.ticker}</code>
+                      <div style={{ marginTop: 4 }}>
+                        <a
+                          href={`/classifications?ticker=${encodeURIComponent(p.ticker)}`}
+                          style={{
+                            fontSize: '0.75rem',
+                            color: '#0066cc',
+                            textDecoration: 'none',
+                          }}
+                        >
+                          Edit classification
+                        </a>
+                      </div>
                     </td>
                     <td style={td}>
                       {cls ? (

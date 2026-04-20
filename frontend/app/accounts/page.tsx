@@ -243,6 +243,18 @@ export default function AccountsPage() {
                         >
                           Delete
                         </button>
+                        <div style={{ marginTop: 4 }}>
+                          <a
+                            href={`/positions?account=${a.id}`}
+                            style={{
+                              fontSize: '0.75rem',
+                              color: '#0066cc',
+                              textDecoration: 'none',
+                            }}
+                          >
+                            View positions
+                          </a>
+                        </div>
                       </>
                     )}
                   </td>
