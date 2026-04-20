@@ -1,14 +1,17 @@
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from sqlalchemy import inspect, text
+from sqlalchemy import delete, inspect, text
 from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  -- register models with Base before create_all
 from .allocation import aggregate
 from .auth import require_admin_token
+from .config import settings
+from .drift import apply_drift
 from .classifications import (
     load_classifications,
     load_user_classifications,
@@ -17,7 +20,7 @@ from .classifications import (
 from .db import Base, SessionLocal, engine, get_db
 from .llm import extract_positions
 from .lookthrough import Breakdown, get_yaml_breakdowns
-from .models import Account, Classification, Position, Provenance, Snapshot
+from .models import Account, Classification, Position, Provenance, Snapshot, Target
 from .schemas import (
     ASSET_CLASS_OPTIONS,
     AccountCreate,
@@ -37,10 +40,139 @@ from .schemas import (
     PositionRead,
     ProvenanceRead,
     SnapshotRead,
+    TargetsPayload,
     Taxonomy,
 )
 
 _VALID_ASSET_CLASSES = {o.value for o in ASSET_CLASS_OPTIONS}
+
+# Suffix allows A–Z so region codes like ``US`` match allocation slice names.
+_TARGET_PATH_RE = re.compile(
+    r"^(equity|fixed_income|real_estate|commodity|crypto|cash|private)"
+    r"(\.[A-Za-z0-9_]+)?$"
+)
+
+
+def _targets_sum_ok(pcts: list[float], tol: float = 0.1) -> bool:
+    return abs(sum(pcts) - 100.0) <= tol + 1e-9
+
+
+def _validate_put_targets(body: TargetsPayload, result: AllocationResult) -> None:
+    paths: list[str] = []
+    for r in body.root:
+        paths.append(r.path)
+    for gkey, rows in body.groups.items():
+        if gkey not in _VALID_ASSET_CLASSES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown targets group key {gkey!r}",
+            )
+        for r in rows:
+            if not r.path.startswith(f"{gkey}."):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"path {r.path!r} must start with {(gkey + '.')!r}",
+                )
+            paths.append(r.path)
+    if len(set(paths)) != len(paths):
+        raise HTTPException(status_code=422, detail="duplicate target paths")
+
+    for r in body.root:
+        if "." in r.path:
+            raise HTTPException(
+                status_code=422,
+                detail=f"root target path must be a single segment; got {r.path!r}",
+            )
+
+    for r in body.root:
+        if not _TARGET_PATH_RE.fullmatch(r.path):
+            raise HTTPException(
+                status_code=422, detail=f"invalid target path {r.path!r}"
+            )
+    for rows in body.groups.values():
+        for r in rows:
+            if not _TARGET_PATH_RE.fullmatch(r.path):
+                raise HTTPException(
+                    status_code=422, detail=f"invalid target path {r.path!r}"
+                )
+
+    if result.total <= 0:
+        if body.root or any(len(v) > 0 for v in body.groups.values()):
+            raise HTTPException(
+                status_code=422,
+                detail="cannot set targets while the portfolio total is zero",
+            )
+        return
+
+    if body.root:
+        required = {s.name for s in result.by_asset_class if s.value > 0}
+        if not required:
+            raise HTTPException(
+                status_code=422,
+                detail="root targets require at least one funded asset class in allocation",
+            )
+        provided = {r.path for r in body.root}
+        if required != provided:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "root targets must include every funded asset class exactly once "
+                    f"(expected {sorted(required)}, got {sorted(provided)})"
+                ),
+            )
+        if not _targets_sum_ok([r.pct for r in body.root]):
+            raise HTTPException(
+                status_code=422,
+                detail="root targets must sum to 100 (+/- 0.1)",
+            )
+
+    by_name = {s.name: s for s in result.by_asset_class}
+    for gkey, rows in body.groups.items():
+        if not rows:
+            continue
+        sl = by_name.get(gkey)
+        if sl is None or sl.value <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"group {gkey!r} has targets but allocation has no funded slice",
+            )
+        if gkey == "equity":
+            required_p = {f"equity.{c.name}" for c in sl.children if c.value > 0}
+        else:
+            required_p = set()
+            for reg in sl.children:
+                for leaf in reg.children:
+                    if leaf.value > 0:
+                        required_p.add(f"{gkey}.{leaf.name}")
+        provided_p = {r.path for r in rows}
+        if required_p != provided_p:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"group {gkey!r} targets must cover every drill slice with dollars "
+                    f"exactly once (expected {sorted(required_p)}, got {sorted(provided_p)})"
+                ),
+            )
+        if not _targets_sum_ok([r.pct for r in rows]):
+            raise HTTPException(
+                status_code=422,
+                detail=f"group {gkey!r} targets must sum to 100 (+/- 0.1)",
+            )
+
+
+def _targets_get_payload(db: Session) -> dict[str, object]:
+    rows = db.query(Target).order_by(Target.path).all()
+    root: list[dict[str, object]] = []
+    groups: dict[str, list[dict[str, object]]] = {}
+    for r in rows:
+        if "." not in r.path:
+            root.append({"path": r.path, "pct": r.pct})
+        else:
+            key, _rest = r.path.split(".", 1)
+            groups.setdefault(key, []).append({"path": r.path, "pct": r.pct})
+    for _k, lst in groups.items():
+        lst.sort(key=lambda x: str(x["path"]))
+    return {"root": root, "groups": groups}
 
 
 def _migrate_sqlite_schema() -> None:
@@ -401,7 +533,36 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
     # classify() returns an entry carrying source="yaml" or "user" which
     # the allocator surfaces per-ticker for sunburst hover.
     classifications = {**load_classifications(), **load_user_classifications(db)}
-    return aggregate(positions, classifications, db=db)
+    result = aggregate(positions, classifications, db=db)
+    targets = {t.path: t.pct for t in db.query(Target).all()}
+    return apply_drift(
+        result,
+        targets,
+        drift_minor_pct=settings.drift_minor_pct,
+        drift_major_pct=settings.drift_major_pct,
+    )
+
+
+@app.get("/api/targets", dependencies=[Depends(require_admin_token)])
+def get_targets(db: Session = Depends(get_db)) -> dict[str, object]:
+    return _targets_get_payload(db)
+
+
+@app.put("/api/targets", dependencies=[Depends(require_admin_token)])
+def put_targets(body: TargetsPayload, db: Session = Depends(get_db)) -> dict[str, object]:
+    positions = db.query(Position).all()
+    classifications = {**load_classifications(), **load_user_classifications(db)}
+    result = aggregate(positions, classifications, db=db)
+    _validate_put_targets(body, result)
+
+    db.execute(delete(Target))
+    for r in body.root:
+        db.add(Target(path=r.path, pct=r.pct))
+    for rows in body.groups.values():
+        for r in rows:
+            db.add(Target(path=r.path, pct=r.pct))
+    db.commit()
+    return _targets_get_payload(db)
 
 
 # ----- classifications (v0.1.5 M3) ----------------------------------------
