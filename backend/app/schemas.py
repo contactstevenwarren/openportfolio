@@ -237,12 +237,41 @@ class FiveNumberSummary(BaseModel):
 # ----- classifications (v0.1.5 M3) ----------------------------------------
 
 
+class BreakdownBucket(BaseModel):
+    """One weighted bucket in a fund's look-through dimension."""
+
+    bucket: str
+    weight: float
+
+
+class FundBreakdown(BaseModel):
+    """Full look-through composition for a fund (from data/lookthrough.yaml).
+
+    Each dimension is a list of ``BreakdownBucket`` sorted by weight
+    descending so the UI can render the tooltip in a stable order
+    without re-sorting. Dimensions with no data are empty lists (bond
+    funds omit sector, gold funds omit region, etc.).
+    """
+
+    region: list[BreakdownBucket] = []
+    sub_class: list[BreakdownBucket] = []
+    sector: list[BreakdownBucket] = []
+
+
 class ClassificationRow(BaseModel):
     """One row on the /classifications page.
 
     Merged view over the YAML baseline and the DB user rows. ``source``
     reflects where the active row came from; ``overrides_yaml`` is True
     when a user row is replacing a YAML value (UI surfaces a badge).
+
+    ``has_breakdown`` flags funds that the allocation engine decomposes
+    via look-through (VT, VTI, VXUS, ...). The UI uses it to swap the
+    single-bucket sub_class/sector/region cells for an "Auto-split"
+    summary and to warn before an edit disables the decomposition.
+    ``breakdown`` carries the full look-through (all dimensions) so the
+    hover tooltip can show the same data the allocation engine uses,
+    matching the roadmap's "radical transparency" principle.
     """
 
     ticker: str
@@ -252,6 +281,8 @@ class ClassificationRow(BaseModel):
     region: str | None = None
     source: str  # "yaml" | "user"
     overrides_yaml: bool = False
+    has_breakdown: bool = False
+    breakdown: FundBreakdown | None = None
 
 
 class ClassificationPatch(BaseModel):

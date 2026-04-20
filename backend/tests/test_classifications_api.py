@@ -106,6 +106,51 @@ def test_list_shows_user_row_as_override(
     assert sum(1 for r in rows if r["ticker"] == "BND") == 1
 
 
+def test_list_exposes_full_breakdown_for_auto_split_funds(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    # VT has a multi-region + multi-sub_class + multi-sector lookthrough.
+    # The endpoint exposes every dimension, weight-sorted, so the UI
+    # tooltip can render the same decomposition the allocation engine uses.
+    rows = client.get("/api/classifications", headers=auth_headers).json()
+    vt = next(r for r in rows if r["ticker"] == "VT")
+    assert vt["has_breakdown"] is True
+    br = vt["breakdown"]
+    assert br is not None
+
+    region_buckets = {b["bucket"] for b in br["region"]}
+    assert {"US", "intl_developed", "intl_emerging"} <= region_buckets
+
+    # Each dimension is sorted by weight descending -- the UI depends
+    # on this so the tooltip doesn't need to re-sort.
+    for dim in ("region", "sub_class", "sector"):
+        weights = [b["weight"] for b in br[dim]]
+        assert weights == sorted(weights, reverse=True), dim
+
+
+def test_list_single_bucket_fund_still_carries_breakdown(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    # BND is 100% us_aggregate / 100% US -> has_breakdown=True and the
+    # tooltip data is present (one bucket per dimension, not empty).
+    rows = client.get("/api/classifications", headers=auth_headers).json()
+    bnd = next(r for r in rows if r["ticker"] == "BND")
+    assert bnd["has_breakdown"] is True
+    assert bnd["breakdown"] is not None
+    assert [b["bucket"] for b in bnd["breakdown"]["region"]] == ["US"]
+    assert [b["bucket"] for b in bnd["breakdown"]["sub_class"]] == ["us_aggregate"]
+
+
+def test_list_has_no_breakdown_for_individual_stocks(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    # AAPL is a single stock with no lookthrough entry.
+    rows = client.get("/api/classifications", headers=auth_headers).json()
+    aapl = next(r for r in rows if r["ticker"] == "AAPL")
+    assert aapl["has_breakdown"] is False
+    assert aapl["breakdown"] is None
+
+
 def test_list_new_user_ticker_is_not_an_override(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:

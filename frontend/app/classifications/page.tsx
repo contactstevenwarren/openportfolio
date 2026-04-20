@@ -6,7 +6,7 @@
 // edit + revert; delete of a user-invented ticker is blocked by the
 // server when positions still reference it.
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   api,
@@ -25,12 +25,20 @@ export default function ClassificationsPage() {
   const [taxonomy, setTaxonomy] = useState<TaxonomyOption[]>([]);
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
+  // Default on when the user has positions -- the classifications
+  // dictionary is ~thousands of tickers, and the common case on this
+  // page is "show me my assets". Flipped on in refresh() once we know
+  // whether positions exist.
+  const [showOnlyHoldings, setShowOnlyHoldings] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<ClassificationPatch>({
     asset_class: 'equity',
   });
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
+  // Tracks whether we've already auto-applied the holdings filter on
+  // first positions load. After that, the user's toggle is authoritative.
+  const firstLoadRef = useRef(true);
 
   useEffect(() => {
     refresh();
@@ -58,7 +66,19 @@ export default function ClassificationsPage() {
     // Positions are used for the "N holdings" column and to scope the
     // editing-impact hint. Loaded separately so a failure here doesn't
     // break the main table.
-    api.positions().then(setPositions).catch(() => {});
+    api
+      .positions()
+      .then((ps) => {
+        setPositions(ps);
+        // First load: auto-enable the filter when the user has holdings.
+        // Skipped on subsequent calls (Save, Revert, etc.) so the user's
+        // own toggle choice sticks across refreshes.
+        if (firstLoadRef.current) {
+          firstLoadRef.current = false;
+          if (ps.length > 0) setShowOnlyHoldings(true);
+        }
+      })
+      .catch(() => {});
   }
 
   // Ticker -> number of Position rows pointing at it. Drives the
@@ -89,9 +109,10 @@ export default function ClassificationsPage() {
     return rows.filter((r) => {
       if (sourceFilter !== 'all' && r.source !== sourceFilter) return false;
       if (q && !r.ticker.toLowerCase().includes(q)) return false;
+      if (showOnlyHoldings && (positionCountByTicker.get(r.ticker) ?? 0) === 0) return false;
       return true;
     });
-  }, [rows, search, sourceFilter]);
+  }, [rows, search, sourceFilter, showOnlyHoldings, positionCountByTicker]);
 
   function startEdit(row: ClassificationRow) {
     setEditing(row.ticker);
@@ -222,6 +243,24 @@ export default function ClassificationsPage() {
             <option value="yaml">Bundled ({rows.length - userRowCount})</option>
           </select>
         </label>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            alignSelf: 'flex-end',
+            paddingBottom: '0.45rem',
+            fontSize: '0.9rem',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={showOnlyHoldings}
+            onChange={(e) => setShowOnlyHoldings(e.target.checked)}
+          />
+          Only show my holdings
+        </label>
         <span style={{ marginLeft: 'auto', color: '#666', fontSize: '0.85rem' }}>
           {filtered.length} shown
         </span>
@@ -269,8 +308,25 @@ export default function ClassificationsPage() {
           {filtered.map((r) => {
             const isEditing = editing === r.ticker;
             const holdingCount = positionCountByTicker.get(r.ticker) ?? 0;
+            // Show the "Auto-split" view-mode summary only when the
+            // engine will actually decompose this ticker. A user override
+            // suppresses the decomposition at aggregation time, so once
+            // source === 'user' we show the user's single-bucket choice.
+            const showAutoSplit = r.has_breakdown && r.source !== 'user' && !isEditing;
             return (
-              <tr key={r.ticker} style={{ borderBottom: '1px solid #eee' }}>
+              <Fragment key={r.ticker}>
+                {isEditing && r.has_breakdown && (
+                  <tr>
+                    <td colSpan={8} style={{ padding: '0.4rem 0.3rem 0' }}>
+                      <div style={autoSplitWarning}>
+                        <strong>⚠️ This is an auto-split fund.</strong> Overriding
+                        it will disable the smart breakdown and force 100% of its
+                        value into the single bucket you select below.
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                <tr style={{ borderBottom: '1px solid #eee' }}>
                 <td style={td}>
                   <code>{r.ticker}</code>
                 </td>
@@ -325,6 +381,21 @@ export default function ClassificationsPage() {
                           </option>
                         ))}
                       </select>
+                    </td>
+                  </>
+                ) : showAutoSplit ? (
+                  <>
+                    <td style={td}>{humanize(r.asset_class)}</td>
+                    <td style={td} colSpan={3}>
+                      <span
+                        style={autoSplitBadge}
+                        title={formatBreakdownTooltip(r)}
+                      >
+                        <span aria-hidden="true" style={{ marginRight: 4 }}>
+                          ✨
+                        </span>
+                        Auto-split by underlying holdings
+                      </span>
                     </td>
                   </>
                 ) : (
@@ -404,13 +475,38 @@ export default function ClassificationsPage() {
                     </>
                   )}
                 </td>
-              </tr>
+                </tr>
+              </Fragment>
             );
           })}
         </tbody>
       </table>
     </main>
   );
+}
+
+// Renders a multi-line plain-text tooltip describing a fund's full
+// look-through. Uses the native `title` attribute -- same pattern as
+// the Provenance component on the hero screen. Mirrors the shape of
+// data/lookthrough.yaml so the user sees exactly what the allocation
+// engine uses (roadmap "radical transparency" principle).
+function formatBreakdownTooltip(r: ClassificationRow): string {
+  if (!r.breakdown) return '';
+  const lines: string[] = [`Fund breakdown — ${r.ticker}`];
+  const sections: Array<[string, typeof r.breakdown.region]> = [
+    ['By region', r.breakdown.region],
+    ['By sub-class', r.breakdown.sub_class],
+    ['By sector', r.breakdown.sector],
+  ];
+  for (const [label, buckets] of sections) {
+    if (!buckets.length) continue;
+    lines.push('', `${label}:`);
+    for (const b of buckets) {
+      lines.push(`  ${Math.round(b.weight * 100)}% ${humanize(b.bucket)}`);
+    }
+  }
+  lines.push('', 'Source: data/lookthrough.yaml');
+  return lines.join('\n');
 }
 
 const th = { padding: '0.5rem 0.3rem', fontWeight: 600 };
@@ -432,4 +528,23 @@ const badgeYaml = {
   borderRadius: 4,
   fontSize: '0.8rem',
   color: '#555',
+} as const;
+const autoSplitBadge = {
+  display: 'inline-block',
+  padding: '0.2rem 0.5rem',
+  background: '#f3f6fa',
+  border: '1px solid #d4dceb',
+  borderRadius: 4,
+  fontSize: '0.85rem',
+  color: '#334',
+  cursor: 'help',
+  borderBottomStyle: 'dashed',
+} as const;
+const autoSplitWarning = {
+  padding: '0.5rem 0.75rem',
+  background: '#fff7d6',
+  border: '1px solid #e6c873',
+  borderRadius: 4,
+  fontSize: '0.85rem',
+  color: '#5c4a12',
 } as const;
