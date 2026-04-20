@@ -16,6 +16,7 @@ from .classifications import (
 )
 from .db import Base, SessionLocal, engine, get_db
 from .llm import extract_positions
+from .lookthrough import Breakdown, get_yaml_breakdowns
 from .models import Account, Classification, Position, Provenance, Snapshot
 from .schemas import (
     ASSET_CLASS_OPTIONS,
@@ -23,12 +24,14 @@ from .schemas import (
     AccountPatch,
     AccountRead,
     AllocationResult,
+    BreakdownBucket,
     ClassificationPatch,
     ClassificationRow,
     CommitResult,
     ExportResult,
     ExtractionResult,
     ExtractRequest,
+    FundBreakdown,
     PositionCommit,
     PositionPatch,
     PositionRead,
@@ -414,16 +417,54 @@ def get_taxonomy() -> Taxonomy:
     return Taxonomy(asset_classes=ASSET_CLASS_OPTIONS)
 
 
+def _full_breakdown(br: Breakdown) -> FundBreakdown:
+    """Structure a Breakdown as weight-sorted bucket lists for the UI.
+
+    Each dimension is sorted by weight descending so the hover tooltip
+    reads top-weighted first without the frontend needing to re-sort.
+    Empty dimensions stay empty lists (bond funds skip sector, gold
+    funds skip region, etc.).
+    """
+
+    def _sorted(dim: dict[str, float]) -> list[BreakdownBucket]:
+        return [
+            BreakdownBucket(bucket=b, weight=w)
+            for b, w in sorted(dim.items(), key=lambda kv: kv[1], reverse=True)
+        ]
+
+    return FundBreakdown(
+        region=_sorted(br.region),
+        sub_class=_sorted(br.sub_class),
+        sector=_sorted(br.sector),
+    )
+
+
 @app.get("/api/classifications", dependencies=[Depends(require_admin_token)])
 def list_classifications(db: Session = Depends(get_db)) -> list[ClassificationRow]:
-    """YAML baseline + user DB rows, user wins on ticker collision."""
+    """YAML baseline + user DB rows, user wins on ticker collision.
+
+    Funds with a known look-through are annotated with ``has_breakdown``
+    + the full ``breakdown`` so the UI can show "Auto-split by
+    underlying holdings" with a hover tooltip revealing the same
+    decomposition the allocation engine uses. YAML lookthroughs are
+    consulted directly -- no yfinance calls from this endpoint, which
+    keeps the response fast even for thousands of bundled tickers.
+    """
     yaml_entries = load_classifications()
     user_rows = {c.ticker: c for c in db.query(Classification).all()}
+    breakdowns = get_yaml_breakdowns()
+
+    def _annotate(ticker: str) -> tuple[bool, FundBreakdown | None]:
+        br = breakdowns.get(ticker)
+        if br is None:
+            return (False, None)
+        return (True, _full_breakdown(br))
 
     merged: list[ClassificationRow] = []
     for ticker, entry in yaml_entries.items():
         if ticker in user_rows:
             continue  # user row emitted below with overrides_yaml=True
+        has_breakdown, breakdown = _annotate(ticker)
         merged.append(
             ClassificationRow(
                 ticker=ticker,
@@ -432,9 +473,12 @@ def list_classifications(db: Session = Depends(get_db)) -> list[ClassificationRo
                 sector=entry.sector,
                 region=entry.region,
                 source="yaml",
+                has_breakdown=has_breakdown,
+                breakdown=breakdown,
             )
         )
     for ticker, row in user_rows.items():
+        has_breakdown, breakdown = _annotate(ticker)
         merged.append(
             ClassificationRow(
                 ticker=ticker,
@@ -444,6 +488,8 @@ def list_classifications(db: Session = Depends(get_db)) -> list[ClassificationRo
                 region=row.region,
                 source="user",
                 overrides_yaml=ticker in yaml_entries,
+                has_breakdown=has_breakdown,
+                breakdown=breakdown,
             )
         )
     merged.sort(key=lambda r: r.ticker)

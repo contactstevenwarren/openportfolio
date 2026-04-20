@@ -96,6 +96,16 @@ def reload_yaml() -> None:
     _yaml_cache = None
 
 
+def get_yaml_breakdowns() -> dict[str, Breakdown]:
+    """Return every fund breakdown declared in lookthrough.yaml.
+
+    No network, no DB -- safe to call from hot paths like
+    GET /api/classifications where we need to annotate thousands of
+    tickers without triggering yfinance fetches.
+    """
+    return _yaml()
+
+
 # ---------------------------------------------------------------------------
 # yfinance adapter (runtime only; tests mock this)
 # ---------------------------------------------------------------------------

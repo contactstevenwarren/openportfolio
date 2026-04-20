@@ -87,6 +87,17 @@ export type AllocationResult = {
   classification_sources: Record<string, string>;
 };
 
+export type BreakdownBucket = {
+  bucket: string;
+  weight: number;
+};
+
+export type FundBreakdown = {
+  region: BreakdownBucket[];
+  sub_class: BreakdownBucket[];
+  sector: BreakdownBucket[];
+};
+
 export type ClassificationRow = {
   ticker: string;
   asset_class: string;
@@ -95,6 +106,15 @@ export type ClassificationRow = {
   region: string | null;
   source: 'yaml' | 'user';
   overrides_yaml: boolean;
+  // True when a look-through breakdown exists for this ticker (VT, VTI, ...).
+  // The UI replaces the misleading single-bucket sub_class/sector/region
+  // cells with an "Auto-split" label so users understand the engine
+  // isn't treating VT as "Global" at allocation time.
+  has_breakdown: boolean;
+  // Full look-through composition, mirroring data/lookthrough.yaml.
+  // Each dimension is weight-sorted descending; empty dimensions stay
+  // as empty arrays. Null when the ticker has no lookthrough entry.
+  breakdown: FundBreakdown | null;
 };
 
 export type ClassificationPatch = {
