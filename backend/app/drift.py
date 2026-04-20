@@ -31,14 +31,21 @@ def _has_group_targets(asset_class: str, targets: dict[str, float]) -> bool:
 
 
 def _non_equity_subclass_actuals(
-    ac_slice: AllocationSlice, total: float
+    ac_slice: AllocationSlice,
 ) -> dict[str, float]:
-    """Map sub_class name -> % of portfolio (0..100) summed across regions."""
+    """Map sub_class name -> % of parent asset class (0..100).
+
+    L2 targets are ``% of parent asset class``, so actuals must be
+    computed against ``ac_slice.value``, not the portfolio total.
+    """
     pct_by_sub: dict[str, float] = defaultdict(float)
+    parent = ac_slice.value
+    if parent <= 0:
+        return {}
     for reg in ac_slice.children:
         for leaf in reg.children:
-            if leaf.value > 0 and total > 0:
-                pct_by_sub[leaf.name] += 100.0 * leaf.value / total
+            if leaf.value > 0:
+                pct_by_sub[leaf.name] += 100.0 * leaf.value / parent
     return dict(pct_by_sub)
 
 
@@ -86,13 +93,21 @@ def _map_region_subtree(
     equity_drill_on: bool,
     group_on: bool,
     non_equity_agg: dict[str, float] | None,
+    parent_value: float,
 ) -> AllocationSlice:
     if ac == "equity":
         path = f"{ac}.{region_slice.name}"
         if equity_drill_on:
             tgt = targets.get(path)
             if tgt is not None:
-                drift = region_slice.pct - tgt
+                # L2 equity targets are ``% of equity``, so compare
+                # against region_value / equity_value, not / total.
+                actual = (
+                    100.0 * region_slice.value / parent_value
+                    if parent_value > 0
+                    else 0.0
+                )
+                drift = actual - tgt
                 band = _band(drift, minor, major)
                 reg_u = {
                     "target_pct": tgt,
@@ -132,7 +147,7 @@ def _map_region_subtree(
             minor,
             major,
             group_on=group_on,
-            actual_pct_for_sub=(non_equity_agg or {}).get(leaf.name, leaf.pct),
+            actual_pct_for_sub=(non_equity_agg or {}).get(leaf.name, 0.0),
         )
         for leaf in region_slice.children
     ]
@@ -183,7 +198,7 @@ def apply_drift(
         equity_drill = ac == "equity" and _has_group_targets("equity", targets)
         group_other = ac != "equity" and _has_group_targets(ac, targets)
         non_eq_agg = (
-            _non_equity_subclass_actuals(ac_slice, result.total)
+            _non_equity_subclass_actuals(ac_slice)
             if ac != "equity"
             else None
         )
@@ -198,6 +213,7 @@ def apply_drift(
                 equity_drill_on=equity_drill,
                 group_on=group_other,
                 non_equity_agg=non_eq_agg,
+                parent_value=ac_slice.value,
             )
             for reg in ac_slice.children
         ]

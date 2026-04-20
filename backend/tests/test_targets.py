@@ -221,3 +221,120 @@ def test_allocation_includes_drift_fields(
     by = {s["name"]: s for s in body["by_asset_class"]}
     assert by["equity"]["target_pct"] == 55.0
     assert abs(by["equity"]["drift_pct"] - 5.0) < 1e-3
+
+
+def test_allocation_includes_drift_thresholds(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    account = Account(label="T", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add(_position(account.id, "VTI", 10_000.0))
+    test_db.commit()
+
+    body = client.get("/api/allocation", headers=auth_headers).json()
+    assert body["drift_thresholds"] == {"minor_pct": 1, "major_pct": 3}
+
+
+def test_put_rejects_fractional_pct(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """Integer-only pct: Pydantic rejects fractional floats at parse time."""
+    account = Account(label="T", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add(_position(account.id, "VTI", 10_000.0))
+    test_db.commit()
+
+    body = {
+        "root": [{"path": "equity", "pct": 53.8}],
+        "groups": {},
+    }
+    r = client.put("/api/targets", headers=auth_headers, json=body)
+    assert r.status_code == 422
+
+
+def test_put_accepts_integer_boundaries(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """pct = 0 / 100 are valid, and sum == exactly 100 passes."""
+    account = Account(label="T", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add_all(
+        [
+            _position(account.id, "VTI", 30_000.0),
+            _position(account.id, "BND", 70_000.0),
+        ]
+    )
+    test_db.commit()
+
+    body = {
+        "root": [
+            {"path": "equity", "pct": 30},
+            {"path": "fixed_income", "pct": 70},
+        ],
+        "groups": {},
+    }
+    r = client.put("/api/targets", headers=auth_headers, json=body)
+    assert r.status_code == 200
+    rows = r.json()["root"]
+    assert all(isinstance(row["pct"], int) for row in rows)
+    assert sum(row["pct"] for row in rows) == 100
+
+
+def test_put_group_targets_sum_to_100_of_parent(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """Mixed portfolio: group targets sum to 100 (% of parent)."""
+    account = Account(label="T", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add_all(
+        [
+            Classification(
+                ticker="EUS",
+                asset_class="equity",
+                sub_class="us_large_cap",
+                region="US",
+                source="user",
+            ),
+            Classification(
+                ticker="EINT",
+                asset_class="equity",
+                sub_class="intl_developed",
+                region="intl_developed",
+                source="user",
+            ),
+        ]
+    )
+    test_db.add_all(
+        [
+            _position(account.id, "EUS", 30_000.0),
+            _position(account.id, "EINT", 30_000.0),
+            _position(account.id, "BND", 40_000.0),
+        ]
+    )
+    test_db.commit()
+
+    ok = {
+        "root": [],
+        "groups": {
+            "equity": [
+                {"path": "equity.US", "pct": 60},
+                {"path": "equity.intl_developed", "pct": 40},
+            ]
+        },
+    }
+    assert client.put("/api/targets", headers=auth_headers, json=ok).status_code == 200
+
+    bad = {
+        "root": [],
+        "groups": {
+            "equity": [
+                {"path": "equity.US", "pct": 30},
+                {"path": "equity.intl_developed", "pct": 20},
+            ]
+        },
+    }
+    assert client.put("/api/targets", headers=auth_headers, json=bad).status_code == 422
