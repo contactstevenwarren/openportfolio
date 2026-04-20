@@ -122,3 +122,70 @@ def test_fixed_income_subclass_aggregate_drift() -> None:
             if leaf.name == "us_aggregate":
                 assert leaf.target_pct == 95.0
                 assert abs(leaf.drift_pct - (100.0 - 95.0)) < 1e-6
+
+
+def _classes_with_tips() -> dict[str, ClassificationEntry]:
+    base = _classes()
+    base["B2"] = ClassificationEntry(
+        ticker="B2",
+        asset_class="fixed_income",
+        sub_class="us_tips",
+        region="US",
+    )
+    return base
+
+
+def test_equity_region_drift_is_pct_of_parent_not_portfolio() -> None:
+    """L2 equity targets are % of equity, not % of portfolio.
+
+    Equity = $60k of $100k (60% of portfolio). US = $30k (50% of
+    equity, 30% of portfolio). With target equity.US = 40 the drift
+    must be 50 - 40 = 10 (parent-scoped), *not* 30 - 40 = -10
+    (portfolio-scoped).
+    """
+    result = aggregate(
+        [
+            _pos("E1", 30_000.0),
+            _pos("E2", 30_000.0),
+            _pos("B1", 40_000.0),
+        ],
+        _classes(),
+    )
+    targets = {"equity.US": 40.0, "equity.intl_developed": 60.0}
+    out = apply_drift(result, targets, drift_minor_pct=1.0, drift_major_pct=3.0)
+    eq = next(s for s in out.by_asset_class if s.name == "equity")
+    us = next(c for c in eq.children if c.name == "US")
+    intl = next(c for c in eq.children if c.name == "intl_developed")
+    assert us.target_pct == 40.0
+    assert abs(us.drift_pct - 10.0) < 1e-6
+    assert abs(intl.drift_pct - (-10.0)) < 1e-6
+
+
+def test_non_equity_subclass_drift_is_pct_of_parent_not_portfolio() -> None:
+    """L2 fixed_income targets are % of fixed_income, not % of portfolio.
+
+    FI = $25k of $50k (50% of portfolio) split $15k us_aggregate /
+    $10k us_tips. Parent-scoped actuals: 60 / 40. Targets
+    us_aggregate=60, us_tips=40 -> drift 0 on both.
+    """
+    result = aggregate(
+        [
+            _pos("B1", 15_000.0),
+            _pos("B2", 10_000.0),
+            _pos("E1", 25_000.0),
+        ],
+        _classes_with_tips(),
+    )
+    targets = {
+        "fixed_income.us_aggregate": 60.0,
+        "fixed_income.us_tips": 40.0,
+    }
+    out = apply_drift(result, targets, drift_minor_pct=1.0, drift_major_pct=3.0)
+    fi = next(s for s in out.by_asset_class if s.name == "fixed_income")
+    seen: dict[str, float] = {}
+    for reg in fi.children:
+        for leaf in reg.children:
+            seen[leaf.name] = leaf.drift_pct
+            assert leaf.drift_band == "on_target"
+    assert abs(seen["us_aggregate"]) < 1e-6
+    assert abs(seen["us_tips"]) < 1e-6
