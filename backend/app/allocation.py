@@ -100,6 +100,7 @@ def aggregate(
     # region (US / intl_*); everything else just tracks asset class.
     totals_by_asset: dict[str, float] = defaultdict(float)
     equity_by_region: dict[str, float] = defaultdict(float)
+    equity_by_sector: dict[str, float] = defaultdict(float)
 
     unclassified: list[str] = []
     # Per-ticker classification provenance. Surfaced on the allocation
@@ -125,9 +126,9 @@ def aggregate(
             continue
         total += value
 
-        # Prefer fund-level breakdown when available. Sector is unpacked
-        # but not used (not in the ring tree anymore); kept for symmetry
-        # with _classification_weights' 4-tuple return.
+        # Prefer fund-level breakdown when available. Sector feeds the
+        # equity sector_breakdown accumulator below; it's intentionally
+        # not in the ring tree (equity-only, low-signal for v0.1).
         #
         # A user-owned classification wins over the lookthrough: the
         # user's intent is "classify this ticker this way" which, for a
@@ -138,14 +139,14 @@ def aggregate(
             None if entry.source == "user" else get_breakdown(p.ticker, db=db)
         )
         if br is not None:
-            ac_w, sc_w, _sec_w, reg_w = (
+            ac_w, sc_w, sec_w, reg_w = (
                 br.asset_class,
                 br.sub_class,
                 br.sector,
                 br.region,
             )
         else:
-            ac_w, sc_w, _sec_w, reg_w = _classification_weights(entry)
+            ac_w, sc_w, sec_w, reg_w = _classification_weights(entry)
 
         tickers_by_asset.setdefault(entry.asset_class, [])
         tickers_by_asset[entry.asset_class].append(p.ticker)
@@ -158,6 +159,15 @@ def aggregate(
             for reg_bucket, reg_value in _bucket_weights(reg_w, ac_value):
                 for sc_bucket, sc_value in _bucket_weights(sc_w, reg_value):
                     tree[ac_bucket][reg_bucket][sc_bucket] += sc_value
+
+            # Equity-only sector rollup. Skip when the fund has no
+            # sector data (e.g. bond sleeve of a target-date fund, or
+            # an equity ticker with no sector in classifications.yaml)
+            # -- don't route missing data to "other" here; an empty
+            # sector_breakdown is the correct signal to the UI.
+            if ac_bucket == "equity" and sec_w:
+                for sec_bucket, sec_value in _bucket_weights(sec_w, ac_value):
+                    equity_by_sector[sec_bucket] += sec_value
 
             if ac_bucket == "equity":
                 # Equity region split for the 5-number summary uses the
@@ -221,6 +231,25 @@ def aggregate(
             )
         )
     by_asset_class.sort(key=lambda s: s.value, reverse=True)
+
+    # Attach equity sector rollup (sorted desc by dollars) to the
+    # equity top-level slice only. Every other slice keeps the
+    # default empty list.
+    sector_slices = [
+        AllocationSlice(
+            name=name,
+            value=v,
+            pct=(100 * v / total) if total > 0 else 0.0,
+        )
+        for name, v in sorted(
+            equity_by_sector.items(), key=lambda kv: kv[1], reverse=True
+        )
+        if v > 0
+    ]
+    for s in by_asset_class:
+        if s.name == "equity":
+            s.sector_breakdown = sector_slices
+            break
 
     # --- 5-number summary -------------------------------------------------
 
