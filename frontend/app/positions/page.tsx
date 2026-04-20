@@ -431,7 +431,7 @@ export default function PositionsPage() {
                         </a>
                       ) : (
                         <a
-                          href="/classifications"
+                          href={`/classifications?ticker=${encodeURIComponent(p.ticker)}`}
                           style={unclassifiedBadge}
                           title="No classification for this ticker; click to manage"
                         >

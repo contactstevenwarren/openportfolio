@@ -291,6 +291,101 @@ def test_paste_commit_without_classification_does_not_touch_classifications(
     assert test_db.query(Classification).count() == 0
 
 
+def test_paste_commit_with_classification_inserts_user_row_for_unknown_ticker(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    body = {
+        "source": "paste:test",
+        "positions": [
+            {
+                "ticker": "ZZUNKNOWN99",
+                "shares": 10.0,
+                "cost_basis": 100.0,
+                "market_value": 110.0,
+                "confidence": 0.95,
+                "source_span": "ZZUNKNOWN99 10",
+                "classification": {
+                    "asset_class": "equity",
+                    "auto_suffix": False,
+                    "suggestion_confidence": 0.8,
+                    "suggestion_reasoning": "Test LLM line.",
+                },
+            }
+        ],
+    }
+    r = client.post("/api/positions/commit", json=body, headers=auth_headers)
+    assert r.status_code == 201
+    assert r.json()["tickers"] == ["ZZUNKNOWN99"]
+    row = test_db.get(Classification, "ZZUNKNOWN99")
+    assert row is not None
+    assert row.asset_class == "equity"
+    assert row.source == "user"
+
+
+def test_paste_commit_skips_classification_when_matches_yaml(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    body = {
+        "source": "paste:test",
+        "positions": [
+            {
+                "ticker": "VTI",
+                "shares": 1.0,
+                "cost_basis": 1.0,
+                "market_value": 2.0,
+                "confidence": 0.95,
+                "source_span": "VTI",
+                "classification": {
+                    "asset_class": "equity",
+                    "auto_suffix": False,
+                },
+            }
+        ],
+    }
+    r = client.post("/api/positions/commit", json=body, headers=auth_headers)
+    assert r.status_code == 201
+    assert test_db.query(Classification).count() == 0
+
+
+def test_paste_commit_skips_when_user_classification_row_exists(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    test_db.add(
+        Classification(
+            ticker="VTI",
+            asset_class="fixed_income",
+            sub_class=None,
+            sector=None,
+            region=None,
+            source="user",
+        )
+    )
+    test_db.commit()
+
+    body = {
+        "source": "paste:test",
+        "positions": [
+            {
+                "ticker": "VTI",
+                "shares": 1.0,
+                "cost_basis": 1.0,
+                "market_value": 2.0,
+                "confidence": 0.95,
+                "source_span": "VTI",
+                "classification": {
+                    "asset_class": "equity",
+                    "auto_suffix": False,
+                },
+            }
+        ],
+    }
+    r = client.post("/api/positions/commit", json=body, headers=auth_headers)
+    assert r.status_code == 201
+    row = test_db.get(Classification, "VTI")
+    assert row is not None
+    assert row.asset_class == "fixed_income"
+
+
 # --- v0.1.5 M6: snapshot-on-commit ---------------------------------------
 
 
