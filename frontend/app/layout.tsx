@@ -16,12 +16,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/" style={{ fontWeight: 600, color: '#111' }}>
             OpenPortfolio
           </a>
-          <a href="/paste" style={{ color: '#111' }}>
-            Paste
-          </a>
-          <a href="/manual" style={{ color: '#111' }}>
-            Manual
-          </a>
           <a href="/accounts" style={{ color: '#111' }}>
             Accounts
           </a>

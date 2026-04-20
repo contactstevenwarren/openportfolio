@@ -32,7 +32,7 @@ export default function Home() {
       <Frame>
         <p style={{ color: 'crimson' }}>Failed to load allocation: {(error as Error).message}</p>
         <p>
-          If this is a fresh install, head to <a href="/paste">/paste</a> first.
+          If this is a fresh install, head to <a href="/positions">/positions</a> first.
         </p>
       </Frame>
     );
@@ -86,8 +86,7 @@ export default function Home() {
 
       {data.total === 0 ? (
         <p style={{ color: '#555' }}>
-          No positions committed yet. Start at <a href="/paste">/paste</a> or{' '}
-          <a href="/manual">/manual</a>.
+          No positions committed yet. Start at <a href="/positions">/positions</a>.
         </p>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.5rem' }}>
