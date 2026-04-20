@@ -14,6 +14,8 @@ review and fix them in the UI, not rejected silently.
 
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -204,6 +206,9 @@ class ExportResult(BaseModel):
 # ----- allocation ---------------------------------------------------------
 
 
+DriftBand = Literal["on_target", "minor", "major"]
+
+
 class AllocationSlice(BaseModel):
     """One wedge in the 3-ring sunburst.
 
@@ -222,6 +227,10 @@ class AllocationSlice(BaseModel):
     # AllocationSlice per sector with name=sector key, value=dollars,
     # pct=% of net worth. Empty on every other slice and at nested rings.
     sector_breakdown: list["AllocationSlice"] = []
+    # v0.2: vs saved targets when present; sector_breakdown stays None.
+    target_pct: float | None = None
+    drift_pct: float | None = None
+    drift_band: DriftBand | None = None
 
 
 class FiveNumberSummary(BaseModel):
@@ -344,3 +353,19 @@ class AllocationResult(BaseModel):
     # hover provenance -- e.g. "classified as: us_tips (your override)"
     # when the user overrode a YAML ticker.
     classification_sources: dict[str, str] = Field(default_factory=dict)
+    # v0.2: largest absolute ring-1 drift vs targets (None if no targets).
+    max_drift: float | None = None
+    max_drift_band: DriftBand | None = None
+
+
+# ----- targets (v0.2) -----------------------------------------------------
+
+
+class TargetRow(BaseModel):
+    path: str
+    pct: float
+
+
+class TargetsPayload(BaseModel):
+    root: list[TargetRow]
+    groups: dict[str, list[TargetRow]] = Field(default_factory=dict)

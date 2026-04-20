@@ -117,3 +117,21 @@ class FundHolding(Base):
     # "yaml" | "yfinance"
     source: Mapped[str] = mapped_column(String(50))
     fetched_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class Target(Base):
+    """User-defined allocation targets (v0.2).
+
+    ``path`` is the stable key: top-level asset class for ring-1
+    (``equity``) or a dotted drill path (``equity.US``,
+    ``fixed_income.us_aggregate``). Percentages are portfolio-level
+    weights (0..100) validated on write.
+    """
+
+    __tablename__ = "targets"
+
+    path: Mapped[str] = mapped_column(String(128), primary_key=True)
+    pct: Mapped[float] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )

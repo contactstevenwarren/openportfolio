@@ -36,5 +36,11 @@ class Settings(BaseSettings):
     # rings -- tested here only via mocks.
     lookthrough_yfinance_enabled: bool = False
 
+    # Drift bands vs target allocation (v0.2). Env: DRIFT_MINOR_PCT,
+    # DRIFT_MAJOR_PCT. Absolute drift within minor threshold counts as
+    # on-target; within major as minor; above major as major.
+    drift_minor_pct: float = 1.0
+    drift_major_pct: float = 3.0
+
 
 settings = Settings()
