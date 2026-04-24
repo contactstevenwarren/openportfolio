@@ -102,15 +102,50 @@ def test_l1_plus_l2_equity() -> None:
     out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
     eq = next(m for m in out.moves if m.path == "equity")
     assert len(eq.children) == 2
-    # L2 deltas inside equity sum to ~0 (both drifts cancel at % of parent).
-    assert abs(sum(c.delta_usd for c in eq.children)) < 1e-6
-    # parent_total_usd at L2 = equity slice value = 60k.
+    # L2 decomposes the parent L1 dollar move (sell ~10k from equity) across
+    # buckets: only US is overweight within equity vs L2 targets, so the
+    # full L1 sell is allocated to US; intl gets $0 hold.
+    assert abs(sum(c.delta_usd for c in eq.children) - eq.delta_usd) < 1e-6
     for c in eq.children:
         assert abs(c.parent_total_usd - 60_000.0) < 1e-6
-    # equity.US: actual=50%, target=40% -> drift 40-50=-10, delta=-10/100*60k=-6k
     us = next(c for c in eq.children if c.path == "equity.US")
-    assert abs(us.delta_usd - (-6_000.0)) < 1e-6
+    intl = next(c for c in eq.children if c.path == "equity.intl_developed")
+    assert abs(us.delta_usd - eq.delta_usd) < 1e-6
     assert us.direction == "sell"
+    assert abs(intl.delta_usd) < 1e-6
+    assert intl.direction == "hold"
+
+
+def test_full_l2_decompose_buy_splits_by_shortfall() -> None:
+    """L1 buy into equity is split across L2 by within-parent shortfall dollars."""
+    result = aggregate(
+        [
+            _pos("E1", 10_000.0),  # US
+            _pos("E2", 50_000.0),  # intl
+            _pos("B1", 40_000.0),
+        ],
+        _classes(),
+    )
+    # Total 100k; equity 60k (US 10k = 16.67%, intl 50k = 83.33%).
+    # Targets equity 50% / FI 50%; equity.US 40%, equity.intl_developed 60%.
+    # L1 equity: target 50% -> need -10k from... actual 60% vs 50% -> sell 10k.
+    # Wait we need a BUY into equity. equity actual 60%, target 70% -> buy +10k.
+    targets = {
+        "equity": 70.0,
+        "fixed_income": 30.0,
+        "equity.US": 40.0,
+        "equity.intl_developed": 60.0,
+    }
+    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    eq = next(m for m in out.moves if m.path == "equity")
+    assert eq.delta_usd > 0
+    assert abs(sum(c.delta_usd for c in eq.children) - eq.delta_usd) < 1e-6
+    us = next(c for c in eq.children if c.path == "equity.US")
+    intl = next(c for c in eq.children if c.path == "equity.intl_developed")
+    # US is more under its within-equity target vs intl -> US should get more of the buy.
+    assert us.delta_usd > intl.delta_usd
+    assert us.direction == "buy"
+    assert intl.direction == "hold" and abs(intl.delta_usd) < 1e-6
 
 
 def test_hold_band() -> None:
@@ -436,6 +471,7 @@ def test_rebalance_full_returns_tree(
     assert abs(eq["delta_usd"] - (-10_000.0)) < 1e-6
     child_paths = {c["path"] for c in eq["children"]}
     assert child_paths == {"equity.US", "equity.intl_developed"}
+    assert abs(sum(c["delta_usd"] for c in eq["children"]) - eq["delta_usd"]) < 1e-6
 
 
 def test_new_money_missing_amount_422(
