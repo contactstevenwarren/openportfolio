@@ -162,8 +162,77 @@ def test_hold_band() -> None:
     assert eq.delta_usd != 0.0
 
 
+def test_full_trigger_restores_in_band_classes() -> None:
+    """Trigger fires when any class is out of band; all classes with drift then action.
+
+    Mirrors the user-reported scenario: cash overweight (out of band) and
+    equity underweight (out of band) with several in-band drift classes
+    that previously rendered as ``Hold $X``. Under full-restore, every
+    drift class actions and totals net to zero (no idle cash, no
+    round-trip sells).
+    """
+    from app.schemas import AllocationResult, AllocationSlice
+
+    # Synthetic 100k portfolio with the same drift signature as the user's:
+    # equity -1.9 pp, real_estate -0.6 pp, cash +3.4 pp, fixed_income -0.5 pp,
+    # private +0.3 pp, commodity -0.3 pp, crypto -0.4 pp.
+    result = AllocationResult(
+        total=100_000.0,
+        by_asset_class=[
+            AllocationSlice(name="equity", value=53_100.0, pct=53.1, children=[]),
+            AllocationSlice(name="real_estate", value=24_400.0, pct=24.4, children=[]),
+            AllocationSlice(name="cash", value=10_400.0, pct=10.4, children=[]),
+            AllocationSlice(name="fixed_income", value=7_500.0, pct=7.5, children=[]),
+            AllocationSlice(name="private", value=3_300.0, pct=3.3, children=[]),
+            AllocationSlice(name="commodity", value=700.0, pct=0.7, children=[]),
+            AllocationSlice(name="crypto", value=600.0, pct=0.6, children=[]),
+        ],
+        unclassified_tickers=[],
+    )
+    targets = {
+        "equity": 55.0,
+        "real_estate": 25.0,
+        "cash": 7.0,
+        "fixed_income": 8.0,
+        "private": 3.0,
+        "commodity": 1.0,
+        "crypto": 1.0,
+    }
+    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    by = {m.path: m for m in out.moves}
+
+    # Trigger fires (equity -1.9 and cash +3.4 outside band) -> every drift
+    # class gets a real label, even those within ±1 pp.
+    assert by["equity"].direction == "buy"
+    assert by["cash"].direction == "sell"
+    assert by["real_estate"].direction == "buy"     # +0.6 pp (was Hold pre-fix)
+    assert by["fixed_income"].direction == "buy"    # +0.5 pp (was Hold)
+    assert by["private"].direction == "sell"        # -0.3 pp (was Hold)
+    assert by["commodity"].direction == "buy"       # +0.3 pp (was Hold)
+    assert by["crypto"].direction == "buy"          # +0.4 pp (was Hold)
+
+    # Self-funding: sells = buys, net zero.
+    sells = sum(-m.delta_usd for m in out.moves if m.direction == "sell")
+    buys = sum(m.delta_usd for m in out.moves if m.direction == "buy")
+    assert abs(sells - buys) < 1e-6
+    assert abs(sum(m.delta_usd for m in out.moves)) < 1e-6
+
+
+def test_full_no_trigger_all_hold() -> None:
+    """When every class is within the band, nothing actions."""
+    result = aggregate(
+        [_pos("E1", 50_500.0), _pos("B1", 49_500.0)], _classes()
+    )
+    targets = {"equity": 50.0, "fixed_income": 50.0}
+    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    for m in out.moves:
+        assert m.direction == "hold"
+    # Drift dollars still reported on each row for provenance.
+    assert any(abs(m.delta_usd) > 0 for m in out.moves)
+
+
 def test_full_l1_hold_band_skips_l2_decompose() -> None:
-    """Equity has L2 targets but L1 is hold: no L2 rows (avoid sells vs hold)."""
+    """Equity has L2 targets but no class is out of band: no L2 rows."""
     # Total 100k; equity 60.5k -> 60.5% vs L1 target 60% => drift -0.5 pp (|.| <= MINOR).
     # delta_usd = -0.5% * 100k = -$500 (provenance); direction must stay hold with no L2.
     result = aggregate(

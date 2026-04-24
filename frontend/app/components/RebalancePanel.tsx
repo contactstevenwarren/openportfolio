@@ -290,7 +290,51 @@ function MovesTable({ result, mode }: { result: RebalanceResult; mode: 'full' | 
           ])}
         </tbody>
       </table>
+      {mode === 'full' && <RebalanceTotals moves={result.moves} />}
     </>
+  );
+}
+
+function RebalanceTotals({ moves }: { moves: RebalanceMove[] }) {
+  // Sum L1 only — children decompose their parent and would double-count.
+  let sells = 0;
+  let buys = 0;
+  for (const m of moves) {
+    if (m.direction === 'sell') sells += -m.delta_usd;
+    else if (m.direction === 'buy') buys += m.delta_usd;
+  }
+  const net = buys - sells;
+  if (sells === 0 && buys === 0) {
+    return (
+      <p style={{ marginTop: '0.6rem', fontSize: '0.82rem', color: '#555' }}>
+        Every class is within ±1% of target — no trades suggested.
+      </p>
+    );
+  }
+  return (
+    <div
+      style={{
+        marginTop: '0.6rem',
+        padding: '0.5rem 0.75rem',
+        background: '#f3f4f6',
+        borderRadius: 4,
+        fontSize: '0.85rem',
+        color: '#374151',
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '1.25rem',
+      }}
+    >
+      <span>
+        Total sells: <strong>{formatUSD(sells)}</strong>
+      </span>
+      <span>
+        Total buys: <strong>{formatUSD(buys)}</strong>
+      </span>
+      <span>
+        Net: <strong>{formatUSD(Math.abs(net))}</strong>
+      </span>
+    </div>
   );
 }
 
@@ -305,10 +349,11 @@ function MoveRow({
 }) {
   const label = humanize(depth === 0 ? move.path : move.path.split('.').slice(1).join('.'));
   const dollar = Math.round(move.delta_usd);
-  // In new-money mode an over-target class receives $0 but backend labels it
-  // "buy" (direction is driven by drift, not dollars). Suppress the noise by
-  // rendering $0 as a dash regardless of label.
-  const showDash = mode === 'new_money' && dollar === 0;
+  // Hold rows have no action — render Move ($) as "—". In new-money mode
+  // over-target classes receive $0; in full mode the dollar value is the
+  // drift magnitude (provenance only) and shouldn't be confused with a trade.
+  const showDash =
+    move.direction === 'hold' || (mode === 'new_money' && dollar === 0);
 
   return (
     <tr
