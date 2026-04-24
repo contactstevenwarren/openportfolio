@@ -409,3 +409,38 @@ class TargetRow(BaseModel):
 class TargetsPayload(BaseModel):
     root: list[TargetRow]
     groups: dict[str, list[TargetRow]] = Field(default_factory=dict)
+
+
+# ----- rebalance (v0.5) ---------------------------------------------------
+
+
+RebalanceDirection = Literal["buy", "sell", "hold"]
+RebalanceMode = Literal["full", "new_money"]
+
+
+class RebalanceMove(BaseModel):
+    """One actionable move in the rebalance tree.
+
+    ``path`` is dotted like the targets map ("equity" for L1, "equity.us"
+    for L2). ``parent_total_usd`` is net worth for L1 moves and the L1
+    class dollar value for L2 moves, matching how drift.py scopes
+    actuals at each level.
+    """
+
+    path: str
+    direction: RebalanceDirection
+    delta_usd: float
+    target_pct: float
+    actual_pct: float
+    parent_total_usd: float
+    children: list["RebalanceMove"] = []
+
+
+class RebalanceResult(BaseModel):
+    mode: RebalanceMode
+    total: float
+    contribution_usd: float | None = None
+    moves: list[RebalanceMove] = []
+
+
+RebalanceMove.model_rebuild()
