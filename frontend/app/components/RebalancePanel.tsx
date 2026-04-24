@@ -139,7 +139,7 @@ export function RebalancePanel({ isHeroRoot }: Props) {
       {loading && <p style={{ color: '#666', fontSize: '0.9rem' }}>Computing…</p>}
 
       {result && !stale && !loadError && (
-        <MovesTable result={result} />
+        <MovesTable result={result} mode={mode} />
       )}
 
       {result && !stale && !loadError && result.moves.length === 0 && (
@@ -253,29 +253,44 @@ function StaleTargetsBanner({ detail }: { detail: RebalanceStaleTargetsError['de
   );
 }
 
-function MovesTable({ result }: { result: RebalanceResult }) {
+function MovesTable({ result, mode }: { result: RebalanceResult; mode: 'full' | 'new_money' }) {
   if (result.moves.length === 0) return null;
 
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
-      <thead>
-        <tr style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>
-          <th style={th}>Category</th>
-          <th style={th}>Target</th>
-          <th style={th}>Actual</th>
-          <th style={th}>Move</th>
-          <th style={th}>$</th>
-        </tr>
-      </thead>
-      <tbody>
-        {result.moves.flatMap((m) => [
-          <MoveRow key={m.path} move={m} depth={0} mode={result.mode} />,
-          ...m.children.map((c) => (
-            <MoveRow key={c.path} move={c} depth={1} mode={result.mode} />
-          )),
-        ])}
-      </tbody>
-    </table>
+    <>
+      {mode === 'full' && (
+        <p style={{ fontSize: '0.82rem', color: '#555', margin: '0 0 0.6rem', lineHeight: 1.45 }}>
+          Top row: dollars vs your whole portfolio. Indented rows: how that parent move is split
+          across sub-buckets (overweights lose first on sells; underweights gain first on buys).
+          Sub-row dollars add up to the parent row.
+        </p>
+      )}
+      {mode === 'new_money' && (
+        <p style={{ fontSize: '0.82rem', color: '#555', margin: '0 0 0.6rem', lineHeight: 1.45 }}>
+          Contribution is allocated by gap-fill, then excess among classes at or under target; L2
+          splits each class&apos;s share inside that class.
+        </p>
+      )}
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>
+            <th style={th}>Category</th>
+            <th style={th}>Target</th>
+            <th style={th}>Actual</th>
+            <th style={th}>Move</th>
+            <th style={th}>Move ($)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {result.moves.flatMap((m) => [
+            <MoveRow key={m.path} move={m} depth={0} mode={result.mode} />,
+            ...m.children.map((c) => (
+              <MoveRow key={c.path} move={c} depth={1} mode={result.mode} />
+            )),
+          ])}
+        </tbody>
+      </table>
+    </>
   );
 }
 
@@ -312,9 +327,7 @@ function MoveRow({
         {showDash ? (
           <span style={{ color: '#aaa' }}>—</span>
         ) : (
-          <Provenance
-            source={provenanceFor(move, mode)}
-          >
+          <Provenance source={provenanceFor(move, mode, depth)}>
             {formatUSD(Math.abs(dollar))}
           </Provenance>
         )}
@@ -354,13 +367,22 @@ function DirectionBadge({
   );
 }
 
-function provenanceFor(move: RebalanceMove, mode: 'full' | 'new_money'): string {
+function provenanceFor(move: RebalanceMove, mode: 'full' | 'new_money', depth: number): string {
   const driftPct = move.target_pct - move.actual_pct;
-  if (mode === 'full') {
+  if (mode === 'full' && depth === 0) {
     return (
       `(target ${move.target_pct.toFixed(2)}% − actual ${move.actual_pct.toFixed(2)}%) ` +
-      `÷ 100 × ${formatUSD(move.parent_total_usd)} = ${formatUSD(move.delta_usd)} ` +
-      `(drift ${driftPct.toFixed(2)} pp)`
+      `÷ 100 × net worth ${formatUSD(move.parent_total_usd)} = ${formatUSD(move.delta_usd)} ` +
+      `(drift ${driftPct.toFixed(2)} pp vs portfolio)`
+    );
+  }
+  if (mode === 'full' && depth > 0) {
+    const parentClass = move.path.includes('.') ? move.path.slice(0, move.path.indexOf('.')) : '';
+    return (
+      `Share of the ${humanize(parentClass)} row above: ${formatUSD(move.delta_usd)} ` +
+      `allocated across sub-buckets by dollars over target (sells) or under target (buys) ` +
+      `within ${humanize(parentClass)}; sub-rows sum to that parent dollar move. ` +
+      `Shown target/actual are % of ${humanize(parentClass)} (${move.target_pct.toFixed(1)}% vs ${move.actual_pct.toFixed(1)}%).`
     );
   }
   return (
