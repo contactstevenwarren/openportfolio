@@ -35,6 +35,30 @@
       "market_value": 32500.00,
       "confidence": 0.95,
       "source_span": "BTC-USD      0.5      $65,000.00       $32,500.00     $30,000.00"
+    },
+    {
+      "ticker": "SNOXX",
+      "shares": 12345.678,
+      "cost_basis": 12300.0,
+      "market_value": 12345.68,
+      "confidence": 0.92,
+      "source_span": "SNOXX   12345.678        $1.00         $12,345.68     $12,300.00"
+    },
+    {
+      "ticker": "U12TEST99",
+      "shares": 50.0,
+      "cost_basis": 4950.0,
+      "market_value": 4956.25,
+      "confidence": 0.88,
+      "source_span": "912TEST99  50.000       $99.125       $4,956.25      $4,950.00"
+    },
+    {
+      "ticker": "CASH",
+      "shares": 1.0,
+      "cost_basis": 500.12,
+      "market_value": 500.12,
+      "confidence": 0.85,
+      "source_span": "CASH       1.00         $1.00         $500.12        $500.12"
     }
   ]
 }
