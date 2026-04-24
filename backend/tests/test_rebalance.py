@@ -162,6 +162,36 @@ def test_hold_band() -> None:
     assert eq.delta_usd != 0.0
 
 
+def test_full_l1_hold_band_skips_l2_decompose() -> None:
+    """Equity has L2 targets but L1 is hold: no L2 rows (avoid sells vs hold)."""
+    # Total 100k; equity 60.5k -> 60.5% vs L1 target 60% => drift -0.5 pp (|.| <= MINOR).
+    # delta_usd = -0.5% * 100k = -$500 (provenance); direction must stay hold with no L2.
+    result = aggregate(
+        [
+            _pos("E1", 30_250.0),
+            _pos("E2", 30_250.0),
+            _pos("B1", 39_500.0),
+        ],
+        _classes(),
+    )
+    eq_slice = next(s for s in result.by_asset_class if s.name == "equity")
+    assert abs(eq_slice.pct - 60.5) < 1e-6
+    assert abs(result.total - 100_000.0) < 1e-6
+
+    targets = {
+        "equity": 60.0,
+        "fixed_income": 40.0,
+        "equity.US": 40.0,
+        "equity.intl_developed": 60.0,
+    }
+    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    eq = next(m for m in out.moves if m.path == "equity")
+    assert abs(60.0 - eq_slice.pct) <= MINOR  # |target - actual_pct| within hold band
+    assert eq.direction == "hold"
+    assert abs(eq.delta_usd - (-500.0)) < 1e-6
+    assert eq.children == []
+
+
 def test_new_money_gaps_exceed_contribution() -> None:
     # portfolio 100k: equity 40k (40%), FI 60k (60%). Targets equity 60 / FI 40.
     # new_total = 105k. desired equity = 63k (gap 23k), desired FI = 42k (gap 0

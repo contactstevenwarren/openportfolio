@@ -4,11 +4,13 @@ Pure functions over an already-built ``AllocationResult``. No I/O, no DB,
 no HTTP. Two modes:
 
 * ``full`` -- delta vs target for every L1 class (and nested L2 where
-  group targets exist). Sum of L1 deltas is ~0. L2 rows **decompose** the
-  parent L1 dollar move across sub-buckets (which sleeves to sell from
-  or buy into), so child ``delta_usd`` sums to the parent move. L1
-  ``hold`` / ``buy`` / ``sell`` still uses the drift band; L2 direction
-  follows the sign of the decomposed child delta (zero → hold).
+  group targets exist). Sum of L1 deltas is ~0. When L1 is **not** in
+  the drift hold band, L2 rows **decompose** the parent L1 dollar move
+  across sub-buckets (which sleeves to sell from or buy into), so child
+  ``delta_usd`` sums to the parent move. When L1 is hold (|drift| within
+  the minor band), L2 children are omitted: the L1 ``delta_usd`` may be
+  non-zero for provenance only. L1 ``hold`` / ``buy`` / ``sell`` uses the
+  drift band; L2 direction follows the decomposed child delta (zero → hold).
 * ``new_money`` -- distribute a positive USD contribution by gap-fill
   first (``max(0, desired - current)``) and excess proportional to
   target percent among classes at or under target. No sells.
@@ -202,7 +204,10 @@ def compute_rebalance(
         delta_usd = drift_pct / 100.0 * total
 
         children: list[RebalanceMove] = []
-        if _has_group_targets(ac, targets):
+        # Skip L2 decompose when L1 is in the drift hold band (|drift_pct| <= minor):
+        # delta_usd may still be non-zero for provenance, but splitting it across L2
+        # would show child sells/buys that contradict L1 hold.
+        if _has_group_targets(ac, targets) and abs(drift_pct) > drift_minor_pct:
             currents = _l2_currents(ac, ac_slice, targets)
             parent_value = ac_slice.value
             children = _decompose_l1_delta_into_l2(
