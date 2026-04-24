@@ -1,7 +1,7 @@
 'use client';
 
 // v0.1.6 hero: single donut + context-aware one-level drill-down.
-// v0.2: targets + drift columns, drift ring, save / prefill / clear targets.
+// v0.2: targets + drift columns, save / prefill / clear targets (drift in table + pill).
 //
 // Root view shows one slice per asset class. Click a drillable slice (or
 // its table row) and the same chart re-renders for that class's natural
@@ -114,18 +114,6 @@ function effectiveDrift(rows: TargetRow[], drill: Drill, slice: AllocationSlice)
   const t = effectiveTarget(rows, drill, slice);
   if (t == null) return null;
   return slice.pct - t;
-}
-
-function effectiveBand(
-  rows: TargetRow[],
-  drill: Drill,
-  slice: AllocationSlice,
-  t: { minor_pct: number; major_pct: number },
-): DriftBand | null {
-  if (slice.drift_band) return slice.drift_band;
-  const d = effectiveDrift(rows, drill, slice);
-  if (d == null) return null;
-  return bandFromAbs(Math.abs(d), t);
 }
 
 export default function Home() {
@@ -266,17 +254,6 @@ export default function Home() {
 
   const chartOption = useMemo(() => {
     const inner = tableRows.map((s) => ({ name: s.name, value: s.value }));
-    const outer = tableRows.map((s) => {
-      const band = sectorInfoOnly ? null : effectiveBand(targetRows, drill, s, thresholds);
-      let color = '#d1d5db';
-      if (!sectorInfoOnly) {
-        if (band === 'on_target') color = '#22c55e';
-        else if (band === 'minor') color = '#f59e0b';
-        else if (band === 'major') color = '#ef4444';
-        else if (effectiveTarget(targetRows, drill, s) == null) color = '#d1d5db';
-      }
-      return { name: s.name, value: s.value, itemStyle: { color } };
-    });
     return {
       tooltip: {
         trigger: 'item',
@@ -286,7 +263,8 @@ export default function Home() {
       series: [
         {
           type: 'pie',
-          radius: ['55%', '85%'],
+          roseType: 'radius',
+          radius: ['28%', '88%'],
           avoidLabelOverlap: true,
           itemStyle: { borderColor: '#fff', borderWidth: 2 },
           label: {
@@ -297,22 +275,12 @@ export default function Home() {
           emphasis: { itemStyle: { opacity: 0.8 } },
           data: inner,
         },
-        {
-          type: 'pie',
-          radius: ['86%', '93%'],
-          avoidLabelOverlap: true,
-          itemStyle: { borderColor: '#fff', borderWidth: 1 },
-          label: { show: false },
-          labelLine: { show: false },
-          silent: true,
-          data: outer,
-        },
       ],
       graphic: [
         {
           type: 'text',
           left: 'center',
-          top: '43%',
+          top: '44%',
           style: { text: centerTop, fontSize: 11, fill: '#666' },
         },
         {
@@ -323,7 +291,7 @@ export default function Home() {
         },
       ],
     };
-  }, [tableRows, targetRows, drill, thresholds, sectorInfoOnly, centerTop, centerBottom]);
+  }, [tableRows, centerTop, centerBottom]);
 
   if (isLoading) return <Frame>Loading…</Frame>;
   if (error) {
