@@ -4,13 +4,13 @@ Pure functions over an already-built ``AllocationResult``. No I/O, no DB,
 no HTTP. Two modes:
 
 * ``full`` -- delta vs target for every L1 class (and nested L2 where
-  group targets exist). Sum of L1 deltas is ~0. When L1 is **not** in
-  the drift hold band, L2 rows **decompose** the parent L1 dollar move
-  across sub-buckets (which sleeves to sell from or buy into), so child
-  ``delta_usd`` sums to the parent move. When L1 is hold (|drift| within
-  the minor band), L2 children are omitted: the L1 ``delta_usd`` may be
-  non-zero for provenance only. L1 ``hold`` / ``buy`` / ``sell`` uses the
-  drift band; L2 direction follows the decomposed child delta (zero → hold).
+  group targets exist). Sum of L1 deltas is ~0. The drift band acts as
+  a **global trigger**: if any class drifts past ``drift_minor_pct``,
+  every class with non-zero drift is restored to target (full restore,
+  trades net to zero). If no class is past the band, every row is hold.
+  When triggered, L2 rows decompose the parent L1 dollar move across
+  sub-buckets (overweights lose first on sells; underweights gain first
+  on buys) so child ``delta_usd`` sums to the parent move.
 * ``new_money`` -- distribute a positive USD contribution by gap-fill
   first (``max(0, desired - current)``) and excess proportional to
   target percent among classes at or under target. No sells.
@@ -78,8 +78,9 @@ def _l2_currents(
     return out
 
 
-def _direction_full(drift_pct: float, delta_usd: float, minor: float) -> RebalanceDirection:
-    if abs(drift_pct) <= minor:
+def _direction_triggered(delta_usd: float, triggered: bool) -> RebalanceDirection:
+    """Full-mode direction: hold unless the band trigger fired *and* this row has a real action."""
+    if not triggered or abs(delta_usd) < 1.0:
         return "hold"
     return "buy" if delta_usd > 0 else "sell"
 
@@ -193,21 +194,29 @@ def compute_rebalance(
     if total <= 0 or not _has_root_targets(targets):
         return RebalanceResult(mode="full", total=total, moves=[])
 
-    moves: list[RebalanceMove] = []
+    # First pass: compute drift per class with a target.
+    targeted: list[tuple[AllocationSlice, float, float, float]] = []
     for ac_slice in result.by_asset_class:
-        ac = ac_slice.name
-        target = targets.get(ac)
+        target = targets.get(ac_slice.name)
         if target is None:
             continue
         actual_pct = ac_slice.pct
         drift_pct = target - actual_pct
         delta_usd = drift_pct / 100.0 * total
+        targeted.append((ac_slice, target, drift_pct, delta_usd))
 
+    # Trigger fires if any targeted class drifts past the minor band.
+    # When triggered: every class restores to target (full restore, net-zero).
+    # When not triggered: every class is hold.
+    triggered = any(abs(drift_pct) > drift_minor_pct for _, _, drift_pct, _ in targeted)
+
+    moves: list[RebalanceMove] = []
+    for ac_slice, target, _drift_pct, delta_usd in targeted:
+        ac = ac_slice.name
         children: list[RebalanceMove] = []
-        # Skip L2 decompose when L1 is in the drift hold band (|drift_pct| <= minor):
-        # delta_usd may still be non-zero for provenance, but splitting it across L2
-        # would show child sells/buys that contradict L1 hold.
-        if _has_group_targets(ac, targets) and abs(drift_pct) > drift_minor_pct:
+        # Decompose L2 only when this row has a real action (band triggered
+        # somewhere AND this row is moving more than $1).
+        if triggered and _has_group_targets(ac, targets) and abs(delta_usd) >= 1.0:
             currents = _l2_currents(ac, ac_slice, targets)
             parent_value = ac_slice.value
             children = _decompose_l1_delta_into_l2(
@@ -217,10 +226,10 @@ def compute_rebalance(
         moves.append(
             RebalanceMove(
                 path=ac,
-                direction=_direction_full(drift_pct, delta_usd, drift_minor_pct),
+                direction=_direction_triggered(delta_usd, triggered),
                 delta_usd=delta_usd,
                 target_pct=target,
-                actual_pct=actual_pct,
+                actual_pct=ac_slice.pct,
                 parent_total_usd=total,
                 children=children,
             )
