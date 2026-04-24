@@ -12,11 +12,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.llm import LLMNotConfiguredError, classify_ticker, extract_positions
-from app.main import app
+from app.pdf_text import PdfNoTextError, PdfTextTooLargeError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -165,22 +164,24 @@ def test_extract_passes_azure_credentials(azure_configured: None) -> None:
 # --- POST /api/extract ----------------------------------------------------
 
 
-def test_extract_endpoint_requires_admin_token(azure_configured: None) -> None:
-    settings.admin_token = "secret"
-    client = TestClient(app)
+def test_extract_endpoint_requires_admin_token(
+    azure_configured: None, client, test_db
+) -> None:
+    del test_db
     r = client.post("/api/extract", json={"text": "ignored"})
     assert r.status_code == 401
 
 
-def test_extract_endpoint_returns_annotated_positions(azure_configured: None) -> None:
-    settings.admin_token = "secret"
+def test_extract_endpoint_returns_annotated_positions(
+    azure_configured: None, client, test_db, auth_headers
+) -> None:
+    del test_db
     text, llm_json = _load("fidelity")
 
     with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
-        client = TestClient(app)
         r = client.post(
             "/api/extract",
-            headers={"X-Admin-Token": "secret"},
+            headers=auth_headers,
             json={"text": text},
         )
 
@@ -191,6 +192,8 @@ def test_extract_endpoint_returns_annotated_positions(azure_configured: None) ->
     # Validation errors surface in the response body (review UI consumes them).
     aapl = next(p for p in body["positions"] if p["ticker"] == "aapl")
     assert aapl["validation_errors"]
+    assert body.get("extraction_warnings") == []
+    assert body.get("matched_account_id") is None
 
 
 def test_recorded_fixtures_parse_as_valid_json() -> None:
@@ -200,6 +203,93 @@ def test_recorded_fixtures_parse_as_valid_json() -> None:
         parsed = json.loads(llm_json)
         assert "positions" in parsed
         assert len(parsed["positions"]) > 0
+        for key in (
+            "statement_account_name",
+            "statement_account_name_confidence",
+            "matched_account_id",
+            "matched_account_confidence",
+        ):
+            assert key in parsed
+
+
+def test_matched_account_id_invalid_strips_and_warns(azure_configured: None) -> None:
+    _, base_llm = _load("fidelity")
+    data = json.loads(base_llm)
+    data["matched_account_id"] = 9999
+    data["matched_account_confidence"] = 0.9
+    llm_json = json.dumps(data)
+    with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
+        result = extract_positions("x", accounts=[(1, "Brokerage", "brokerage")])
+    assert result.matched_account_id is None
+    assert result.matched_account_confidence is None
+    assert any("Invalid matched_account_id" in w for w in result.extraction_warnings)
+
+
+# --- POST /api/extract/pdf ------------------------------------------------
+
+
+def test_extract_pdf_ok_mocked(
+    azure_configured: None, client, test_db, auth_headers
+) -> None:
+    del test_db
+    text, llm_json = _load("fidelity")
+    with (
+        patch("app.main.pdf_bytes_to_text", return_value=text),
+        patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)),
+    ):
+        r = client.post(
+            "/api/extract/pdf",
+            headers=auth_headers,
+            files={"file": ("stmt.pdf", b"%PDF-1.4 test bytes", "application/pdf")},
+        )
+    assert r.status_code == 200
+    out = r.json()
+    assert [p["ticker"] for p in out["positions"]] == ["VTI", "VXUS", "BND", "aapl"]
+
+
+def test_extract_pdf_422_on_bad_magic(azure_configured, client, test_db, auth_headers) -> None:
+    del test_db
+    r = client.post(
+        "/api/extract/pdf",
+        headers=auth_headers,
+        files={"file": ("n.pdf", b"not-a-pdf", "application/pdf")},
+    )
+    assert r.status_code == 422
+    assert "PDF" in r.json()["detail"]
+
+
+def test_extract_pdf_422_on_no_text(
+    azure_configured, client, test_db, auth_headers
+) -> None:
+    del test_db
+    with patch(
+        "app.main.pdf_bytes_to_text",
+        side_effect=PdfNoTextError("no text here"),
+    ):
+        r = client.post(
+            "/api/extract/pdf",
+            headers=auth_headers,
+            files={"file": ("empty.pdf", b"%PDF-1.4", "application/pdf")},
+        )
+    assert r.status_code == 422
+    assert "no text here" in r.json()["detail"]
+
+
+def test_extract_pdf_422_on_too_large(
+    azure_configured, client, test_db, auth_headers
+) -> None:
+    del test_db
+    with patch(
+        "app.main.pdf_bytes_to_text",
+        side_effect=PdfTextTooLargeError("exceeds limit (999999)"),
+    ):
+        r = client.post(
+            "/api/extract/pdf",
+            headers=auth_headers,
+            files={"file": ("big.pdf", b"%PDF-1.4", "application/pdf")},
+        )
+    assert r.status_code == 422
+    assert "exceeds limit" in r.json()["detail"]
 
 
 # --- classify_ticker -------------------------------------------------------

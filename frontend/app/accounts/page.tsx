@@ -189,7 +189,15 @@ export default function AccountsPage() {
               const isEditing = editingId === a.id;
               return (
                 <tr key={a.id} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={td}>{a.id}</td>
+                  <td style={td}>
+                    {isEditing ? (
+                      a.id
+                    ) : (
+                      <a href={`/accounts/${a.id}`} style={{ color: '#0066cc', textDecoration: 'none' }}>
+                        {a.id}
+                      </a>
+                    )}
+                  </td>
                   <td style={td}>
                     {isEditing ? (
                       <input
@@ -198,7 +206,9 @@ export default function AccountsPage() {
                         style={{ padding: '0.3rem 0.4rem', width: 220 }}
                       />
                     ) : (
-                      a.label
+                      <a href={`/accounts/${a.id}`} style={{ color: '#0066cc' }}>
+                        {a.label}
+                      </a>
                     )}
                   </td>
                   <td style={td}>

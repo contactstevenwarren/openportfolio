@@ -5,9 +5,9 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import Float as SAFloat
-from sqlalchemy import delete, inspect, text
+from sqlalchemy import delete, func, inspect, text
 from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  -- register models with Base before create_all
@@ -24,6 +24,8 @@ from .classifications import (
 )
 from .db import Base, SessionLocal, engine, get_db
 from .llm import classify_ticker, extract_positions
+from .pdf_text import PdfNoTextError, PdfTextTooLargeError, pdf_bytes_to_text
+from .scrub_digits import scrub_digit_runs
 from .lookthrough import Breakdown, get_yaml_breakdowns
 from .models import Account, Classification, Position, Provenance, Snapshot, Target
 from .schemas import (
@@ -37,6 +39,7 @@ from .schemas import (
     ClassificationRow,
     ClassificationSuggestItem,
     ClassificationSuggestRequest,
+    CommitPosition,
     CommitResult,
     DriftThresholds,
     ExportResult,
@@ -286,9 +289,40 @@ def health() -> dict[str, bool]:
     return {"ok": True}
 
 
+def _account_tuples(db: Session) -> list[tuple[int, str, str]]:
+    return [(a.id, a.label, a.type) for a in db.query(Account).order_by(Account.id).all()]
+
+
 @app.post("/api/extract", dependencies=[Depends(require_admin_token)])
-def extract(body: ExtractRequest) -> ExtractionResult:
-    return extract_positions(body.text)
+def extract(body: ExtractRequest, db: Session = Depends(get_db)) -> ExtractionResult:
+    return extract_positions(body.text, accounts=_account_tuples(db))
+
+
+@app.post("/api/extract/pdf", dependencies=[Depends(require_admin_token)])
+def extract_pdf(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> ExtractionResult:
+    b = file.file.read()
+    if not b.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="File is not a valid PDF (missing %PDF header).",
+        )
+    try:
+        text = pdf_bytes_to_text(b)
+    except PdfNoTextError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(e),
+        ) from e
+    except PdfTextTooLargeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(e),
+        ) from e
+    scrubbed, _redactions = scrub_digit_runs(text)
+    return extract_positions(scrubbed, accounts=_account_tuples(db))
 
 
 # ----- accounts -----------------------------------------------------------
@@ -391,6 +425,135 @@ def _resolve_ticker(db: Session, proposed: str) -> str:
     return f"{proposed}-{n}"
 
 
+def _apply_commit_row_classification(
+    db: Session,
+    source: str,
+    row: CommitPosition,
+    now: datetime,
+) -> str:
+    """Resolve final ticker and apply the same classification writes as commit."""
+    ticker = row.ticker
+    if row.classification is not None:
+        cls_in = row.classification
+        if cls_in.asset_class not in _VALID_ASSET_CLASSES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"asset_class must be one of "
+                    f"{sorted(_VALID_ASSET_CLASSES)}; "
+                    f"got {cls_in.asset_class!r}"
+                ),
+            )
+        if cls_in.auto_suffix:
+            ticker = _resolve_ticker(db, ticker)
+            db.add(
+                Classification(
+                    ticker=ticker,
+                    asset_class=cls_in.asset_class,
+                    sub_class=cls_in.sub_class,
+                    sector=cls_in.sector,
+                    region=cls_in.region,
+                    source="user",
+                )
+            )
+            for field, value in (
+                ("asset_class", cls_in.asset_class),
+                ("sub_class", cls_in.sub_class),
+                ("sector", cls_in.sector),
+                ("region", cls_in.region),
+            ):
+                db.add(
+                    Provenance(
+                        entity_type="classification",
+                        entity_id=0,
+                        entity_key=ticker,
+                        field=field,
+                        source=source,
+                        confidence=1.0,
+                        llm_span=None,
+                        captured_at=now,
+                    )
+                )
+        else:
+            existing_c = db.get(Classification, ticker)
+            if existing_c is None:
+                yaml_entries = load_classifications()
+                yaml_hit = yaml_entries.get(ticker)
+                same_as_yaml = (
+                    yaml_hit is not None
+                    and yaml_hit.asset_class == cls_in.asset_class
+                )
+                if not same_as_yaml:
+                    db.add(
+                        Classification(
+                            ticker=ticker,
+                            asset_class=cls_in.asset_class,
+                            sub_class=cls_in.sub_class,
+                            sector=cls_in.sector,
+                            region=cls_in.region,
+                            source="user",
+                        )
+                    )
+                    sc = cls_in.suggestion_confidence
+                    sr = cls_in.suggestion_reasoning
+                    for field, value in (
+                        ("asset_class", cls_in.asset_class),
+                        ("sub_class", cls_in.sub_class),
+                        ("sector", cls_in.sector),
+                        ("region", cls_in.region),
+                    ):
+                        conf = (
+                            sc
+                            if field == "asset_class" and sc is not None
+                            else 1.0
+                        )
+                        span = sr if field == "asset_class" else None
+                        db.add(
+                            Provenance(
+                                entity_type="classification",
+                                entity_id=0,
+                                entity_key=ticker,
+                                field=field,
+                                source=source,
+                                confidence=conf,
+                                llm_span=span,
+                                captured_at=now,
+                            )
+                        )
+    return ticker
+
+
+def _add_position_numeric_provenance(
+    db: Session,
+    position_id: int,
+    source: str,
+    confidence: float,
+    source_span: str,
+    now: datetime,
+    shares: float,
+    cost_basis: float | None,
+    market_value: float | None,
+) -> None:
+    for field, value in (
+        ("shares", shares),
+        ("cost_basis", cost_basis),
+        ("market_value", market_value),
+    ):
+        if value is None:
+            continue
+        db.add(
+            Provenance(
+                entity_type="position",
+                entity_id=position_id,
+                field=field,
+                source=source,
+                confidence=confidence,
+                llm_span=source_span,
+                captured_at=now,
+            )
+        )
+
+
 @app.post(
     "/api/positions/commit",
     status_code=status.HTTP_201_CREATED,
@@ -399,106 +562,116 @@ def _resolve_ticker(db: Session, proposed: str) -> str:
 def commit_positions(
     body: PositionCommit, db: Session = Depends(get_db)
 ) -> CommitResult:
-    account = _resolve_account(db, body.account_id)
     now = datetime.now(UTC)
+
+    if body.replace_account:
+        if body.account_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="replace_account requires account_id",
+            )
+        if not body.positions:
+            raise HTTPException(
+                status_code=422,
+                detail="replace_account requires at least one position",
+            )
+        account = db.get(Account, body.account_id)
+        if account is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"account {body.account_id} not found",
+            )
+
+        created_ids: list[int] = []
+        final_tickers: list[str] = []
+        for row in body.positions:
+            ticker = _apply_commit_row_classification(db, body.source, row, now)
+
+            position = (
+                db.query(Position)
+                .filter(
+                    Position.account_id == account.id,
+                    func.upper(Position.ticker) == ticker.upper(),
+                )
+                .first()
+            )
+            if position is not None:
+                old_shares = position.shares
+                old_cb = position.cost_basis
+                old_mv = position.market_value
+                position.shares = row.shares
+                position.cost_basis = row.cost_basis
+                position.market_value = row.market_value
+                position.as_of = now
+                position.source = body.source
+                for field, old_v, new_v in (
+                    ("shares", old_shares, row.shares),
+                    ("cost_basis", old_cb, row.cost_basis),
+                    ("market_value", old_mv, row.market_value),
+                ):
+                    if new_v is None:
+                        continue
+                    if old_v != new_v:
+                        db.add(
+                            Provenance(
+                                entity_type="position",
+                                entity_id=position.id,
+                                field=field,
+                                source=body.source,
+                                confidence=row.confidence,
+                                llm_span=row.source_span,
+                                captured_at=now,
+                            )
+                        )
+                created_ids.append(position.id)
+                final_tickers.append(ticker)
+            else:
+                position = Position(
+                    account_id=account.id,
+                    ticker=ticker,
+                    shares=row.shares,
+                    cost_basis=row.cost_basis,
+                    market_value=row.market_value,
+                    as_of=now,
+                    source=body.source,
+                )
+                db.add(position)
+                db.flush()
+                _add_position_numeric_provenance(
+                    db,
+                    position.id,
+                    body.source,
+                    row.confidence,
+                    row.source_span,
+                    now,
+                    row.shares,
+                    row.cost_basis,
+                    row.market_value,
+                )
+                created_ids.append(position.id)
+                final_tickers.append(ticker)
+
+        committed_upper = {t.upper() for t in final_tickers}
+        stale = [
+            p
+            for p in db.query(Position).filter_by(account_id=account.id).all()
+            if p.ticker.upper() not in committed_upper
+        ]
+        for p in stale:
+            db.delete(p)
+
+        db.commit()
+        _write_snapshot(db)
+        return CommitResult(
+            account_id=account.id, position_ids=created_ids, tickers=final_tickers
+        )
+
+    account = _resolve_account(db, body.account_id)
 
     created_ids: list[int] = []
     final_tickers: list[str] = []
     for row in body.positions:
-        # Manual entries carry a classification payload + get ticker
-        # auto-suffixing on collision so "Gold bar" entered twice
-        # becomes gold-bar and gold-bar-2. Paste entries share tickers
-        # intentionally (two brokerages both holding VTI).
-        ticker = row.ticker
-        if row.classification is not None:
-            cls_in = row.classification
-            if cls_in.asset_class not in _VALID_ASSET_CLASSES:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f"asset_class must be one of "
-                        f"{sorted(_VALID_ASSET_CLASSES)}; "
-                        f"got {cls_in.asset_class!r}"
-                    ),
-                )
-            if cls_in.auto_suffix:
-                ticker = _resolve_ticker(db, ticker)
-                db.add(
-                    Classification(
-                        ticker=ticker,
-                        asset_class=cls_in.asset_class,
-                        sub_class=cls_in.sub_class,
-                        sector=cls_in.sector,
-                        region=cls_in.region,
-                        source="user",
-                    )
-                )
-                for field, value in (
-                    ("asset_class", cls_in.asset_class),
-                    ("sub_class", cls_in.sub_class),
-                    ("sector", cls_in.sector),
-                    ("region", cls_in.region),
-                ):
-                    db.add(
-                        Provenance(
-                            entity_type="classification",
-                            entity_id=0,
-                            entity_key=ticker,
-                            field=field,
-                            source=body.source,
-                            confidence=1.0,
-                            llm_span=None,
-                            captured_at=now,
-                        )
-                    )
-            else:
-                # Paste / market tickers: never suffix; skip if a user row
-                # exists; skip redundant user row when YAML already matches.
-                existing_c = db.get(Classification, ticker)
-                if existing_c is None:
-                    yaml_entries = load_classifications()
-                    yaml_hit = yaml_entries.get(ticker)
-                    same_as_yaml = (
-                        yaml_hit is not None
-                        and yaml_hit.asset_class == cls_in.asset_class
-                    )
-                    if not same_as_yaml:
-                        db.add(
-                            Classification(
-                                ticker=ticker,
-                                asset_class=cls_in.asset_class,
-                                sub_class=cls_in.sub_class,
-                                sector=cls_in.sector,
-                                region=cls_in.region,
-                                source="user",
-                            )
-                        )
-                        sc = cls_in.suggestion_confidence
-                        sr = cls_in.suggestion_reasoning
-                        for field, value in (
-                            ("asset_class", cls_in.asset_class),
-                            ("sub_class", cls_in.sub_class),
-                            ("sector", cls_in.sector),
-                            ("region", cls_in.region),
-                        ):
-                            conf = (
-                                sc
-                                if field == "asset_class" and sc is not None
-                                else 1.0
-                            )
-                            span = sr if field == "asset_class" else None
-                            db.add(
-                                Provenance(
-                                    entity_type="classification",
-                                    entity_id=0,
-                                    entity_key=ticker,
-                                    field=field,
-                                    source=body.source,
-                                    confidence=conf,
-                                    llm_span=span,
-                                    captured_at=now,
-                                )
-                            )
+        ticker = _apply_commit_row_classification(db, body.source, row, now)
 
         position = Position(
             account_id=account.id,
@@ -512,27 +685,17 @@ def commit_positions(
         db.add(position)
         db.flush()  # populate position.id for provenance FK
 
-        # Provenance rows for every numeric field we persisted. ticker is
-        # a label, not a number, so it doesn't get a provenance row
-        # (roadmap Principles: every *number* carries provenance).
-        for field, value in (
-            ("shares", row.shares),
-            ("cost_basis", row.cost_basis),
-            ("market_value", row.market_value),
-        ):
-            if value is None:
-                continue
-            db.add(
-                Provenance(
-                    entity_type="position",
-                    entity_id=position.id,
-                    field=field,
-                    source=body.source,
-                    confidence=row.confidence,
-                    llm_span=row.source_span,
-                    captured_at=now,
-                )
-            )
+        _add_position_numeric_provenance(
+            db,
+            position.id,
+            body.source,
+            row.confidence,
+            row.source_span,
+            now,
+            row.shares,
+            row.cost_basis,
+            row.market_value,
+        )
 
         created_ids.append(position.id)
         final_tickers.append(ticker)
@@ -583,8 +746,24 @@ def _write_snapshot(db: Session) -> None:
 
 
 @app.get("/api/positions", dependencies=[Depends(require_admin_token)])
-def list_positions(db: Session = Depends(get_db)) -> list[PositionRead]:
-    rows = db.query(Position).order_by(Position.id).all()
+def list_positions(
+    account_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+) -> list[PositionRead]:
+    if account_id is not None:
+        if db.get(Account, account_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"account {account_id} not found",
+            )
+        rows = (
+            db.query(Position)
+            .filter(Position.account_id == account_id)
+            .order_by(Position.id)
+            .all()
+        )
+    else:
+        rows = db.query(Position).order_by(Position.id).all()
     return [PositionRead.model_validate(p) for p in rows]
 
 

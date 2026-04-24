@@ -6,16 +6,17 @@
 // user edits / deselects -> Commit persists selected rows with a
 // provenance row per numeric field.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
+import { PositionExtractReview } from '../components/PositionExtractReview';
 import {
   api,
   type Account,
   type ClassificationSuggestItem,
   type ExtractedPosition,
+  type Position,
   type Taxonomy,
 } from '../lib/api';
-import { Provenance } from '../lib/provenance';
 import { scrubPaste } from '../lib/scrub';
 
 export default function PastePage() {
@@ -24,6 +25,9 @@ export default function PastePage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountId, setAccountId] = useState<number | null>(null);
+  const [replaceMode, setReplaceMode] = useState(false);
+  const [accountPositions, setAccountPositions] = useState<Position[]>([]);
+  const [removalsConfirmed, setRemovalsConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; message: string } | null>(null);
   const [taxonomy, setTaxonomy] = useState<Taxonomy | null>(null);
@@ -35,6 +39,48 @@ export default function PastePage() {
   useEffect(() => {
     refreshAccounts();
   }, []);
+
+  useEffect(() => {
+    if (!replaceMode || accountId == null) {
+      setAccountPositions([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .positions(accountId)
+      .then((list) => {
+        if (!cancelled) setAccountPositions(list);
+      })
+      .catch(() => {
+        if (!cancelled) setAccountPositions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [replaceMode, accountId]);
+
+  const removalsPreview = useMemo(() => {
+    if (!replaceMode || accountId == null || accountPositions.length === 0) return [];
+    const selectedTickers = new Set(
+      [...selected]
+        .map((i) => rows[i]?.ticker.trim())
+        .filter((t): t is string => Boolean(t)),
+    );
+    const out = new Set<string>();
+    for (const p of accountPositions) {
+      const t = p.ticker.trim();
+      if (!selectedTickers.has(t)) out.add(t);
+    }
+    return [...out].sort();
+  }, [replaceMode, accountId, accountPositions, selected, rows]);
+
+  useEffect(() => {
+    setRemovalsConfirmed(false);
+  }, [removalsPreview.join('\0')]);
+
+  useEffect(() => {
+    if (!replaceMode) setRemovalsConfirmed(false);
+  }, [replaceMode]);
 
   function refreshAccounts() {
     api
@@ -137,6 +183,7 @@ export default function PastePage() {
       const result = await api.commit({
         account_id: accountId,
         source: `paste:${new Date().toISOString().slice(0, 10)}`,
+        ...(replaceMode ? { replace_account: true } : {}),
         positions: rows
           .map((r, i) => ({ r, i }))
           .filter(({ i }) => selected.has(i))
@@ -177,6 +224,9 @@ export default function PastePage() {
       setText('');
       setSuggestionByTicker({});
       setAssetClassByIndex({});
+      setReplaceMode(false);
+      setRemovalsConfirmed(false);
+      setAccountPositions([]);
       refreshAccounts();
     } catch (e) {
       setStatus({ kind: 'err', message: `Commit failed: ${(e as Error).message}` });
@@ -199,6 +249,10 @@ export default function PastePage() {
   }
 
   const selectedCount = selected.size;
+  const commitBlockedByReplace =
+    replaceMode &&
+    (accountId == null || (removalsPreview.length > 0 && !removalsConfirmed));
+  const commitDisabled = busy || selectedCount === 0 || commitBlockedByReplace;
 
   return (
     <main style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>
@@ -212,7 +266,11 @@ export default function PastePage() {
           Account:{' '}
           <select
             value={accountId ?? ''}
-            onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
+            onChange={(e) => {
+              const v = e.target.value ? Number(e.target.value) : null;
+              setAccountId(v);
+              if (v == null) setReplaceMode(false);
+            }}
           >
             <option value="">
               {accounts.length === 0 ? 'Default (auto-create)' : 'Default (auto-create if none)'}
@@ -225,6 +283,51 @@ export default function PastePage() {
           </select>
         </label>
       </div>
+
+      <div style={{ marginBottom: '0.75rem' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={replaceMode}
+            disabled={!accountId}
+            onChange={(e) => setReplaceMode(e.target.checked)}
+          />
+          <span>Replace all holdings for selected account</span>
+        </label>
+        {!accountId && (
+          <span style={{ color: '#666', fontSize: '0.85rem', marginLeft: '0.5rem' }}>
+            (select an account first)
+          </span>
+        )}
+      </div>
+
+      {replaceMode && accountId != null && removalsPreview.length > 0 && (
+        <div
+          style={{
+            marginBottom: '0.75rem',
+            padding: '0.75rem',
+            background: '#fff8e6',
+            border: '1px solid #e6d08c',
+            borderRadius: 4,
+            fontSize: '0.9rem',
+          }}
+        >
+          <p style={{ margin: '0 0 0.5rem', fontWeight: 600 }}>
+            These tickers will be removed from the account (not in your selected rows):
+          </p>
+          <p style={{ margin: '0 0 0.75rem', fontFamily: 'ui-monospace, monospace' }}>
+            {removalsPreview.join(', ')}
+          </p>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={removalsConfirmed}
+              onChange={(e) => setRemovalsConfirmed(e.target.checked)}
+            />
+            <span>I understand these holdings will be deleted on commit.</span>
+          </label>
+        </div>
+      )}
 
       <textarea
         value={text}
@@ -266,165 +369,26 @@ export default function PastePage() {
           <h2 style={{ marginTop: '1.5rem' }}>
             Review ({rows.length} row{rows.length === 1 ? '' : 's'}, sorted by confidence asc)
           </h2>
-          <p style={{ color: '#666', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-            Edit tickers? Use &quot;Refresh classification hints&quot; to re-fetch LLM suggestions.
-          </p>
-          <div style={{ marginBottom: '0.75rem' }}>
-            <button type="button" onClick={handleRefreshHints} disabled={busy}>
-              Refresh classification hints
-            </button>
-          </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid #ccc' }}>
-                  <th style={th}></th>
-                  <th style={th}>Ticker</th>
-                  <th style={th}>Asset class</th>
-                  <th style={th}>Shares</th>
-                  <th style={th}>Cost basis</th>
-                  <th style={th}>Market value</th>
-                  <th style={th}>Confidence</th>
-                  <th style={th}>Source span</th>
-                  <th style={th}>Errors</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => {
-                  const sug = suggestionByTicker[r.ticker.trim()];
-                  return (
-                    <tr
-                      key={i}
-                      style={{
-                        background: rowBg(r.confidence, r.validation_errors.length > 0),
-                        borderBottom: '1px solid #eee',
-                      }}
-                    >
-                      <td style={td}>
-                        <input type="checkbox" checked={selected.has(i)} onChange={() => toggle(i)} />
-                      </td>
-                      <td style={td}>
-                        <input
-                          value={r.ticker}
-                          onChange={(e) => updateRow(i, { ticker: e.target.value })}
-                          size={10}
-                        />
-                      </td>
-                      <td style={td}>
-                        <select
-                          value={assetClassByIndex[i] ?? ''}
-                          onChange={(e) =>
-                            setAssetClassByIndex((prev) => ({
-                              ...prev,
-                              [i]: e.target.value,
-                            }))
-                          }
-                          style={{ maxWidth: 160 }}
-                          disabled={!taxonomy}
-                        >
-                          <option value="">— Unclassified —</option>
-                          {taxonomy?.asset_classes.map((o) => (
-                            <option key={o.value} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                        <div style={{ fontSize: '0.75rem', color: '#555', marginTop: 4 }}>
-                          {sug?.source === 'existing' && (
-                            <span title="Bundled YAML or saved row — change to create an override">
-                              baseline
-                            </span>
-                          )}
-                          {sug?.source === 'llm' && sug.confidence != null && (
-                            <Provenance source="llm-classify" confidence={sug.confidence}>
-                              LLM {(sug.confidence * 100).toFixed(0)}%
-                            </Provenance>
-                          )}
-                          {sug?.source === 'none' && <span>no hint</span>}
-                        </div>
-                      </td>
-                      <td style={td}>
-                        <input
-                          type="number"
-                          value={r.shares}
-                          onChange={(e) => updateRow(i, { shares: Number(e.target.value) })}
-                          step="any"
-                          style={{ width: 90 }}
-                        />
-                      </td>
-                      <td style={td}>
-                        <input
-                          type="number"
-                          value={r.cost_basis ?? ''}
-                          onChange={(e) =>
-                            updateRow(i, {
-                              cost_basis: e.target.value ? Number(e.target.value) : null,
-                            })
-                          }
-                          step="any"
-                          style={{ width: 100 }}
-                        />
-                      </td>
-                      <td style={td}>
-                        <input
-                          type="number"
-                          value={r.market_value ?? ''}
-                          onChange={(e) =>
-                            updateRow(i, {
-                              market_value: e.target.value ? Number(e.target.value) : null,
-                            })
-                          }
-                          step="any"
-                          style={{ width: 110 }}
-                        />
-                      </td>
-                      <td style={td}>
-                        <Provenance source="llm-extract" confidence={r.confidence}>
-                          {(r.confidence * 100).toFixed(0)}%
-                        </Provenance>
-                      </td>
-                      <td
-                        style={{
-                          ...td,
-                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                          fontSize: '0.8rem',
-                          maxWidth: 220,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                        title={r.source_span}
-                      >
-                        {r.source_span}
-                      </td>
-                      <td style={{ ...td, color: 'crimson', fontSize: '0.8rem' }}>
-                        {r.validation_errors.join('; ')}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{ margin: '1rem 0' }}>
-            <button onClick={handleCommit} disabled={busy || selectedCount === 0}>
-              {busy ? 'Working...' : `Commit ${selectedCount} row${selectedCount === 1 ? '' : 's'}`}
-            </button>
-          </div>
+          <PositionExtractReview
+            rows={rows}
+            selected={selected}
+            toggle={toggle}
+            updateRow={updateRow}
+            taxonomy={taxonomy}
+            assetClassByIndex={assetClassByIndex}
+            setAssetClassByIndex={setAssetClassByIndex}
+            suggestionByTicker={suggestionByTicker}
+            busy={busy}
+            onRefreshHints={handleRefreshHints}
+          >
+            <div style={{ margin: '1rem 0' }}>
+              <button onClick={handleCommit} disabled={commitDisabled}>
+                {busy ? 'Working...' : `Commit ${selectedCount} row${selectedCount === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </PositionExtractReview>
         </>
       )}
     </main>
   );
-}
-
-const th = { padding: '0.5rem 0.25rem', fontWeight: 600 };
-const td = { padding: '0.35rem 0.25rem', verticalAlign: 'top' as const };
-
-function rowBg(confidence: number, hasErrors: boolean): string {
-  if (hasErrors) return '#fde7ea';
-  if (confidence >= 0.95) return '#e7f5e8';
-  if (confidence >= 0.8) return '#fffbe0';
-  return '#fde7ea';
 }

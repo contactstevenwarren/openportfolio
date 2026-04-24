@@ -20,6 +20,11 @@ export type ExtractionResult = {
   positions: ExtractedPosition[];
   model: string;
   extracted_at: string;
+  statement_account_name?: string | null;
+  statement_account_name_confidence?: number | null;
+  matched_account_id?: number | null;
+  matched_account_confidence?: number | null;
+  extraction_warnings?: string[];
 };
 
 export type Account = {
@@ -56,6 +61,8 @@ export type CommitRequest = {
   account_id: number | null;
   source: string;
   positions: CommitPosition[];
+  /** When true: upsert listed positions then delete others in that account (requires account_id). */
+  replace_account?: boolean;
 };
 
 export type CommitResult = {
@@ -263,12 +270,36 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function fetchMultipartJson<T>(path: string, formData: FormData): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: {
+      'X-Admin-Token': getAdminToken(),
+    },
+    body: formData,
+  });
+  if (res.status === 401) {
+    clearAdminToken();
+    throw new Error('Admin token rejected. Reload the page to re-enter.');
+  }
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body || res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 export const api = {
   extract: (text: string) =>
     fetchJson<ExtractionResult>('/api/extract', {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+  extractPdf: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return fetchMultipartJson<ExtractionResult>('/api/extract/pdf', fd);
+  },
   commit: (body: CommitRequest) =>
     fetchJson<CommitResult>('/api/positions/commit', {
       method: 'POST',
@@ -344,7 +375,10 @@ export const api = {
     }
     return (await res.json()) as RebalanceResult;
   },
-  positions: () => fetchJson<Position[]>('/api/positions'),
+  positions: (accountId?: number) => {
+    const qs = accountId != null ? `?account_id=${accountId}` : '';
+    return fetchJson<Position[]>(`/api/positions${qs}`);
+  },
   patchPosition: (id: number, patch: PositionPatch) =>
     fetchJson<Position>(`/api/positions/${id}`, {
       method: 'PATCH',

@@ -1,4 +1,8 @@
 {
+  "statement_account_name": null,
+  "statement_account_name_confidence": null,
+  "matched_account_id": null,
+  "matched_account_confidence": null,
   "positions": [
     {
       "ticker": "VTI",
