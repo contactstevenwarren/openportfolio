@@ -52,8 +52,8 @@ One theme per phase. **Done when** is the acceptance bar.
 | 0.1.6 | Portfolio donut view redesign (Shipped) | Replace the current sunburst + breakdown table with a simpler donut chart that supports one-level drill-down. |
 | 0.2 | Targets & drift | Keep your portfolio on track with target allocations and visible drift against them. |
 | 0.3 | Design & Polish | Access and understand your portfolio seamlessly across both desktop and mobile devices. |
-| 0.4 | PDF Import | Eliminate manual data entry by dragging and dropping brokerage statements to extract positions. |
-| 0.5 | Rebalance recommendations | Turn drift into action with specific trade recommendations to close the gap. |
+| 0.4 | PDF Import (Shipped) | Eliminate manual data entry by dragging and dropping brokerage statements to extract positions. |
+| 0.5 | Rebalance recommendations (Shipped) | Turn drift into action with specific trade recommendations to close the gap. |
 | 0.6 | Auth & Workspaces | Securely save your data across sessions and manage multiple independent portfolios. |
 | 0.7 | Historical Timeline | Visualize how your asset allocation and wealth drift over time. |
 | 1.0 | Public Release | Rely on a production-grade, fully documented platform with automated backups. |
@@ -81,6 +81,7 @@ Revisit after v1.0 unless a phase explicitly pulls an item in.
 - **v0.1.6 Portfolio donut view redesign:** [v0.1.6/execution_plan.md](v0.1.6/execution_plan.md)
 - **v0.2 Targets & drift:** [v0.2/execution_plan.md](v0.2/execution_plan.md)
 - **v0.5 Rebalance recommendations:** [v0.5/execution_plan.md](v0.5/execution_plan.md)
+- **v0.4 PDF import:** [v0.4/execution_plan_prd.md](v0.4/execution_plan_prd.md)
 
 Future phases add execution plans here when scoped.
 

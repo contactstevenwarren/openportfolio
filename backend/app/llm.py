@@ -17,31 +17,45 @@ from datetime import UTC, datetime
 import litellm
 
 from .config import settings
+from .merge_extract import merge_duplicate_tickers
 from .schemas import ASSET_CLASS_OPTIONS, ExtractedPosition, ExtractionResult
 from .validation import annotate
 
 _ASSET_CLASS_ENUM: list[str] = [o.value for o in ASSET_CLASS_OPTIONS]
 _VALID_ASSET_CLASS_SET: frozenset[str] = frozenset(_ASSET_CLASS_ENUM)
 
-_SYSTEM_PROMPT = """You extract stock/ETF/fund positions from pasted portfolio text.
+_SYSTEM_PROMPT = """You extract stock/ETF/fund positions from portfolio statement text.
 
-Return a JSON object {"positions": [...]}. For each holding include:
+Return a JSON object with: positions, statement_account_name, statement_account_name_confidence,
+matched_account_id, matched_account_confidence. All keys are required by the schema (use null where unknown).
+
+For each position include:
 - ticker: exact symbol shown, uppercase (e.g. "VTI", "BRK.B", "BTC-USD")
 - shares: number of shares or units as a float
 - cost_basis: total cost basis in USD if shown, else null
 - market_value: total market value / current value in USD if shown, else null
 - confidence: 0.0-1.0 reflecting your certainty
-- source_span: exact substring from the paste you extracted this row from
+- source_span: exact substring from the text you extracted this row from
 
-Rules:
+Also from the statement header/labels:
+- statement_account_name: account or registration name as printed, or null if absent/unclear
+- statement_account_name_confidence: 0.0-1.0 or null
+
+Account matching (critical):
+- You receive a JSON array of accounts with id, label, and type. Set matched_account_id to EXACTLY one
+  of those ids if the statement clearly refers to that account, otherwise null.
+- matched_account_confidence: 0.0-1.0 or null; null matched_account_id must use null here.
+- Never invent account ids. Only the listed ids are valid; if unsure, use null for both.
+
+Rules for positions:
 - Extract only what is written. Do not infer or compute any derived value.
 - Do not invent tickers. Map fund names to tickers only if the symbol appears in the text.
 - Ignore cash balance lines unless tracked as an explicit position (e.g. "CASH", money-market symbol).
-- Return positions in the order they appear in the paste.
+- Return positions in the order they appear in the statement.
 """
 
 _JSON_SCHEMA = {
-    "name": "positions",
+    "name": "extraction",
     "strict": True,
     "schema": {
         "type": "object",
@@ -69,8 +83,18 @@ _JSON_SCHEMA = {
                     "additionalProperties": False,
                 },
             },
+            "statement_account_name": {"type": ["string", "null"]},
+            "statement_account_name_confidence": {"type": ["number", "null"]},
+            "matched_account_id": {"type": ["integer", "null"]},
+            "matched_account_confidence": {"type": ["number", "null"]},
         },
-        "required": ["positions"],
+        "required": [
+            "positions",
+            "statement_account_name",
+            "statement_account_name_confidence",
+            "matched_account_id",
+            "matched_account_confidence",
+        ],
         "additionalProperties": False,
     },
 }
@@ -144,25 +168,86 @@ def _provider_config() -> tuple[str, dict[str, str]]:
     )
 
 
-def extract_positions(text: str) -> ExtractionResult:
-    """Send paste text to the configured LLM, parse + validate the response."""
+def _user_content_for_extract(
+    text: str, accounts: list[tuple[int, str, str]] | None
+) -> str:
+    acc_json = json.dumps(
+        [{"id": a[0], "label": a[1], "type": a[2]} for a in (accounts or [])],
+        ensure_ascii=False,
+    )
+    return (
+        "Accounts you may match (use matched_account_id only for one of these ids, or null):\n"
+        f"{acc_json}\n\n"
+        f"---\n\n"
+        f"Statement text to extract from:\n\n"
+        f"{text}"
+    )
+
+
+def _coerce_matched_id(raw: object) -> int | None:
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float) and float(raw).is_integer():
+        return int(raw)
+    return None
+
+
+def extract_positions(
+    text: str, accounts: list[tuple[int, str, str]] | None = None
+) -> ExtractionResult:
+    """Send statement text to the configured LLM, parse + validate the response."""
     model, kwargs = _provider_config()
+    allowed_ids = {t[0] for t in (accounts or [])}
     response = litellm.completion(
         model=model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": text},
+            {"role": "user", "content": _user_content_for_extract(text, accounts)},
         ],
         response_format={"type": "json_schema", "json_schema": _JSON_SCHEMA},
         **kwargs,
     )
     content = response.choices[0].message.content
     raw = json.loads(content)
-    positions = [ExtractedPosition(**p) for p in raw["positions"]]
+    positions_in = [ExtractedPosition(**p) for p in raw["positions"]]
+    positions_out = merge_duplicate_tickers(annotate(positions_in))
+
+    stmt_name = raw.get("statement_account_name")
+    if stmt_name is not None and not isinstance(stmt_name, str):
+        stmt_name = str(stmt_name)
+
+    stmt_name_conf: float | None = None
+    v = raw.get("statement_account_name_confidence")
+    if v is not None:
+        stmt_name_conf = float(v)
+
+    mid = _coerce_matched_id(raw.get("matched_account_id"))
+    mconf: float | None = None
+    mv = raw.get("matched_account_confidence")
+    if mv is not None:
+        mconf = float(mv)
+
+    warnings: list[str] = []
+    if mid is not None and mid not in allowed_ids:
+        warnings.append(
+            f"Invalid matched_account_id {mid!r} (not in user accounts); cleared to null."
+        )
+        mid = None
+        mconf = None
+
     return ExtractionResult(
-        positions=annotate(positions),
+        positions=positions_out,
         model=model,
         extracted_at=datetime.now(UTC),
+        statement_account_name=stmt_name,
+        statement_account_name_confidence=stmt_name_conf,
+        matched_account_id=mid,
+        matched_account_confidence=mconf,
+        extraction_warnings=warnings,
     )
 
 

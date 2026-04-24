@@ -420,3 +420,207 @@ def test_each_commit_appends_a_snapshot(
     client.post("/api/positions/commit", json=_body(), headers=auth_headers)
     client.post("/api/positions/commit", json=_body(), headers=auth_headers)
     assert test_db.query(Snapshot).count() == 2
+
+
+# --- replace_account (v0.4) ------------------------------------------------
+
+
+def test_replace_account_requires_account_id(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    r = client.post(
+        "/api/positions/commit",
+        json={
+            "replace_account": True,
+            "source": "paste:t",
+            "positions": [
+                {
+                    "ticker": "VTI",
+                    "shares": 1.0,
+                    "cost_basis": 1.0,
+                    "market_value": 2.0,
+                    "confidence": 0.9,
+                    "source_span": "x",
+                }
+            ],
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 422
+    detail = r.json().get("detail", "")
+    assert "account_id" in str(detail).lower()
+
+
+def test_replace_account_empty_positions_422(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    acct = Account(label="A", type="brokerage")
+    test_db.add(acct)
+    test_db.commit()
+    r = client.post(
+        "/api/positions/commit",
+        json={
+            "replace_account": True,
+            "account_id": acct.id,
+            "source": "paste:t",
+            "positions": [],
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 422
+
+
+def test_replace_account_unknown_account_404(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    r = client.post(
+        "/api/positions/commit",
+        json={
+            "replace_account": True,
+            "account_id": 99999,
+            "source": "paste:t",
+            "positions": [
+                {
+                    "ticker": "VTI",
+                    "shares": 1.0,
+                    "cost_basis": 1.0,
+                    "market_value": 2.0,
+                    "confidence": 0.9,
+                    "source_span": "x",
+                }
+            ],
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 404
+
+
+def test_replace_account_deletes_positions_not_in_commit(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    acct = Account(label="Schwab", type="brokerage")
+    test_db.add(acct)
+    test_db.commit()
+
+    seed = {
+        "account_id": acct.id,
+        "source": "paste:seed",
+        "positions": [
+            {
+                "ticker": "VTI",
+                "shares": 10.0,
+                "cost_basis": 100.0,
+                "market_value": 200.0,
+                "confidence": 0.9,
+                "source_span": "a",
+            },
+            {
+                "ticker": "BND",
+                "shares": 5.0,
+                "cost_basis": 50.0,
+                "market_value": 60.0,
+                "confidence": 0.9,
+                "source_span": "b",
+            },
+        ],
+    }
+    r0 = client.post("/api/positions/commit", json=seed, headers=auth_headers)
+    assert r0.status_code == 201
+    ids0 = r0.json()["position_ids"]
+    tick0 = r0.json()["tickers"]
+    vti_id = ids0[tick0.index("VTI")]
+
+    replace = {
+        "replace_account": True,
+        "account_id": acct.id,
+        "source": "paste:replace",
+        "positions": [
+            {
+                "ticker": "vti",
+                "shares": 11.0,
+                "cost_basis": 101.0,
+                "market_value": 201.0,
+                "confidence": 0.95,
+                "source_span": "upd",
+            },
+        ],
+    }
+    r1 = client.post("/api/positions/commit", json=replace, headers=auth_headers)
+    assert r1.status_code == 201
+    assert r1.json()["position_ids"] == [vti_id]
+
+    rows = test_db.query(Position).filter_by(account_id=acct.id).all()
+    assert len(rows) == 1
+    assert rows[0].ticker == "VTI"
+    assert rows[0].shares == 11.0
+    assert rows[0].source == "paste:replace"
+
+
+def test_replace_account_upsert_adds_provenance_only_for_changed_numerics(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    acct = Account(label="A", type="brokerage")
+    test_db.add(acct)
+    test_db.commit()
+    client.post(
+        "/api/positions/commit",
+        json={
+            "account_id": acct.id,
+            "source": "paste:1",
+            "positions": [
+                {
+                    "ticker": "SPY",
+                    "shares": 100.0,
+                    "cost_basis": 40000.0,
+                    "market_value": 50000.0,
+                    "confidence": 0.9,
+                    "source_span": "s1",
+                },
+            ],
+        },
+        headers=auth_headers,
+    )
+    pid = test_db.query(Position).filter_by(account_id=acct.id).one().id
+    n_before = (
+        test_db.query(Provenance)
+        .filter_by(entity_type="position", entity_id=pid)
+        .count()
+    )
+    assert n_before == 3
+
+    client.post(
+        "/api/positions/commit",
+        json={
+            "replace_account": True,
+            "account_id": acct.id,
+            "source": "paste:2",
+            "positions": [
+                {
+                    "ticker": "SPY",
+                    "shares": 100.0,
+                    "cost_basis": 40000.0,
+                    "market_value": 51000.0,
+                    "confidence": 0.92,
+                    "source_span": "s2",
+                },
+            ],
+        },
+        headers=auth_headers,
+    )
+    n_after = (
+        test_db.query(Provenance)
+        .filter_by(entity_type="position", entity_id=pid)
+        .count()
+    )
+    assert n_after == n_before + 1
+    last = (
+        test_db.query(Provenance)
+        .filter_by(entity_type="position", entity_id=pid)
+        .order_by(Provenance.id.desc())
+        .first()
+    )
+    assert last is not None
+    assert last.field == "market_value"
+    assert last.source == "paste:2"
+    assert last.confidence == 0.92
+    assert last.llm_span == "s2"

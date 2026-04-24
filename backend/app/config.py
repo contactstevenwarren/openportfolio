@@ -42,5 +42,9 @@ class Settings(BaseSettings):
     drift_minor_pct: float = 1.0
     drift_major_pct: float = 3.0
 
+    # PDF statement text extraction (v0.4). Reject when extracted text
+    # exceeds this budget (no silent truncate).
+    pdf_max_extract_chars: int = 100_000
+
 
 settings = Settings()

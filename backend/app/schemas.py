@@ -39,6 +39,12 @@ class ExtractionResult(BaseModel):
     # the review UI can show which provider produced the extraction.
     model: str
     extracted_at: datetime
+    # Statement header (LLM) + account match; deterministic warnings when ids are invalid.
+    statement_account_name: str | None = None
+    statement_account_name_confidence: float | None = None
+    matched_account_id: int | None = None
+    matched_account_confidence: float | None = None
+    extraction_warnings: list[str] = Field(default_factory=list)
 
 
 class ExtractRequest(BaseModel):
@@ -115,6 +121,9 @@ class PositionCommit(BaseModel):
     # account_id is optional: when absent, the server uses the first
     # account or auto-seeds a "Default" brokerage one (Decision 1a).
     account_id: int | None = None
+    # When True: upsert positions for ``account_id`` (required), then
+    # delete any other positions in that account. No Default auto-seed.
+    replace_account: bool = False
     # Free-form identifier stored on each provenance row, e.g.
     # "paste:fidelity-2026-04-19" or "manual". Defaults broadly.
     source: str = "paste"

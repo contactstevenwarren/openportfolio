@@ -86,7 +86,7 @@ Pasted text → LLM extraction (JSON + confidence + spans)
            → Commit to SQLite
 ```
 
-Same pipeline handles paste (v0.1), text PDFs (v0.2: `pdfplumber` → text → pipeline), and scanned PDFs (backlog: OCR → text → pipeline).
+Same pipeline handles paste (v0.1), text PDFs (v0.4: `pdfplumber` → text → pipeline), and scanned PDFs (backlog: OCR → text → pipeline).
 
 ---
 

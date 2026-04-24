@@ -64,6 +64,49 @@ def test_list_returns_positions(
     assert tickers == ["VTI", "BND"]  # ordered by id
 
 
+def test_list_positions_filter_by_account_id(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    a1 = Account(label="One", type="brokerage")
+    a2 = Account(label="Two", type="brokerage")
+    test_db.add_all([a1, a2])
+    test_db.commit()
+    p1 = Position(
+        account_id=a1.id,
+        ticker="VTI",
+        shares=1.0,
+        cost_basis=1.0,
+        market_value=2.0,
+        as_of=datetime.now(UTC),
+        source="paste",
+    )
+    p2 = Position(
+        account_id=a2.id,
+        ticker="QQQ",
+        shares=2.0,
+        cost_basis=2.0,
+        market_value=3.0,
+        as_of=datetime.now(UTC),
+        source="paste",
+    )
+    test_db.add_all([p1, p2])
+    test_db.commit()
+
+    r = client.get(f"/api/positions?account_id={a1.id}", headers=auth_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["ticker"] == "VTI"
+    assert body[0]["account_id"] == a1.id
+
+
+def test_list_positions_unknown_account_404(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    r = client.get("/api/positions?account_id=99999", headers=auth_headers)
+    assert r.status_code == 404
+
+
 # ---- PATCH /api/positions/{id} -------------------------------------------
 
 
