@@ -4,9 +4,11 @@ Pure functions over an already-built ``AllocationResult``. No I/O, no DB,
 no HTTP. Two modes:
 
 * ``full`` -- delta vs target for every L1 class (and nested L2 where
-  group targets exist). Sum of L1 deltas is ~0; sum of L2 deltas inside
-  a class is ~0. Sign of delta drives buy/sell; the drift band drives
-  the ``hold`` label.
+  group targets exist). Sum of L1 deltas is ~0. L2 rows **decompose** the
+  parent L1 dollar move across sub-buckets (which sleeves to sell from
+  or buy into), so child ``delta_usd`` sums to the parent move. L1
+  ``hold`` / ``buy`` / ``sell`` still uses the drift band; L2 direction
+  follows the sign of the decomposed child delta (zero → hold).
 * ``new_money`` -- distribute a positive USD contribution by gap-fill
   first (``max(0, desired - current)``) and excess proportional to
   target percent among classes at or under target. No sells.
@@ -80,6 +82,94 @@ def _direction_full(drift_pct: float, delta_usd: float, minor: float) -> Rebalan
     return "buy" if delta_usd > 0 else "sell"
 
 
+def _direction_decomposed(delta_usd: float) -> RebalanceDirection:
+    """L2 under ``full`` mode: label from the decomposed dollar move only."""
+    if abs(delta_usd) < 1e-9:
+        return "hold"
+    return "buy" if delta_usd > 0 else "sell"
+
+
+def _decompose_l1_delta_into_l2(
+    l1_delta: float,
+    parent_value: float,
+    currents: dict[str, tuple[float, float]],
+    targets: dict[str, float],
+) -> list[RebalanceMove]:
+    """Split signed ``l1_delta`` across L2 paths so child deltas sum to ``l1_delta``.
+
+    Sell (negative ``l1_delta``): weight each child by within-parent
+    dollar overweight ``max(0, cur - desired)`` where
+    ``desired = target_pct/100 * parent_value``. If all weights are
+    zero, fall back to current ``cur`` weights.
+
+    Buy (positive ``l1_delta``): weight by ``max(0, desired - cur)``;
+    fallback to ``cur`` weights.
+
+    ``actual_pct`` / ``target_pct`` on each child stay the slice view;
+    only ``delta_usd`` and ``direction`` come from this split.
+    """
+    if not currents:
+        return []
+
+    entries: list[tuple[str, float, float, float]] = []
+    for sub_path in sorted(currents.keys()):
+        cur_usd, cur_pct = currents[sub_path]
+        t2 = targets[sub_path]
+        entries.append((sub_path, cur_usd, cur_pct, t2))
+
+    if abs(l1_delta) < 1e-12:
+        return [
+            RebalanceMove(
+                path=p,
+                direction="hold",
+                delta_usd=0.0,
+                target_pct=t2,
+                actual_pct=cur_pct,
+                parent_total_usd=parent_value,
+                children=[],
+            )
+            for p, _cur_usd, cur_pct, t2 in entries
+        ]
+
+    weights: list[float] = []
+    for _p, cur_usd, _cur_pct, t2 in entries:
+        desired = t2 / 100.0 * parent_value
+        if l1_delta < 0:
+            weights.append(max(0.0, cur_usd - desired))
+        else:
+            weights.append(max(0.0, desired - cur_usd))
+
+    s = sum(weights)
+    if s < 1e-12:
+        weights = [e[1] for e in entries]  # cur_usd
+        s = sum(weights)
+    if s < 1e-12:
+        weights = [1.0] * len(entries)
+        s = float(len(entries))
+
+    deltas = [l1_delta * w / s for w in weights]
+    # Fix float drift on the largest-magnitude child.
+    fix_i = max(range(len(deltas)), key=lambda i: abs(deltas[i]))
+    total = sum(deltas)
+    deltas[fix_i] += l1_delta - total
+
+    out: list[RebalanceMove] = []
+    for i, (p, _cur_usd, cur_pct, t2) in enumerate(entries):
+        d_usd = deltas[i]
+        out.append(
+            RebalanceMove(
+                path=p,
+                direction=_direction_decomposed(d_usd),
+                delta_usd=d_usd,
+                target_pct=t2,
+                actual_pct=cur_pct,
+                parent_total_usd=parent_value,
+                children=[],
+            )
+        )
+    return out
+
+
 def _direction_new_money(
     drift_pct: float, delta_usd: float, minor: float
 ) -> RebalanceDirection:
@@ -115,21 +205,9 @@ def compute_rebalance(
         if _has_group_targets(ac, targets):
             currents = _l2_currents(ac, ac_slice, targets)
             parent_value = ac_slice.value
-            for sub_path, (cur_usd, cur_pct) in currents.items():
-                t2 = targets[sub_path]
-                d2 = t2 - cur_pct
-                delta2 = d2 / 100.0 * parent_value
-                children.append(
-                    RebalanceMove(
-                        path=sub_path,
-                        direction=_direction_full(d2, delta2, drift_minor_pct),
-                        delta_usd=delta2,
-                        target_pct=t2,
-                        actual_pct=cur_pct,
-                        parent_total_usd=parent_value,
-                        children=[],
-                    )
-                )
+            children = _decompose_l1_delta_into_l2(
+                delta_usd, parent_value, currents, targets
+            )
 
         moves.append(
             RebalanceMove(
