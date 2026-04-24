@@ -6,13 +6,35 @@
 // account / source / date range narrows the view; batch checkbox +
 // "Delete selected" makes cleanup fast without N confirm dialogs.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
-import { api, type Account, type ClassificationRow, type Position } from '../lib/api';
+import {
+  api,
+  type Account,
+  type ClassificationRow,
+  type ExtractedPosition,
+  type Position,
+} from '../lib/api';
+import {
+  pdfImportMetaFromExtractionResult,
+  stashPdfImportDraftForRouteChange,
+  type PdfImportDraftMeta,
+} from '../lib/pdfImportDraft';
 import { humanize } from '../lib/labels';
 import { Provenance } from '../lib/provenance';
 
+type PdfImportPending = {
+  rows: ExtractedPosition[];
+  selectedIndices: number[];
+  filename: string;
+  meta: PdfImportDraftMeta;
+  defaultAccountId: number | null;
+};
+
 export default function PositionsPage() {
+  const router = useRouter();
+  const pdfFileInputRef = useRef<HTMLInputElement>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [classifications, setClassifications] = useState<ClassificationRow[]>([]);
@@ -31,6 +53,12 @@ export default function PositionsPage() {
   const [filterTo, setFilterTo] = useState('');
   const [filterTicker, setFilterTicker] = useState('');
 
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfImportPending, setPdfImportPending] = useState<PdfImportPending | null>(null);
+  const [importTargetAccountId, setImportTargetAccountId] = useState<number | ''>('');
+  const [pdfPanelError, setPdfPanelError] = useState<string | null>(null);
+  const [pdfFlowInfo, setPdfFlowInfo] = useState<string | null>(null);
+
   useEffect(() => {
     refresh();
     api.accounts().then(setAccounts).catch(() => {});
@@ -43,6 +71,22 @@ export default function PositionsPage() {
       if (a) setFilterAccountId(Number(a));
     }
   }, []);
+
+  useEffect(() => {
+    if (!pdfImportPending) {
+      setImportTargetAccountId('');
+      return;
+    }
+    if (pdfImportPending.rows.length === 0) return;
+    const def = pdfImportPending.defaultAccountId;
+    if (def != null && accounts.some((a) => a.id === def)) {
+      setImportTargetAccountId(def);
+    } else if (accounts.length > 0) {
+      setImportTargetAccountId(accounts[0]!.id);
+    } else {
+      setImportTargetAccountId('');
+    }
+  }, [pdfImportPending, accounts]);
 
   const classificationByTicker = useMemo(() => {
     const m = new Map<string, ClassificationRow>();
@@ -184,6 +228,77 @@ export default function PositionsPage() {
     accounts.find((a) => a.id === id)?.label ?? `#${id}`;
   const distinctSources = Array.from(new Set(positions.map((p) => p.source))).sort();
 
+  async function handlePositionsPdf(file: File) {
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setPdfPanelError('Choose a .pdf file.');
+      return;
+    }
+    const hadPending = pdfImportPending != null;
+    setPdfBusy(true);
+    setPdfPanelError(null);
+    setPdfFlowInfo(hadPending ? 'Replaced with new file.' : null);
+    setPdfImportPending(null);
+    try {
+      const result = await api.extractPdf(file);
+      const sorted = [...result.positions].sort((a, b) => a.confidence - b.confidence);
+      const meta = pdfImportMetaFromExtractionResult(result);
+      const defaultAccountId =
+        result.matched_account_id ?? (filterAccountId !== 'all' ? filterAccountId : null);
+      setPdfImportPending({
+        rows: sorted,
+        selectedIndices: sorted.map((_, i) => i),
+        filename: file.name,
+        meta,
+        defaultAccountId,
+      });
+    } catch (e) {
+      setPdfPanelError(`Extract failed: ${(e as Error).message}`);
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
+  function handlePdfDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function handlePdfDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const f = e.dataTransfer.files?.[0];
+    if (f) void handlePositionsPdf(f);
+  }
+
+  function handlePdfContinue() {
+    if (!pdfImportPending) return;
+    const { rows, selectedIndices, filename, meta } = pdfImportPending;
+    if (rows.length === 0) return;
+    setPdfPanelError(null);
+    if (accounts.length === 0) {
+      setPdfPanelError('Create an account first.');
+      return;
+    }
+    const accountId =
+      typeof importTargetAccountId === 'number'
+        ? importTargetAccountId
+        : Number(importTargetAccountId);
+    if (!Number.isFinite(accountId) || accountId <= 0) {
+      setPdfPanelError('Select an account.');
+      return;
+    }
+    stashPdfImportDraftForRouteChange({ rows, selectedIndices, filename, meta });
+    setPdfImportPending(null);
+    setPdfFlowInfo(null);
+    router.replace(`/accounts/${accountId}/import`);
+  }
+
+  function handlePdfCancel() {
+    setPdfImportPending(null);
+    setPdfPanelError(null);
+    setPdfFlowInfo(null);
+  }
+
   return (
     <main style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -216,12 +331,201 @@ export default function PositionsPage() {
           >
             + Add Custom Asset
           </a>
+          <div
+            onDragOver={handlePdfDragOver}
+            onDrop={handlePdfDrop}
+            style={{
+              padding: '0.5rem 0.85rem',
+              border: '2px dashed #999',
+              borderRadius: 4,
+              fontSize: '0.82rem',
+              color: '#333',
+              maxWidth: 200,
+              alignSelf: 'stretch',
+              opacity: pdfBusy ? 0.55 : 1,
+              pointerEvents: pdfBusy ? 'none' : 'auto',
+            }}
+          >
+            <input
+              ref={pdfFileInputRef}
+              type="file"
+              accept=".pdf,application/pdf"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handlePositionsPdf(f);
+                e.target.value = '';
+              }}
+            />
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Import PDF</div>
+            <div style={{ lineHeight: 1.3 }}>Drop a statement PDF here or</div>
+            <button
+              type="button"
+              disabled={pdfBusy}
+              onClick={() => pdfFileInputRef.current?.click()}
+              style={{
+                marginTop: 6,
+                padding: '0.35rem 0.65rem',
+                fontWeight: 600,
+                cursor: pdfBusy ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {pdfBusy ? 'Working…' : 'Choose PDF'}
+            </button>
+          </div>
         </div>
       </div>
       <p style={{ color: '#555' }}>
         Every committed row. Edit inline (writes an override provenance entry) or delete.
         Filter to scope the view; batch-delete for cleanup after a paste.
       </p>
+
+      {pdfFlowInfo && (
+        <p
+          style={{
+            color: '#036',
+            background: '#e6f4ff',
+            padding: '0.5rem 0.75rem',
+            borderRadius: 4,
+            marginBottom: '0.75rem',
+          }}
+        >
+          {pdfFlowInfo}
+        </p>
+      )}
+
+      {pdfPanelError && !pdfImportPending && (
+        <p
+          role="alert"
+          style={{
+            color: 'crimson',
+            background: '#fde7ea',
+            padding: '0.5rem 0.75rem',
+            borderRadius: 4,
+            marginBottom: '0.75rem',
+          }}
+        >
+          {pdfPanelError}
+        </p>
+      )}
+
+      {pdfImportPending && (
+        <section
+          style={{
+            margin: '1rem 0',
+            padding: '1rem',
+            borderRadius: 4,
+            border: `1px solid ${pdfImportPending.rows.length === 0 ? '#f0b4bc' : '#ccc'}`,
+            background: pdfImportPending.rows.length === 0 ? '#fff5f7' : '#fafafa',
+          }}
+          aria-label="PDF import confirmation"
+        >
+          <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem' }}>
+            {pdfImportPending.rows.length === 0 ? 'No rows extracted' : 'Confirm PDF import'}
+          </h2>
+          <p style={{ margin: '0 0 0.75rem', color: '#555', fontSize: '0.9rem' }}>
+            <strong>File:</strong> {pdfImportPending.filename}
+          </p>
+          {pdfImportPending.rows.length === 0 ? (
+            <p role="alert" style={{ color: 'crimson', margin: '0 0 0.75rem' }}>
+              No position rows were extracted.
+            </p>
+          ) : (
+            <p style={{ margin: '0 0 0.75rem', color: '#333' }}>
+              <strong>{pdfImportPending.rows.length}</strong> position
+              {pdfImportPending.rows.length === 1 ? '' : 's'} to review on the next screen.
+            </p>
+          )}
+          {(pdfImportPending.meta.statement_account_name ?? '').trim().length > 0 && (
+            <p style={{ margin: '0 0 0.35rem', fontSize: '0.9rem' }}>
+              <strong>Statement label:</strong> {pdfImportPending.meta.statement_account_name}
+            </p>
+          )}
+          {pdfImportPending.meta.matched_account_id != null && (
+            <p style={{ margin: '0 0 0.75rem', fontSize: '0.9rem' }}>
+              <strong>Suggested account:</strong> #{pdfImportPending.meta.matched_account_id}{' '}
+              {accountLabel(pdfImportPending.meta.matched_account_id)}
+              {pdfImportPending.meta.matched_account_confidence != null &&
+                ` (${(pdfImportPending.meta.matched_account_confidence * 100).toFixed(0)}% confidence)`}
+            </p>
+          )}
+          {pdfImportPending.meta.extraction_warnings &&
+            pdfImportPending.meta.extraction_warnings.length > 0 && (
+              <div style={{ margin: '0 0 0.75rem' }}>
+                <strong style={{ fontSize: '0.9rem' }}>Warnings</strong>
+                <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1.25rem', fontSize: '0.85rem' }}>
+                  {pdfImportPending.meta.extraction_warnings.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          {pdfImportPending.rows.length > 0 && accounts.length === 0 && (
+            <p role="alert" style={{ margin: '0 0 0.75rem' }}>
+              Create an account first —{' '}
+              <a href="/accounts" style={{ color: '#0066cc' }}>
+                Accounts
+              </a>
+              .
+            </p>
+          )}
+          {pdfImportPending.rows.length > 0 && accounts.length > 0 && (
+            <label style={{ display: 'block', marginBottom: '0.75rem', fontSize: '0.9rem' }}>
+              <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+                Import into account
+              </span>
+              <select
+                value={importTargetAccountId === '' ? '' : String(importTargetAccountId)}
+                onChange={(e) =>
+                  setImportTargetAccountId(e.target.value === '' ? '' : Number(e.target.value))
+                }
+                style={{ padding: '0.35rem 0.5rem', minWidth: 240 }}
+              >
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    #{a.id} {a.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {pdfPanelError && (
+            <p role="alert" style={{ color: 'crimson', margin: '0 0 0.75rem' }}>
+              {pdfPanelError}
+            </p>
+          )}
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={handlePdfContinue}
+              disabled={
+                pdfImportPending.rows.length === 0 ||
+                accounts.length === 0 ||
+                importTargetAccountId === ''
+              }
+              style={{
+                padding: '0.5rem 1rem',
+                fontWeight: 600,
+                background: '#111',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                cursor:
+                  pdfImportPending.rows.length === 0 ||
+                  accounts.length === 0 ||
+                  importTargetAccountId === ''
+                    ? 'not-allowed'
+                    : 'pointer',
+              }}
+            >
+              Continue to review
+            </button>
+            <button type="button" onClick={handlePdfCancel} style={{ padding: '0.5rem 1rem' }}>
+              Cancel
+            </button>
+          </div>
+        </section>
+      )}
 
       <div
         style={{

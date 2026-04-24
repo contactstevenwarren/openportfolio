@@ -10,13 +10,13 @@ import {
   type Account,
   type ClassificationSuggestItem,
   type ExtractedPosition,
-  type ExtractionResult,
   type Position,
   type Taxonomy,
 } from '../../../lib/api';
 import {
   clearPdfImportDraft,
   consumePdfImportDraftIfPending,
+  pdfImportMetaFromExtractionResult,
   stashPdfImportDraftForRouteChange,
   type PdfImportDraftMeta,
 } from '../../../lib/pdfImportDraft';
@@ -25,18 +25,6 @@ function sourcePdfString(filename: string, extractedAt: string): string {
   const safeName = filename.replace(/[^\w.\-]+/g, '_').slice(0, 200) || 'statement';
   const date = extractedAt.slice(0, 10) || new Date().toISOString().slice(0, 10);
   return `pdf:${safeName}:${date}`;
-}
-
-function metaFromResult(result: ExtractionResult): PdfImportDraftMeta {
-  return {
-    statement_account_name: result.statement_account_name,
-    statement_account_name_confidence: result.statement_account_name_confidence,
-    matched_account_id: result.matched_account_id,
-    matched_account_confidence: result.matched_account_confidence,
-    extraction_warnings: result.extraction_warnings,
-    extracted_at: result.extracted_at,
-    model: result.model,
-  };
 }
 
 export default function AccountPdfImportPage() {
@@ -219,7 +207,7 @@ export default function AccountPdfImportPage() {
       setRows(sorted);
       setSelected(new Set(sorted.map((_, i) => i)));
       setFilename(file.name);
-      setMeta(metaFromResult(result));
+      setMeta(pdfImportMetaFromExtractionResult(result));
       let hintErr: string | null = null;
       try {
         await refreshClassificationHintsFor(sorted);
