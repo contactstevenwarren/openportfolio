@@ -2,9 +2,10 @@
 
 // v0.1.6 hero: allocation chart + context-aware one-level drill-down.
 // v0.2: targets + drift columns, save / prefill / clear targets. Chart: target-mode = angles
-// from target %, outer radius from signed drift (under → smaller, over → larger), scaled
-// to max |drift| in view; |drift| ≤ minor band → baseline radius + grey. Fallback = value-angle
-// donut when targets incomplete / sum off 100 (±2pp).
+// from target %, outer radius from signed drift (under → inside base ring, over → outside),
+// scaled to max |drift| in view; solid grey base-portfolio ring at baseline radius behind slices;
+// slice colors = same palette as fallback donut. Fallback = value-angle donut when targets
+// incomplete / sum off 100 (±2pp).
 //
 // Root view shows one slice per asset class. Click a drillable slice (or
 // its table row) and the same chart re-renders for that class's natural
@@ -360,18 +361,13 @@ export default function Home() {
       const signed = signedByIndex[i] ?? 0;
       const driftAbs = Math.abs(signed);
       let outer: number;
-      let color: string;
-      if (driftAbs <= minor) {
+      if (driftAbs <= minor || maxAbs <= 0) {
         outer = R_BASE;
-        color = '#d1d5db';
-      } else if (maxAbs > 0) {
+      } else {
         const ratio = driftAbs / maxAbs;
         outer = signed > 0 ? R_BASE + ratio * (R_MAX - R_BASE) : R_BASE - ratio * (R_BASE - R_MIN);
-        color = signed > 0 ? '#f59e0b' : '#3b82f6';
-      } else {
-        outer = R_BASE;
-        color = '#d1d5db';
       }
+      const color = CHART_CATEGORY_COLORS[i % CHART_CATEGORY_COLORS.length];
       return { name: s.name, start, end, outer, color, value: s.value, pct: s.pct, target: t, driftAbs, signed };
     });
 
@@ -392,31 +388,49 @@ export default function Home() {
           {
             type: 'custom' as const,
             coordinateSystem: 'none' as const,
+            silent: true,
+            z: 0,
             renderItem: (
-              params: { dataIndex: number },
+              _params: { dataIndex: number },
               api: { getWidth: () => number; getHeight: () => number },
             ) => {
-              const idx = params.dataIndex;
               const w = api.getWidth();
               const h = api.getHeight();
               const cx = w / 2;
               const cy = h / 2;
               const R = Math.min(w, h) / 2;
-              if (idx === items.length) {
-                return {
-                  type: 'circle' as const,
-                  shape: { cx, cy, r: R_BASE * R },
-                  style: {
-                    fill: 'transparent',
-                    stroke: '#9ca3af',
-                    lineWidth: 1,
-                    lineDash: [4, 4],
-                  },
-                  silent: true,
-                };
-              }
+              return {
+                type: 'sector' as const,
+                shape: {
+                  cx,
+                  cy,
+                  r0: 0.28 * R,
+                  r: R_BASE * R,
+                  startAngle: -Math.PI / 2,
+                  endAngle: -Math.PI / 2 + Math.PI * 2,
+                  clockwise: true,
+                },
+                style: { fill: '#e5e7eb', stroke: '#fff', lineWidth: 2 },
+              };
+            },
+            data: [0],
+          },
+          {
+            type: 'custom' as const,
+            coordinateSystem: 'none' as const,
+            z: 1,
+            renderItem: (
+              params: { dataIndex: number },
+              api: { getWidth: () => number; getHeight: () => number },
+            ) => {
+              const idx = params.dataIndex;
               const d = items[idx];
               if (!d) return { type: 'group' as const, children: [] as const };
+              const w = api.getWidth();
+              const h = api.getHeight();
+              const cx = w / 2;
+              const cy = h / 2;
+              const R = Math.min(w, h) / 2;
               return {
                 type: 'sector' as const,
                 shape: {
@@ -432,7 +446,7 @@ export default function Home() {
                 emphasis: { style: { opacity: 0.8 } },
               };
             },
-            data: [...items.map((_, i) => [i]), [items.length]],
+            data: items.map((_, i) => [i]),
           },
         ],
         graphic,
