@@ -49,7 +49,7 @@ The LLM receives the **current list of accounts** (id, label, type) and may retu
 - **Commit API:** New flag **`replace_account`** (default false). When true: require **real** `account_id` (no implicit default account seeding); **422** on empty positions; **upsert** by `(account_id, ticker)`; **delete** other tickers on that account; append **provenance** for updated numerics similarly to manual patch semantics. No requirement that **`source`** start with `pdf:`—admin token remains the trust boundary.
 - **Snapshot behavior:** Unchanged—still one **whole-portfolio** snapshot after each successful commit.
 - **Frontend:** Account detail route; account import route with DnD; typed client helper for multipart extract; **shared review/commit UI** factored from paste; paste page **optional replace** with same removals UX; manual page **unchanged**.
-- **Navigation:** Accounts list links into account detail (positions link may remain secondary).
+- **Navigation:** Accounts list links into account detail (positions link may remain secondary). **`/positions`** also offers PDF drop → confirm account → same `/accounts/[id]/import` draft handoff as account import.
 
 ## Testing Decisions
 
