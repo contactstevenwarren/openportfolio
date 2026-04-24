@@ -27,6 +27,8 @@ import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
+import { AllocationTable } from './components/AllocationTable';
+import { DriftStatusPill } from './components/DriftStatusPill';
 import {
   api,
   type AllocationResult,
@@ -35,105 +37,24 @@ import {
   type TargetRow,
   type TargetsPayload,
 } from './lib/api';
-import { humanize } from './lib/labels';
+import {
+  bandFromAbs,
+  driftThresholds,
+  effectiveDrift,
+  EMPTY_TARGETS,
+  entirePayloadValid,
+  getGroupRows,
+  rowPath,
+  setGroupRows,
+  sumTargetPct,
+  targetSumOk,
+} from './lib/allocationTargets';
+import { buildAllocationChart } from './lib/buildAllocationChart';
+import { DRILL_CONFIG, getDrillSlices, type Drill } from './lib/drill';
+import { formatUSD, formatUSDCompact, humanize } from './lib/labels';
 import { Provenance } from './lib/provenance';
 
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false });
-
-type Dim = 'geography' | 'sector' | 'sub_class';
-type Drill = { assetClass: string; dim: Dim } | null;
-
-const DRILL_CONFIG: Record<string, Dim[]> = {
-  equity: ['geography', 'sector'],
-  fixed_income: ['sub_class'],
-  real_estate: ['sub_class'],
-  cash: ['sub_class'],
-  crypto: ['sub_class'],
-};
-
-const EMPTY_TARGETS: TargetsPayload = { root: [], groups: {} };
-
-/** ECharts 5 default category colors — fallback pie uses these so colors stay stable vs prior builds. */
-const CHART_CATEGORY_COLORS = [
-  '#5470c6',
-  '#91cc75',
-  '#fac858',
-  '#ee6666',
-  '#73c0de',
-  '#3ba272',
-  '#fc8452',
-  '#9a60b4',
-  '#ea7ccc',
-] as const;
-
-const CHART_TARGET_SUM_TOLERANCE = 2;
-
-function driftThresholds(data: AllocationResult | undefined): { minor_pct: number; major_pct: number } {
-  const d = data?.drift_thresholds;
-  return {
-    minor_pct: d?.minor_pct ?? 1,
-    major_pct: d?.major_pct ?? 3,
-  };
-}
-
-function bandFromAbs(abs: number, t: { minor_pct: number; major_pct: number }): DriftBand {
-  if (abs <= t.minor_pct) return 'on_target';
-  if (abs <= t.major_pct) return 'minor';
-  return 'major';
-}
-
-// Backend contract: root rows use bare asset-class paths ("equity"); group
-// rows use bare asset-class keys ("equity") with dotted leaf paths
-// ("equity.US"). <leaf> is exactly slice.name.
-function rowPath(drill: Drill, sliceName: string): string {
-  return drill ? `${drill.assetClass}.${sliceName}` : sliceName;
-}
-
-function getGroupRows(payload: TargetsPayload, drill: Drill): TargetRow[] {
-  if (!drill) return payload.root;
-  return payload.groups[drill.assetClass] ?? [];
-}
-
-function setGroupRows(payload: TargetsPayload, drill: Drill, rows: TargetRow[]): TargetsPayload {
-  if (!drill) return { ...payload, root: rows };
-  return { ...payload, groups: { ...payload.groups, [drill.assetClass]: rows } };
-}
-
-function sumTargetPct(rows: TargetRow[]): number {
-  return rows.reduce((a, r) => a + r.pct, 0);
-}
-
-function targetSumOk(rows: TargetRow[]): boolean {
-  if (rows.length === 0) return true;
-  return sumTargetPct(rows) === 100;
-}
-
-function entirePayloadValid(p: TargetsPayload): boolean {
-  if (!targetSumOk(p.root)) return false;
-  for (const rows of Object.values(p.groups)) {
-    if (rows?.length && !targetSumOk(rows)) return false;
-  }
-  return true;
-}
-
-function effectiveTarget(
-  rows: TargetRow[],
-  drill: Drill,
-  slice: AllocationSlice,
-): number | null {
-  const path = rowPath(drill, slice.name);
-  const local = rows.find((r) => r.path === path);
-  if (local) return local.pct;
-  if (slice.target_pct != null) return slice.target_pct;
-  return null;
-}
-
-function effectiveDrift(rows: TargetRow[], drill: Drill, slice: AllocationSlice): number | null {
-  if (slice.drift_pct != null) return slice.drift_pct;
-  const t = effectiveTarget(rows, drill, slice);
-  if (t == null) return null;
-  return slice.pct - t;
-}
 
 export default function Home() {
   const { data, error, isLoading } = useSWR<AllocationResult>('/api/allocation', api.allocation);
@@ -271,188 +192,18 @@ export default function Home() {
     }
   }, [targets, mutateTargets]);
 
-  const chart = useMemo(() => {
-    const graphic = [
-      {
-        type: 'text' as const,
-        left: 'center',
-        top: '44%',
-        style: { text: centerTop, fontSize: 11, fill: '#666' },
-      },
-      {
-        type: 'text' as const,
-        left: 'center',
-        top: '50%',
-        style: { text: centerBottom, fontSize: 20, fontWeight: 500, fill: '#222' },
-      },
-    ];
-
-    const chartNames = tableRows.map((s) => s.name);
-    const perSliceTargets = tableRows.map((s) => effectiveTarget(targetRows, drill, s));
-    const allTargetsSet = tableRows.length > 0 && perSliceTargets.every((t) => t != null);
-    const targetSumFromSlices = perSliceTargets.reduce<number>((a, t) => a + (t ?? 0), 0);
-    const useTargetMode =
-      allTargetsSet && Math.abs(targetSumFromSlices - 100) < CHART_TARGET_SUM_TOLERANCE;
-
-    if (!useTargetMode) {
-      const inner = tableRows.map((s, i) => ({
-        name: s.name,
-        value: s.value,
-        itemStyle: { color: CHART_CATEGORY_COLORS[i % CHART_CATEGORY_COLORS.length] },
-      }));
-      return {
-        mode: 'fallback' as const,
-        chartNames,
-        option: {
-          tooltip: {
-            trigger: 'item' as const,
-            formatter: (p: { name: string; value: number; percent: number }) =>
-              `${humanize(p.name)}: ${formatUSD(p.value)} (${p.percent}%)`,
-          },
-          series: [
-            {
-              type: 'pie' as const,
-              radius: ['28%', '88%'],
-              avoidLabelOverlap: false,
-              itemStyle: { borderColor: '#fff', borderWidth: 2 },
-              label: { show: false },
-              labelLine: { show: false },
-              emphasis: { itemStyle: { opacity: 0.8 } },
-              data: inner,
-            },
-          ],
-          graphic,
-        },
-      };
-    }
-
-    const R_MIN = 0.72;
-    const R_BASE = 0.8;
-    const R_MAX = 0.88;
-    const minor = thresholds.minor_pct;
-
-    const signedByIndex = tableRows.map((s, i) => {
-      const t = perSliceTargets[i] ?? 0;
-      return s.pct - t;
-    });
-    let maxAbs = 0;
-    for (const signed of signedByIndex) {
-      if (Math.abs(signed) > minor) maxAbs = Math.max(maxAbs, Math.abs(signed));
-    }
-
-    let acc = 0;
-    type TargetChartItem = {
-      name: string;
-      start: number;
-      end: number;
-      outer: number;
-      color: string;
-      value: number;
-      pct: number;
-      target: number;
-      driftAbs: number;
-      signed: number;
-    };
-    const items: TargetChartItem[] = tableRows.map((s, i) => {
-      const t = perSliceTargets[i] ?? 0;
-      const start = (acc / 100) * Math.PI * 2;
-      acc += t;
-      const end = (acc / 100) * Math.PI * 2;
-      const signed = signedByIndex[i] ?? 0;
-      const driftAbs = Math.abs(signed);
-      let outer: number;
-      if (driftAbs <= minor || maxAbs <= 0) {
-        outer = R_BASE;
-      } else {
-        const ratio = driftAbs / maxAbs;
-        outer = signed > 0 ? R_BASE + ratio * (R_MAX - R_BASE) : R_BASE - ratio * (R_BASE - R_MIN);
-      }
-      const color = CHART_CATEGORY_COLORS[i % CHART_CATEGORY_COLORS.length];
-      return { name: s.name, start, end, outer, color, value: s.value, pct: s.pct, target: t, driftAbs, signed };
-    });
-
-    return {
-      mode: 'target' as const,
-      chartNames,
-      option: {
-        tooltip: {
-          trigger: 'item' as const,
-          formatter: (p: { dataIndex: number }) => {
-            const d = items[p.dataIndex];
-            if (!d) return '';
-            const sign = d.signed > 0 ? '+' : '';
-            return `${humanize(d.name)}: target ${d.target.toFixed(1)}% · now ${d.pct.toFixed(1)}% (${formatUSD(d.value)}) · drift ${sign}${d.signed.toFixed(1)}pp`;
-          },
-        },
-        series: [
-          {
-            type: 'custom' as const,
-            coordinateSystem: 'none' as const,
-            silent: true,
-            z: 0,
-            renderItem: (
-              _params: { dataIndex: number },
-              api: { getWidth: () => number; getHeight: () => number },
-            ) => {
-              const w = api.getWidth();
-              const h = api.getHeight();
-              const cx = w / 2;
-              const cy = h / 2;
-              const R = Math.min(w, h) / 2;
-              return {
-                type: 'sector' as const,
-                shape: {
-                  cx,
-                  cy,
-                  r0: 0.28 * R,
-                  r: R_BASE * R,
-                  startAngle: -Math.PI / 2,
-                  endAngle: -Math.PI / 2 + Math.PI * 2,
-                  clockwise: true,
-                },
-                style: { fill: '#e5e7eb', stroke: '#fff', lineWidth: 2 },
-              };
-            },
-            data: [0],
-          },
-          {
-            type: 'custom' as const,
-            coordinateSystem: 'none' as const,
-            z: 1,
-            renderItem: (
-              params: { dataIndex: number },
-              api: { getWidth: () => number; getHeight: () => number },
-            ) => {
-              const idx = params.dataIndex;
-              const d = items[idx];
-              if (!d) return { type: 'group' as const, children: [] as const };
-              const w = api.getWidth();
-              const h = api.getHeight();
-              const cx = w / 2;
-              const cy = h / 2;
-              const R = Math.min(w, h) / 2;
-              return {
-                type: 'sector' as const,
-                shape: {
-                  cx,
-                  cy,
-                  r0: 0.28 * R,
-                  r: d.outer * R,
-                  startAngle: -Math.PI / 2 + d.start,
-                  endAngle: -Math.PI / 2 + d.end,
-                  clockwise: true,
-                },
-                style: { fill: d.color, stroke: '#fff', lineWidth: 2 },
-                emphasis: { style: { opacity: 0.8 } },
-              };
-            },
-            data: items.map((_, i) => [i]),
-          },
-        ],
-        graphic,
-      },
-    };
-  }, [tableRows, targetRows, drill, thresholds.minor_pct, centerTop, centerBottom]);
+  const chart = useMemo(
+    () =>
+      buildAllocationChart({
+        tableRows,
+        targetRows,
+        drill,
+        minorPct: thresholds.minor_pct,
+        centerTop,
+        centerBottom,
+      }),
+    [tableRows, targetRows, drill, thresholds.minor_pct, centerTop, centerBottom],
+  );
 
   if (isLoading) return <Frame>Loading…</Frame>;
   if (error) {
@@ -479,6 +230,13 @@ export default function Home() {
     <p style={{ margin: '0.35rem 0 0', fontSize: '0.75rem', color: '#888' }}>
       Drift bands: ≤{thresholds.minor_pct}% on target, ≤{thresholds.major_pct}% minor (else major).
     </p>
+  );
+
+  const tableFooter = (
+    <>
+      {sumLine}
+      {!sectorInfoOnly && thresholdsNote}
+    </>
   );
 
   return (
@@ -617,110 +375,15 @@ export default function Home() {
             option={chart.option}
           />
 
-          <div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>
-                  <th style={th}>{drill ? 'Sub-category' : 'Category'}</th>
-                  {!sectorInfoOnly && <th style={th}>Target %</th>}
-                  <th style={th}>Value ($)</th>
-                  <th style={th}>{drill ? '% of parent' : '% of portfolio'}</th>
-                  {!sectorInfoOnly && <th style={th}>Drift (pp)</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {tableRows.map((s) => {
-                  const drillable = !drill && s.name in DRILL_CONFIG;
-                  const tgt = effectiveTarget(targetRows, drill, s);
-                  const drift = effectiveDrift(targetRows, drill, s);
-                  return (
-                    <tr
-                      key={s.name}
-                      onClick={drillable ? () => onDrillInto(s.name) : undefined}
-                      style={{
-                        borderBottom: '1px solid #eee',
-                        cursor: drillable ? 'pointer' : 'default',
-                      }}
-                    >
-                      <td style={td}>
-                        {humanize(s.name)}
-                        {drillable && (
-                          <span style={{ color: '#aaa', marginLeft: 6 }}>›</span>
-                        )}
-                      </td>
-                      {!sectorInfoOnly && (
-                        <td
-                          style={td}
-                          onClick={(e) => e.stopPropagation()}
-                          onMouseDown={(e) => e.stopPropagation()}
-                        >
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={1}
-                            value={tgt ?? ''}
-                            onClick={(e) => e.stopPropagation()}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onChange={(e) => {
-                              const raw = parseFloat(e.target.value);
-                              if (Number.isNaN(raw)) return;
-                              const v = Math.max(0, Math.min(100, Math.round(raw)));
-                              patchTargetPct(s.name, v);
-                            }}
-                            style={{ width: '4.5rem', fontSize: '0.9rem' }}
-                            aria-label={`Target % for ${s.name}`}
-                          />
-                        </td>
-                      )}
-                      <td style={td}>
-                        <Provenance
-                          source={
-                            drill
-                              ? `${humanize(drill.assetClass)} · ${humanize(drill.dim)} · ${s.name}`
-                              : `sum of ${s.tickers?.length ?? 0} position(s): ${(s.tickers ?? []).join(', ') || '—'}`
-                          }
-                        >
-                          {formatUSD(s.value)}
-                        </Provenance>
-                      </td>
-                      <td style={td}>
-                        <Provenance
-                          source={
-                            drill
-                              ? `${formatUSD(s.value)} ÷ ${humanize(drill.assetClass)} total`
-                              : `${formatUSD(s.value)} ÷ net worth`
-                          }
-                        >
-                          {s.pct.toFixed(1)}%
-                        </Provenance>
-                      </td>
-                      {!sectorInfoOnly && (
-                        <td style={td}>
-                          {drift != null ? (
-                            <Provenance
-                              source={
-                                s.drift_pct != null
-                                  ? 'drift_pct from allocation API'
-                                  : `actual ${s.pct.toFixed(2)}% minus target ${tgt?.toFixed(2) ?? '—'}%`
-                              }
-                            >
-                              {drift > 0 ? '+' : ''}
-                              {drift.toFixed(1)}
-                            </Provenance>
-                          ) : (
-                            <span style={{ color: '#aaa' }}>—</span>
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {sumLine}
-            {!sectorInfoOnly && thresholdsNote}
-          </div>
+          <AllocationTable
+            tableRows={tableRows}
+            drill={drill}
+            sectorInfoOnly={sectorInfoOnly}
+            targetRows={targetRows}
+            onDrillInto={onDrillInto}
+            onPatchTargetPct={patchTargetPct}
+            footer={tableFooter}
+          />
         </div>
       )}
 
@@ -739,59 +402,6 @@ export default function Home() {
         </p>
       )}
     </Frame>
-  );
-}
-
-function DriftStatusPill({ band, maxDrift }: { band: DriftBand; maxDrift: number }) {
-  const x = maxDrift.toFixed(1);
-  if (band === 'on_target') {
-    return (
-      <span
-        style={{
-          display: 'inline-block',
-          padding: '0.2rem 0.55rem',
-          borderRadius: 999,
-          fontSize: '0.8rem',
-          fontWeight: 600,
-          background: '#dcfce7',
-          color: '#166534',
-        }}
-      >
-        On target
-      </span>
-    );
-  }
-  if (band === 'minor') {
-    return (
-      <span
-        style={{
-          display: 'inline-block',
-          padding: '0.2rem 0.55rem',
-          borderRadius: 999,
-          fontSize: '0.8rem',
-          fontWeight: 600,
-          background: '#fef3c7',
-          color: '#92400e',
-        }}
-      >
-        {x}% max drift
-      </span>
-    );
-  }
-  return (
-    <span
-      style={{
-        display: 'inline-block',
-        padding: '0.2rem 0.55rem',
-        borderRadius: 999,
-        fontSize: '0.8rem',
-        fontWeight: 600,
-        background: '#fee2e2',
-        color: '#991b1b',
-      }}
-    >
-      {x}% max drift · rebalance recommended
-    </span>
   );
 }
 
@@ -814,54 +424,6 @@ const btnGhost: CSSProperties = {
   cursor: 'pointer',
 };
 
-function getDrillSlices(
-  root: AllocationSlice[],
-  drill: { assetClass: string; dim: Dim },
-): AllocationSlice[] {
-  const slice = root.find((s) => s.name === drill.assetClass);
-  if (!slice) return [];
-  const parentValue = slice.value;
-
-  let raw: { name: string; value: number }[];
-  if (drill.dim === 'geography') {
-    raw = (slice.children ?? []).map((c) => ({ name: c.name, value: c.value }));
-  } else if (drill.dim === 'sector') {
-    raw = (slice.sector_breakdown ?? []).map((c) => ({ name: c.name, value: c.value }));
-  } else {
-    const sums = new Map<string, number>();
-    for (const region of slice.children ?? []) {
-      for (const sub of region.children ?? []) {
-        sums.set(sub.name, (sums.get(sub.name) ?? 0) + sub.value);
-      }
-    }
-    raw = Array.from(sums, ([name, value]) => ({ name, value }));
-  }
-
-  return raw
-    .filter((s) => s.value > 0)
-    .sort((a, b) => b.value - a.value)
-    .map((s) => ({
-      name: s.name,
-      value: s.value,
-      pct: parentValue > 0 ? (s.value / parentValue) * 100 : 0,
-      tickers: [],
-      children: [],
-    }));
-}
-
 function Frame({ children }: { children: React.ReactNode }) {
   return <main style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>{children}</main>;
 }
-
-function formatUSD(n: number): string {
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function formatUSDCompact(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
-  return `$${n.toFixed(0)}`;
-}
-
-const th = { padding: '0.5rem 0.25rem', fontWeight: 600 };
-const td = { padding: '0.5rem 0.25rem' };
