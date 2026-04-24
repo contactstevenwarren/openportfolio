@@ -3,7 +3,7 @@ import { formatUSD, humanize } from './labels';
 import { effectiveTarget } from './allocationTargets';
 import type { Drill } from './drill';
 
-/** ECharts 5 default category colors — fallback pie uses these so colors stay stable vs prior builds. */
+/** ECharts 5 default category colors — stable palette across chart renders. */
 const CHART_CATEGORY_COLORS = [
   '#5470c6',
   '#91cc75',
@@ -16,12 +16,7 @@ const CHART_CATEGORY_COLORS = [
   '#ea7ccc',
 ] as const;
 
-const CHART_TARGET_SUM_TOLERANCE = 2;
-
-export type AllocationChartMode = 'fallback' | 'target';
-
 export type AllocationChartResult = {
-  mode: AllocationChartMode;
   chartNames: string[];
   option: Record<string, unknown>;
 };
@@ -55,59 +50,22 @@ export function buildAllocationChart(args: {
 
   const chartNames = tableRows.map((s) => s.name);
   const perSliceTargets = tableRows.map((s) => effectiveTarget(targetRows, drill, s));
-  const allTargetsSet = tableRows.length > 0 && perSliceTargets.every((t) => t != null);
-  const targetSumFromSlices = perSliceTargets.reduce<number>((a, t) => a + (t ?? 0), 0);
-  const useTargetMode =
-    allTargetsSet && Math.abs(targetSumFromSlices - 100) < CHART_TARGET_SUM_TOLERANCE;
-
-  if (!useTargetMode) {
-    const inner = tableRows.map((s, i) => ({
-      name: s.name,
-      value: s.value,
-      itemStyle: { color: CHART_CATEGORY_COLORS[i % CHART_CATEGORY_COLORS.length] },
-    }));
-    return {
-      mode: 'fallback',
-      chartNames,
-      option: {
-        tooltip: {
-          trigger: 'item' as const,
-          formatter: (p: { name: string; value: number; percent: number }) =>
-            `${humanize(p.name)}: ${formatUSD(p.value)} (${p.percent}%)`,
-        },
-        series: [
-          {
-            type: 'pie' as const,
-            radius: ['28%', '88%'],
-            avoidLabelOverlap: false,
-            itemStyle: { borderColor: '#fff', borderWidth: 2 },
-            label: { show: false },
-            labelLine: { show: false },
-            emphasis: { itemStyle: { opacity: 0.8 } },
-            data: inner,
-          },
-        ],
-        graphic,
-      },
-    };
-  }
 
   const R_MIN = 0.72;
   const R_BASE = 0.8;
   const R_MAX = 0.88;
   const minor = minorPct;
 
-  const signedByIndex = tableRows.map((s, i) => {
-    const t = perSliceTargets[i] ?? 0;
-    return s.pct - t;
-  });
   let maxAbs = 0;
-  for (const signed of signedByIndex) {
+  for (let i = 0; i < tableRows.length; i++) {
+    const t = perSliceTargets[i];
+    if (t == null) continue;
+    const signed = tableRows[i].pct - t;
     if (Math.abs(signed) > minor) maxAbs = Math.max(maxAbs, Math.abs(signed));
   }
 
   let acc = 0;
-  type TargetChartItem = {
+  type ChartItem = {
     name: string;
     start: number;
     end: number;
@@ -115,19 +73,19 @@ export function buildAllocationChart(args: {
     color: string;
     value: number;
     pct: number;
-    target: number;
+    target: number | null;
     driftAbs: number;
     signed: number;
   };
-  const items: TargetChartItem[] = tableRows.map((s, i) => {
-    const t = perSliceTargets[i] ?? 0;
+  const items: ChartItem[] = tableRows.map((s, i) => {
+    const t = perSliceTargets[i];
     const start = (acc / 100) * Math.PI * 2;
-    acc += t;
+    acc += s.pct;
     const end = (acc / 100) * Math.PI * 2;
-    const signed = signedByIndex[i] ?? 0;
+    const signed = t != null ? s.pct - t : 0;
     const driftAbs = Math.abs(signed);
     let outer: number;
-    if (driftAbs <= minor || maxAbs <= 0) {
+    if (t == null || driftAbs <= minor || maxAbs <= 0) {
       outer = R_BASE;
     } else {
       const ratio = driftAbs / maxAbs;
@@ -138,7 +96,6 @@ export function buildAllocationChart(args: {
   });
 
   return {
-    mode: 'target',
     chartNames,
     option: {
       tooltip: {
@@ -146,8 +103,10 @@ export function buildAllocationChart(args: {
         formatter: (p: { dataIndex: number }) => {
           const d = items[p.dataIndex];
           if (!d) return '';
+          const head = `${humanize(d.name)}: ${d.pct.toFixed(1)}% (${formatUSD(d.value)})`;
+          if (d.target == null) return head;
           const sign = d.signed > 0 ? '+' : '';
-          return `${humanize(d.name)}: target ${d.target.toFixed(1)}% · now ${d.pct.toFixed(1)}% (${formatUSD(d.value)}) · drift ${sign}${d.signed.toFixed(1)}pp`;
+          return `${head} · target ${d.target.toFixed(1)}% · drift ${sign}${d.signed.toFixed(1)}pp`;
         },
       },
       series: [

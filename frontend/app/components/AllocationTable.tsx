@@ -17,8 +17,7 @@ type Props = {
   sectorInfoOnly: boolean;
   targetRows: TargetRow[];
   onDrillInto: (name: string) => void;
-  onPatchTargetPct: (sliceName: string, pct: number) => void;
-  footer: ReactNode;
+  footer?: ReactNode;
 };
 
 export function AllocationTable({
@@ -27,8 +26,7 @@ export function AllocationTable({
   sectorInfoOnly,
   targetRows,
   onDrillInto,
-  onPatchTargetPct,
-  footer,
+  footer = null,
 }: Props) {
   return (
     <div>
@@ -36,10 +34,10 @@ export function AllocationTable({
         <thead>
           <tr style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>
             <th style={th}>{drill ? 'Sub-category' : 'Category'}</th>
-            {!sectorInfoOnly && <th style={th}>Target %</th>}
-            <th style={th}>Value ($)</th>
             <th style={th}>{drill ? '% of parent' : '% of portfolio'}</th>
+            {!sectorInfoOnly && <th style={th}>Target %</th>}
             {!sectorInfoOnly && <th style={th}>Drift (pp)</th>}
+            <th style={th}>Value ($)</th>
           </tr>
         </thead>
         <tbody>
@@ -60,42 +58,6 @@ export function AllocationTable({
                   {humanize(s.name)}
                   {drillable && <span style={{ color: '#aaa', marginLeft: 6 }}>›</span>}
                 </td>
-                {!sectorInfoOnly && (
-                  <td
-                    style={td}
-                    onClick={(e) => e.stopPropagation()}
-                    onMouseDown={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={tgt ?? ''}
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onChange={(e) => {
-                        const raw = parseFloat(e.target.value);
-                        if (Number.isNaN(raw)) return;
-                        const v = Math.max(0, Math.min(100, Math.round(raw)));
-                        onPatchTargetPct(s.name, v);
-                      }}
-                      style={{ width: '4.5rem', fontSize: '0.9rem' }}
-                      aria-label={`Target % for ${s.name}`}
-                    />
-                  </td>
-                )}
-                <td style={td}>
-                  <Provenance
-                    source={
-                      drill
-                        ? `${humanize(drill.assetClass)} · ${humanize(drill.dim)} · ${s.name}`
-                        : `sum of ${s.tickers?.length ?? 0} position(s): ${(s.tickers ?? []).join(', ') || '—'}`
-                    }
-                  >
-                    {formatUSD(s.value)}
-                  </Provenance>
-                </td>
                 <td style={td}>
                   <Provenance
                     source={
@@ -107,6 +69,23 @@ export function AllocationTable({
                     {s.pct.toFixed(1)}%
                   </Provenance>
                 </td>
+                {!sectorInfoOnly && (
+                  <td style={td}>
+                    {tgt != null ? (
+                      <Provenance
+                        source={
+                          s.target_pct != null
+                            ? 'target_pct from allocation API'
+                            : 'saved target row for this slice'
+                        }
+                      >
+                        {tgt.toFixed(1)}%
+                      </Provenance>
+                    ) : (
+                      <span style={{ color: '#aaa' }}>—</span>
+                    )}
+                  </td>
+                )}
                 {!sectorInfoOnly && (
                   <td style={td}>
                     {drift != null ? (
@@ -125,6 +104,17 @@ export function AllocationTable({
                     )}
                   </td>
                 )}
+                <td style={td}>
+                  <Provenance
+                    source={
+                      drill
+                        ? `${humanize(drill.assetClass)} · ${humanize(drill.dim)} · ${s.name}`
+                        : `sum of ${s.tickers?.length ?? 0} position(s): ${(s.tickers ?? []).join(', ') || '—'}`
+                    }
+                  >
+                    {formatUSD(s.value)}
+                  </Provenance>
+                </td>
               </tr>
             );
           })}

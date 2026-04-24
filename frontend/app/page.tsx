@@ -1,11 +1,10 @@
 'use client';
 
 // v0.1.6 hero: allocation chart + context-aware one-level drill-down.
-// v0.2: targets + drift columns, save / prefill / clear targets. Chart: target-mode = angles
-// from target %, outer radius from signed drift (under → inside base ring, over → outside),
-// scaled to max |drift| in view; solid grey base-portfolio ring at baseline radius behind slices;
-// slice colors = same palette as fallback donut. Fallback = value-angle donut when targets
-// incomplete / sum off 100 (±2pp).
+// v0.2: targets + drift (read-only on hero); edit on /targets. Chart: slice angles = actual %;
+// outer radius bumps from signed drift only where a target exists (under → inside base ring,
+// over → outside), scaled to max |drift| among targeted slices; grey baseline ring always behind
+// slices; same ECharts category palette per slice.
 //
 // Root view shows one slice per asset class. Click a drillable slice (or
 // its table row) and the same chart re-renders for that class's natural
@@ -23,8 +22,8 @@
 // drill.
 
 import dynamic from 'next/dynamic';
-import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 
 import { AllocationTable } from './components/AllocationTable';
@@ -34,7 +33,6 @@ import {
   type AllocationResult,
   type AllocationSlice,
   type DriftBand,
-  type TargetRow,
   type TargetsPayload,
 } from './lib/api';
 import {
@@ -42,12 +40,9 @@ import {
   driftThresholds,
   effectiveDrift,
   EMPTY_TARGETS,
-  entirePayloadValid,
   getGroupRows,
-  rowPath,
-  setGroupRows,
-  sumTargetPct,
-  targetSumOk,
+  isTargetsEmpty,
+  seedFromActuals,
 } from './lib/allocationTargets';
 import { buildAllocationChart } from './lib/buildAllocationChart';
 import { DRILL_CONFIG, getDrillSlices, type Drill } from './lib/drill';
@@ -66,14 +61,32 @@ export default function Home() {
 
   const [drill, setDrill] = useState<Drill>(null);
   const [targets, setTargets] = useState<TargetsPayload>(EMPTY_TARGETS);
-  const [targetsDirty, setTargetsDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const autoSeedStarted = useRef(false);
 
   useEffect(() => {
-    if (remoteTargets == null) return;
-    if (!targetsDirty) setTargets(remoteTargets);
-  }, [remoteTargets, targetsDirty]);
+    if (remoteTargets !== undefined) {
+      setTargets(remoteTargets ?? EMPTY_TARGETS);
+    }
+  }, [remoteTargets]);
+
+  useEffect(() => {
+    if (!data) return;
+    const targetsKnown = remoteTargets !== undefined || targetsError != null;
+    if (!targetsKnown) return;
+    if (autoSeedStarted.current) return;
+    const existing = targetsError != null ? EMPTY_TARGETS : remoteTargets!;
+    if (!isTargetsEmpty(existing)) return;
+    if (data.total === 0) return;
+    autoSeedStarted.current = true;
+    void (async () => {
+      try {
+        await api.putTargets(seedFromActuals(data));
+        await mutateTargets();
+      } catch {
+        autoSeedStarted.current = false;
+      }
+    })();
+  }, [data, remoteTargets, targetsError, mutateTargets]);
 
   const thresholds = useMemo(() => driftThresholds(data), [data]);
 
@@ -134,64 +147,6 @@ export default function Home() {
 
   const statusPill = drill ? maxDriftDrill : maxDriftRoot;
 
-  const patchTargetPct = useCallback(
-    (sliceName: string, pct: number) => {
-      setSaveError(null);
-      setTargetsDirty(true);
-      const path = rowPath(drill, sliceName);
-      setTargets((prev) => {
-        const rows = getGroupRows(prev, drill);
-        const i = rows.findIndex((r) => r.path === path);
-        let next: TargetRow[];
-        if (i >= 0) {
-          next = rows.map((r, j) => (j === i ? { path, pct } : r));
-        } else {
-          next = [...rows, { path, pct }];
-        }
-        return setGroupRows(prev, drill, next);
-      });
-    },
-    [drill],
-  );
-
-  const setTargetsFromActuals = useCallback(() => {
-    if (tableRows.length === 0) return;
-    setSaveError(null);
-    setTargetsDirty(true);
-    setTargets((prev) => {
-      const rounded = tableRows.map((s) => Math.round(s.pct));
-      const sumOthers = rounded.slice(0, -1).reduce((a, n) => a + n, 0);
-      rounded[rounded.length - 1] = 100 - sumOthers;
-      const nextRows: TargetRow[] = tableRows.map((s, i) => ({
-        path: rowPath(drill, s.name),
-        pct: rounded[i],
-      }));
-      return setGroupRows(prev, drill, nextRows);
-    });
-  }, [drill, tableRows]);
-
-  const clearTargetsForGroup = useCallback(() => {
-    if (!confirm('Clear saved targets for this view?')) return;
-    setSaveError(null);
-    setTargetsDirty(true);
-    setTargets((prev) => setGroupRows(prev, drill, []));
-  }, [drill]);
-
-  const saveTargets = useCallback(async () => {
-    if (!entirePayloadValid(targets)) return;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      await api.putTargets(targets);
-      setTargetsDirty(false);
-      await mutateTargets();
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  }, [targets, mutateTargets]);
-
   const chart = useMemo(
     () =>
       buildAllocationChart({
@@ -218,27 +173,6 @@ export default function Home() {
   }
   if (!data) return <Frame>No data.</Frame>;
 
-  const targetSum = sumTargetPct(targetRows);
-  const sumLine =
-    targetRows.length > 0 ? (
-      <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: targetSumOk(targetRows) ? '#15803d' : '#b45309' }}>
-        Targets sum: {targetSum}%{targetSumOk(targetRows) ? ' · within 100' : ' · must equal 100 to save'}
-      </p>
-    ) : null;
-
-  const thresholdsNote = (
-    <p style={{ margin: '0.35rem 0 0', fontSize: '0.75rem', color: '#888' }}>
-      Drift bands: ≤{thresholds.minor_pct}% on target, ≤{thresholds.major_pct}% minor (else major).
-    </p>
-  );
-
-  const tableFooter = (
-    <>
-      {sumLine}
-      {!sectorInfoOnly && thresholdsNote}
-    </>
-  );
-
   return (
     <Frame>
       <h1 style={{ fontSize: '1.4rem', fontWeight: 500, margin: '0 0 1rem' }}>
@@ -250,7 +184,8 @@ export default function Home() {
 
       {targetsError && (
         <p style={{ fontSize: '0.85rem', color: '#b45309', marginBottom: '0.5rem' }}>
-          Targets could not be loaded; editing starts empty.
+          Targets could not be loaded; drift may be unavailable until you save targets on{' '}
+          <Link href="/targets">/targets</Link>.
         </p>
       )}
 
@@ -305,43 +240,24 @@ export default function Home() {
         </div>
       )}
 
-      {statusPill.max != null && statusPill.band && (
-        <div style={{ marginBottom: '0.75rem' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '0.75rem',
+          alignItems: 'center',
+          marginBottom: '0.75rem',
+        }}
+      >
+        {statusPill.max != null && statusPill.band && (
           <DriftStatusPill band={statusPill.band} maxDrift={statusPill.max} />
-        </div>
-      )}
-
-      {!sectorInfoOnly && (
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '0.5rem',
-            alignItems: 'center',
-            marginBottom: '0.75rem',
-          }}
-        >
-          <button
-            type="button"
-            onClick={saveTargets}
-            disabled={!entirePayloadValid(targets) || saving}
-            style={btnPrimary}
-          >
-            {saving ? 'Saving…' : 'Save targets'}
-          </button>
-          <button type="button" onClick={setTargetsFromActuals} style={btnGhost}>
-            Set targets for this group
-          </button>
-          <button type="button" onClick={clearTargetsForGroup} style={btnGhost}>
-            Clear targets
-          </button>
-          {saveError && (
-            <span style={{ fontSize: '0.85rem', color: 'crimson' }}>
-              Save failed: {saveError}
-            </span>
-          )}
-        </div>
-      )}
+        )}
+        {!sectorInfoOnly && (
+          <Link href="/targets" style={{ fontSize: '0.9rem', color: '#2563eb' }}>
+            Edit targets
+          </Link>
+        )}
+      </div>
 
       {data.total === 0 ? (
         <p style={{ color: '#555' }}>
@@ -363,13 +279,10 @@ export default function Home() {
           <ReactECharts
             style={{ height: 420 }}
             onEvents={{
-              click: (p: { name?: string; dataIndex?: number }) => {
-                if (chart.mode === 'target' && typeof p.dataIndex === 'number') {
-                  const n = chart.chartNames[p.dataIndex];
-                  if (n) onDrillInto(n);
-                } else if (p.name) {
-                  onDrillInto(p.name);
-                }
+              click: (p: { dataIndex?: number }) => {
+                if (typeof p.dataIndex !== 'number') return;
+                const n = chart.chartNames[p.dataIndex];
+                if (n) onDrillInto(n);
               },
             }}
             option={chart.option}
@@ -381,8 +294,6 @@ export default function Home() {
             sectorInfoOnly={sectorInfoOnly}
             targetRows={targetRows}
             onDrillInto={onDrillInto}
-            onPatchTargetPct={patchTargetPct}
-            footer={tableFooter}
           />
         </div>
       )}
@@ -404,25 +315,6 @@ export default function Home() {
     </Frame>
   );
 }
-
-const btnPrimary: CSSProperties = {
-  padding: '0.35rem 0.75rem',
-  fontSize: '0.85rem',
-  borderRadius: 4,
-  border: '1px solid #166534',
-  background: '#166534',
-  color: '#fff',
-  cursor: 'pointer',
-};
-const btnGhost: CSSProperties = {
-  padding: '0.35rem 0.75rem',
-  fontSize: '0.85rem',
-  borderRadius: 4,
-  border: '1px solid #ccc',
-  background: '#fff',
-  color: '#222',
-  cursor: 'pointer',
-};
 
 function Frame({ children }: { children: React.ReactNode }) {
   return <main style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto' }}>{children}</main>;
