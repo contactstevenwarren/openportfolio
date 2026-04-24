@@ -187,6 +187,47 @@ export type TargetRow = { path: string; pct: number };
 
 export type TargetsPayload = { root: TargetRow[]; groups: Record<string, TargetRow[]> };
 
+// v0.5 rebalance recommendations.
+export type RebalanceDirection = 'buy' | 'sell' | 'hold';
+export type RebalanceMode = 'full' | 'new_money';
+
+export type RebalanceMove = {
+  path: string;
+  direction: RebalanceDirection;
+  delta_usd: number;
+  target_pct: number;
+  actual_pct: number;
+  // Net worth at L1; asset-class dollar value at L2. Divide
+  // delta_usd / parent_total_usd * 100 to recover drift-as-% of parent.
+  parent_total_usd: number;
+  children: RebalanceMove[];
+};
+
+export type RebalanceResult = {
+  mode: RebalanceMode;
+  total: number;
+  contribution_usd: number | null;
+  moves: RebalanceMove[];
+};
+
+// 409 body from /api/rebalance when L2 targets no longer cover every
+// funded sub-class (user added a new holding since targets were saved).
+export type StaleTargetsError = {
+  error: 'stale_targets';
+  asset_class: string;
+  missing_paths: string[];
+  extra_paths: string[];
+};
+
+export class RebalanceStaleTargetsError extends Error {
+  detail: StaleTargetsError;
+  constructor(detail: StaleTargetsError) {
+    super(`stale targets on ${detail.asset_class}`);
+    this.detail = detail;
+    this.name = 'RebalanceStaleTargetsError';
+  }
+}
+
 function getAdminToken(): string {
   if (typeof window === 'undefined') return '';
   let token = window.localStorage.getItem(TOKEN_KEY);
@@ -273,6 +314,36 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
+  rebalance: async (
+    mode: RebalanceMode,
+    amount?: number,
+  ): Promise<RebalanceResult> => {
+    const qs = new URLSearchParams({ mode });
+    if (mode === 'new_money' && amount != null) qs.set('amount', String(amount));
+    const res = await fetch(`/api/rebalance?${qs.toString()}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': getAdminToken(),
+      },
+    });
+    if (res.status === 401) {
+      clearAdminToken();
+      throw new Error('Admin token rejected. Reload the page to re-enter.');
+    }
+    if (res.status === 409) {
+      // FastAPI wraps our detail object under {"detail": ...}.
+      const body = (await res.json()) as { detail?: StaleTargetsError };
+      if (body?.detail?.error === 'stale_targets') {
+        throw new RebalanceStaleTargetsError(body.detail);
+      }
+      throw new Error(`API 409: ${JSON.stringify(body)}`);
+    }
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`API ${res.status}: ${body || res.statusText}`);
+    }
+    return (await res.json()) as RebalanceResult;
+  },
   positions: () => fetchJson<Position[]>('/api/positions'),
   patchPosition: (id: number, patch: PositionPatch) =>
     fetchJson<Position>(`/api/positions/${id}`, {

@@ -1,7 +1,9 @@
+import math
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import Float as SAFloat
@@ -13,6 +15,7 @@ from .allocation import aggregate
 from .auth import require_admin_token
 from .config import settings
 from .drift import apply_drift
+from .rebalance import compute_new_money, compute_rebalance
 from .classifications import (
     ClassificationEntry,
     load_classifications,
@@ -44,6 +47,7 @@ from .schemas import (
     PositionPatch,
     PositionRead,
     ProvenanceRead,
+    RebalanceResult,
     SnapshotRead,
     TargetsPayload,
     Taxonomy,
@@ -686,6 +690,77 @@ def put_targets(body: TargetsPayload, db: Session = Depends(get_db)) -> dict[str
             db.add(Target(path=r.path, pct=r.pct))
     db.commit()
     return _targets_get_payload(db)
+
+
+@app.get("/api/rebalance", dependencies=[Depends(require_admin_token)])
+def get_rebalance(
+    mode: Literal["full", "new_money"] = "full",
+    amount: float | None = None,
+    db: Session = Depends(get_db),
+) -> RebalanceResult:
+    positions = db.query(Position).all()
+    classifications = {**load_classifications(), **load_user_classifications(db)}
+    result = aggregate(positions, classifications, db=db)
+    targets = {t.path: float(t.pct) for t in db.query(Target).all()}
+    result = apply_drift(
+        result,
+        targets,
+        drift_minor_pct=settings.drift_minor_pct,
+        drift_major_pct=settings.drift_major_pct,
+    )
+
+    if not any("." not in p for p in targets):
+        return RebalanceResult(
+            mode=mode,
+            total=result.total,
+            contribution_usd=amount if mode == "new_money" else None,
+            moves=[],
+        )
+
+    # Stale-L2 detection: mirrors _validate_put_targets group coverage.
+    by_name = {s.name: s for s in result.by_asset_class}
+    for ac, sl in by_name.items():
+        prefix = f"{ac}."
+        provided_p = {p for p in targets if p.startswith(prefix)}
+        if not provided_p:
+            continue
+        if ac == "equity":
+            required_p = {f"equity.{c.name}" for c in sl.children if c.value > 0}
+        else:
+            required_p = set()
+            for reg in sl.children:
+                for leaf in reg.children:
+                    if leaf.value > 0:
+                        required_p.add(f"{ac}.{leaf.name}")
+        if provided_p != required_p:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "stale_targets",
+                    "asset_class": ac,
+                    "missing_paths": sorted(required_p - provided_p),
+                    "extra_paths": sorted(provided_p - required_p),
+                },
+            )
+
+    if mode == "new_money":
+        if amount is None or not math.isfinite(amount) or amount <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="amount must be a positive finite number for mode=new_money",
+            )
+        return compute_new_money(
+            result,
+            targets,
+            amount,
+            drift_minor_pct=settings.drift_minor_pct,
+        )
+
+    return compute_rebalance(
+        result,
+        targets,
+        drift_minor_pct=settings.drift_minor_pct,
+    )
 
 
 # ----- classifications (v0.1.5 M3) ----------------------------------------
