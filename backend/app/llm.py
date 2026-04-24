@@ -24,7 +24,8 @@ from .validation import annotate
 _ASSET_CLASS_ENUM: list[str] = [o.value for o in ASSET_CLASS_OPTIONS]
 _VALID_ASSET_CLASS_SET: frozenset[str] = frozenset(_ASSET_CLASS_ENUM)
 
-_SYSTEM_PROMPT = """You extract stock/ETF/fund positions from portfolio statement text.
+_SYSTEM_PROMPT = """You extract portfolio holdings from brokerage statement text: stocks, ETFs, funds,
+cash and cash equivalents, US Treasury debt, and similar line items the statement lists with values.
 
 Return a JSON object with: positions, statement_account_name, statement_account_name_confidence,
 matched_account_id, matched_account_confidence. All keys are required by the schema (use null where unknown).
@@ -49,8 +50,15 @@ Account matching (critical):
 
 Rules for positions:
 - Extract only what is written. Do not infer or compute any derived value.
-- Do not invent tickers. Map fund names to tickers only if the symbol appears in the text.
-- Ignore cash balance lines unless tracked as an explicit position (e.g. "CASH", money-market symbol).
+- Do not invent tickers for equities/ETFs. Map fund names to tickers only if the symbol appears in the text.
+- **Cash and cash equivalents:** Include them when the statement lists them as holdings (core cash, bank
+  deposit / FDIC sweep, money market funds such as SWVXX, SNAXX, SPRXX, SPAXX, etc.). If there is a dollar
+  balance but no symbol in the Symbol column, use ticker **CASH** with shares = 1.0, market_value = the
+  balance shown, cost_basis = null unless the statement gives it.
+- **US Treasury bills/notes/bonds:** Include each listed line (US T-Bill, Treasury Note, etc.). Prefer a
+  printed trade symbol when it already matches a normal ticker. When the line shows **only a CUSIP**
+  (9-character ID, often starting with a digit), output ticker as **U** plus the **last 8 characters** of
+  that CUSIP (uppercase), e.g. CUSIP 912TEST99 → **U12TEST99** (so the ticker matches broker-style rules).
 - Return positions in the order they appear in the statement.
 """
 

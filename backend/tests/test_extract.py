@@ -89,7 +89,7 @@ def test_ollama_model_string_and_api_base() -> None:
     [
         ("fidelity", ["VTI", "VXUS", "BND", "aapl"]),
         ("vanguard", ["VTI", "BND", "VXUS"]),
-        ("schwab", ["SPY", "QQQ", "GLD", "BTC-USD"]),
+        ("schwab", ["SPY", "QQQ", "GLD", "BTC-USD", "SNOXX", "U12TEST99", "CASH"]),
     ],
 )
 def test_extract_fixture(
