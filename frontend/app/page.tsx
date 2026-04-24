@@ -28,6 +28,7 @@ import useSWR from 'swr';
 
 import { AllocationTable } from './components/AllocationTable';
 import { DriftStatusPill } from './components/DriftStatusPill';
+import { RebalancePanel } from './components/RebalancePanel';
 import {
   api,
   type AllocationResult,
@@ -296,6 +297,10 @@ export default function Home() {
             onDrillInto={onDrillInto}
           />
         </div>
+      )}
+
+      {data.total > 0 && !drill && !isTargetsEmpty(targets) && (
+        <RebalancePanel isHeroRoot={!drill} />
       )}
 
       {data.unclassified_tickers.length > 0 && (
