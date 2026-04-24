@@ -1,6 +1,6 @@
 'use client';
 
-import type { Dispatch, ReactNode, SetStateAction } from 'react';
+import { useMemo, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 
 import type {
   ClassificationSuggestItem,
@@ -33,6 +33,39 @@ function rowBg(confidence: number, hasErrors: boolean): string {
   return '#fde7ea';
 }
 
+function fmtUsd(n: number): string {
+  return n.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  });
+}
+
+function sumMoney(
+  rows: ExtractedPosition[],
+  include: (i: number) => boolean,
+): { cost: number | null; market: number | null } {
+  let cost = 0;
+  let market = 0;
+  let hasCost = false;
+  let hasMarket = false;
+  rows.forEach((r, i) => {
+    if (!include(i)) return;
+    if (r.cost_basis != null) {
+      cost += r.cost_basis;
+      hasCost = true;
+    }
+    if (r.market_value != null) {
+      market += r.market_value;
+      hasMarket = true;
+    }
+  });
+  return {
+    cost: hasCost ? cost : null,
+    market: hasMarket ? market : null,
+  };
+}
+
 export function PositionExtractReview({
   rows,
   selected,
@@ -46,6 +79,15 @@ export function PositionExtractReview({
   onRefreshHints,
   children,
 }: PositionExtractReviewProps) {
+  const totalsAll = useMemo(
+    () => sumMoney(rows, () => true),
+    [rows],
+  );
+  const totalsSelected = useMemo(
+    () => sumMoney(rows, (i) => selected.has(i)),
+    [rows, selected],
+  );
+
   return (
     <>
       <p style={{ color: '#666', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
@@ -187,6 +229,62 @@ export function PositionExtractReview({
               );
             })}
           </tbody>
+          <tfoot>
+            <tr style={{ borderTop: '2px solid #bbb', background: '#f0f4f8' }}>
+              <td colSpan={4} style={{ ...td, textAlign: 'right', fontWeight: 600 }}>
+                Total (all rows)
+              </td>
+              <td style={td} />
+              <td style={{ ...td, fontWeight: 600 }}>
+                {totalsAll.cost != null ? (
+                  <Provenance source="Review table: sum of cost basis (all rows)">
+                    {fmtUsd(totalsAll.cost)}
+                  </Provenance>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td style={{ ...td, fontWeight: 600 }}>
+                {totalsAll.market != null ? (
+                  <Provenance source="Review table: sum of market value (all rows)">
+                    {fmtUsd(totalsAll.market)}
+                  </Provenance>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td colSpan={3} style={td}>
+                Compare to your statement totals.
+              </td>
+            </tr>
+            <tr style={{ background: '#e8eef5' }}>
+              <td colSpan={4} style={{ ...td, textAlign: 'right', fontWeight: 600 }}>
+                Total (selected)
+              </td>
+              <td style={td} />
+              <td style={{ ...td, fontWeight: 600 }}>
+                {totalsSelected.cost != null ? (
+                  <Provenance source="Review table: sum of cost basis (selected rows)">
+                    {fmtUsd(totalsSelected.cost)}
+                  </Provenance>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td style={{ ...td, fontWeight: 600 }}>
+                {totalsSelected.market != null ? (
+                  <Provenance source="Review table: sum of market value (selected rows)">
+                    {fmtUsd(totalsSelected.market)}
+                  </Provenance>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td colSpan={3} style={{ ...td, fontSize: '0.8rem', color: '#555' }}>
+                Rows included in commit
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
