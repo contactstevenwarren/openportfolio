@@ -80,6 +80,7 @@ Revisit after v1.0 unless a phase explicitly pulls an item in.
 - **v0.1.5 Entity management:** [v0.1.5/execution_plan.md](v0.1.5/execution_plan.md)
 - **v0.1.6 Portfolio donut view redesign:** [v0.1.6/execution_plan.md](v0.1.6/execution_plan.md)
 - **v0.2 Targets & drift:** [v0.2/execution_plan.md](v0.2/execution_plan.md)
+- **v0.5 Rebalance recommendations:** [v0.5/execution_plan.md](v0.5/execution_plan.md)
 
 Future phases add execution plans here when scoped.
 
