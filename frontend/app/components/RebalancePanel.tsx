@@ -4,10 +4,8 @@
 //   "full"      -- show sells + buys to close drift against current net worth
 //   "new_money" -- allocate a positive contribution with no sells
 //
-// L1 rows render flat; L2 rows render indented under their parent when the
-// class has any group targets. Uses the same inline-style palette as the
-// rest of the hero. No live-update in new-money mode: the user clicks
-// "Compute" after typing an amount (grill-me decision).
+// Compact action-oriented layout: Action | Category | Move | New Position.
+// Hold rows are hidden. L1 rows with L2 children are click-expandable.
 
 import Link from 'next/link';
 import { useCallback, useState } from 'react';
@@ -19,7 +17,7 @@ import {
   type RebalanceMove,
   type RebalanceResult,
 } from '../lib/api';
-import { formatUSD, humanize } from '../lib/labels';
+import { formatUSD, formatUSDCompact, humanize } from '../lib/labels';
 import { Provenance } from '../lib/provenance';
 
 type Props = {
@@ -28,6 +26,12 @@ type Props = {
 
 const th = { padding: '0.5rem 0.25rem', fontWeight: 600 };
 const td = { padding: '0.5rem 0.25rem' };
+
+const ACTION_COLOR: Record<RebalanceDirection, string> = {
+  buy: '#166534',
+  sell: '#991b1b',
+  hold: '#6b7280',
+};
 
 export function RebalancePanel({ isHeroRoot }: Props) {
   const [mode, setMode] = useState<'full' | 'new_money'>('full');
@@ -254,40 +258,67 @@ function StaleTargetsBanner({ detail }: { detail: RebalanceStaleTargetsError['de
 }
 
 function MovesTable({ result, mode }: { result: RebalanceResult; mode: 'full' | 'new_money' }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
   if (result.moves.length === 0) return null;
+
+  const toggle = (path: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const visibleL1 = result.moves.filter((m) => m.direction !== 'hold');
 
   return (
     <>
-      {mode === 'full' && (
-        <p style={{ fontSize: '0.82rem', color: '#555', margin: '0 0 0.6rem', lineHeight: 1.45 }}>
-          Top row: dollars vs your whole portfolio. Indented rows: how that parent move is split
-          across sub-buckets (overweights lose first on sells; underweights gain first on buys).
-          Sub-row dollars add up to the parent row.
-        </p>
-      )}
-      {mode === 'new_money' && (
-        <p style={{ fontSize: '0.82rem', color: '#555', margin: '0 0 0.6rem', lineHeight: 1.45 }}>
-          Contribution is allocated by gap-fill, then excess among classes at or under target; L2
-          splits each class&apos;s share inside that class.
-        </p>
-      )}
+      <p style={{ fontSize: '0.95rem', color: '#222', margin: '0 0 0.5rem', fontWeight: 500 }}>
+        Rebalancing plan (on {formatUSDCompact(result.total)} investable)
+      </p>
+      <p style={{ fontSize: '0.82rem', color: '#666', margin: '0 0 0.6rem', lineHeight: 1.45 }}>
+        {mode === 'full'
+          ? 'Trades to bring every targeted class back to its target weight. Click a row to see how it splits across sub-classes.'
+          : 'Allocates contribution to under-target classes (gap-fill first, then proportional to target).'}
+      </p>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid #ccc', textAlign: 'left' }}>
+            <th style={th}>Action</th>
             <th style={th}>Category</th>
-            <th style={th}>Target</th>
-            <th style={th}>Actual</th>
             <th style={th}>Move</th>
-            <th style={th}>Move ($)</th>
+            <th style={th}>New Position</th>
           </tr>
         </thead>
         <tbody>
-          {result.moves.flatMap((m) => [
-            <MoveRow key={m.path} move={m} depth={0} mode={result.mode} />,
-            ...m.children.map((c) => (
-              <MoveRow key={c.path} move={c} depth={1} mode={result.mode} />
-            )),
-          ])}
+          {visibleL1.flatMap((m) => {
+            const isOpen = expanded.has(m.path);
+            const visibleChildren = isOpen ? m.children.filter((c) => c.direction !== 'hold') : [];
+            return [
+              <MoveRow
+                key={m.path}
+                move={m}
+                depth={0}
+                mode={result.mode}
+                expandable={m.children.length > 0}
+                expanded={isOpen}
+                onToggle={() => toggle(m.path)}
+              />,
+              ...visibleChildren.map((c) => (
+                <MoveRow
+                  key={c.path}
+                  move={c}
+                  depth={1}
+                  mode={result.mode}
+                  expandable={false}
+                  expanded={false}
+                  onToggle={() => {}}
+                />
+              )),
+            ];
+          })}
         </tbody>
       </table>
       {mode === 'full' && <RebalanceTotals moves={result.moves} />}
@@ -342,77 +373,76 @@ function MoveRow({
   move,
   depth,
   mode,
+  expandable,
+  expanded,
+  onToggle,
 }: {
   move: RebalanceMove;
   depth: number;
   mode: 'full' | 'new_money';
+  expandable: boolean;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
   const label = humanize(depth === 0 ? move.path : move.path.split('.').slice(1).join('.'));
   const dollar = Math.round(move.delta_usd);
-  // Hold rows have no action — render Move ($) as "—". In new-money mode
-  // over-target classes receive $0; in full mode the dollar value is the
-  // drift magnitude (provenance only) and shouldn't be confused with a trade.
-  const showDash =
-    move.direction === 'hold' || (mode === 'new_money' && dollar === 0);
+  const direction = move.direction;
+  const currentUsd = (move.actual_pct / 100) * move.parent_total_usd;
+  const newPositionUsd = currentUsd + move.delta_usd;
+  const showDashMove = direction === 'hold' || (mode === 'new_money' && dollar === 0);
+  const actionLabel = direction === 'buy' ? 'Buy' : direction === 'sell' ? 'Sell' : '—';
+
+  const chevron = expandable ? (expanded ? '▾' : '▸') : '';
+  const handleRowClick = expandable ? onToggle : undefined;
 
   return (
     <tr
+      onClick={handleRowClick}
       style={{
         borderBottom: '1px solid #eee',
         background: depth > 0 ? '#f5f5f5' : undefined,
+        cursor: expandable ? 'pointer' : 'default',
       }}
     >
-      <td style={{ ...td, paddingLeft: depth > 0 ? '1.75rem' : td.padding }}>{label}</td>
-      <td style={td}>{move.target_pct.toFixed(1)}%</td>
-      <td style={td}>{move.actual_pct.toFixed(1)}%</td>
-      <td style={td}>
-        <DirectionBadge direction={showDash ? 'hold' : move.direction} dashed={showDash} />
+      <td style={{ ...td, color: ACTION_COLOR[direction], fontWeight: 600 }}>
+        {actionLabel}
+      </td>
+      <td style={{ ...td, paddingLeft: depth > 0 ? '1.75rem' : td.padding }}>
+        {label}
+        {chevron && (
+          <span style={{ marginLeft: '0.4rem', color: '#888', fontSize: '0.8rem' }}>
+            {chevron}
+          </span>
+        )}
       </td>
       <td style={td}>
-        {showDash ? (
+        {showDashMove ? (
           <span style={{ color: '#aaa' }}>—</span>
         ) : (
-          <Provenance source={provenanceFor(move, mode, depth)}>
-            {formatUSD(Math.abs(dollar))}
+          <Provenance source={moveProvenance(move, mode, depth)}>
+            <span style={{ color: ACTION_COLOR[direction], fontWeight: 500 }}>
+              {formatSignedCompact(move.delta_usd)}
+            </span>
           </Provenance>
         )}
+      </td>
+      <td style={td}>
+        <Provenance source={positionProvenance(currentUsd, move.delta_usd, newPositionUsd)}>
+          {formatUSDCompact(Math.max(0, newPositionUsd))}
+        </Provenance>
       </td>
     </tr>
   );
 }
 
-function DirectionBadge({
-  direction,
-  dashed,
-}: {
-  direction: RebalanceDirection;
-  dashed: boolean;
-}) {
-  if (dashed) return <span style={{ color: '#aaa' }}>—</span>;
-  const palette: Record<RebalanceDirection, { bg: string; fg: string; label: string }> = {
-    buy: { bg: '#dcfce7', fg: '#166534', label: 'Buy' },
-    sell: { bg: '#fee2e2', fg: '#991b1b', label: 'Sell' },
-    hold: { bg: '#e5e7eb', fg: '#374151', label: 'Hold' },
-  };
-  const p = palette[direction];
-  return (
-    <span
-      style={{
-        display: 'inline-block',
-        padding: '0.1rem 0.5rem',
-        borderRadius: 999,
-        fontSize: '0.75rem',
-        fontWeight: 600,
-        background: p.bg,
-        color: p.fg,
-      }}
-    >
-      {p.label}
-    </span>
-  );
+function formatSignedCompact(delta: number): string {
+  const abs = Math.abs(delta);
+  const body = formatUSDCompact(abs);
+  if (Math.round(delta) === 0) return body;
+  return delta > 0 ? `+${body}` : `-${body}`;
 }
 
-function provenanceFor(move: RebalanceMove, mode: 'full' | 'new_money', depth: number): string {
+function moveProvenance(move: RebalanceMove, mode: 'full' | 'new_money', depth: number): string {
   const driftPct = move.target_pct - move.actual_pct;
   if (mode === 'full' && depth === 0) {
     return (
@@ -427,11 +457,20 @@ function provenanceFor(move: RebalanceMove, mode: 'full' | 'new_money', depth: n
       `Share of the ${humanize(parentClass)} row above: ${formatUSD(move.delta_usd)} ` +
       `allocated across sub-buckets by dollars over target (sells) or under target (buys) ` +
       `within ${humanize(parentClass)}; sub-rows sum to that parent dollar move. ` +
-      `Shown target/actual are % of ${humanize(parentClass)} (${move.target_pct.toFixed(1)}% vs ${move.actual_pct.toFixed(1)}%).`
+      `Target/actual at this level are % of ${humanize(parentClass)} ` +
+      `(${move.target_pct.toFixed(1)}% vs ${move.actual_pct.toFixed(1)}%).`
     );
   }
   return (
     `new-money allocation toward target ${move.target_pct.toFixed(2)}% ` +
     `(actual ${move.actual_pct.toFixed(2)}%, parent ${formatUSD(move.parent_total_usd)})`
+  );
+}
+
+function positionProvenance(currentUsd: number, deltaUsd: number, newUsd: number): string {
+  const sign = deltaUsd >= 0 ? '+' : '−';
+  return (
+    `current ${formatUSD(currentUsd)} ${sign} move ${formatUSD(Math.abs(deltaUsd))} ` +
+    `= ${formatUSD(newUsd)}`
   );
 }
