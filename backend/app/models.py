@@ -7,7 +7,7 @@ tooltips can show source + confidence (roadmap Principles).
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -46,6 +46,12 @@ class Position(Base):
     as_of: Mapped[datetime] = mapped_column(DateTime)
     # source = "paste" | "manual" | "override"
     source: Mapped[str] = mapped_column(String(50))
+    # User-managed flag: included in Investment Portfolio totals when True;
+    # excluded (but still in true Net worth) when False. Defaults to True
+    # for every existing and new row -- user opts out via /positions.
+    investable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("1"), default=True
+    )
 
     account: Mapped["Account"] = relationship(back_populates="positions")
 

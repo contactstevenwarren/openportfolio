@@ -660,3 +660,79 @@ def test_new_money_happy_path(
     assert abs(sum(m["delta_usd"] for m in body["moves"]) - 10_000.0) < 1e-6
     for m in body["moves"]:
         assert m["delta_usd"] >= 0.0
+
+
+def test_rebalance_endpoint_excludes_non_investable_positions(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    # A non-investable real_estate position (e.g. primary residence) must
+    # not appear in the rebalance moves and must not contribute to the
+    # Investment Portfolio total -- otherwise rebalance would suggest
+    # selling the user's home.
+    account = Account(label="T", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add_all(
+        [
+            Classification(
+                ticker="EUS",
+                asset_class="equity",
+                sub_class="us_large_cap",
+                region="US",
+                source="user",
+            ),
+            Classification(
+                ticker="B1",
+                asset_class="fixed_income",
+                sub_class="us_aggregate",
+                region="US",
+                source="user",
+            ),
+            Classification(
+                ticker="HOUSE",
+                asset_class="real_estate",
+                sub_class="direct",
+                region="US",
+                source="user",
+            ),
+        ]
+    )
+    test_db.add_all(
+        [
+            _position(account.id, "EUS", 60_000.0),
+            _position(account.id, "B1", 40_000.0),
+        ]
+    )
+    test_db.add(
+        Position(
+            account_id=account.id,
+            ticker="HOUSE",
+            shares=1.0,
+            market_value=500_000.0,
+            as_of=datetime.now(UTC),
+            source="manual",
+            investable=False,
+        )
+    )
+    test_db.commit()
+
+    pr = client.put(
+        "/api/targets",
+        headers=auth_headers,
+        json={
+            "root": [
+                {"path": "equity", "pct": 60},
+                {"path": "fixed_income", "pct": 40},
+            ],
+            "groups": {},
+        },
+    )
+    assert pr.status_code == 200
+
+    r = client.get("/api/rebalance", headers=auth_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 100_000.0  # 60k + 40k, condo excluded
+    paths = {m["path"] for m in body["moves"]}
+    assert "real_estate" not in paths
+    assert paths == {"equity", "fixed_income"}

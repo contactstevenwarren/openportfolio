@@ -225,6 +225,16 @@ def _migrate_sqlite_schema() -> None:
                         "ON provenance(entity_key)"
                     )
                 )
+    if "positions" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("positions")}
+        if "investable" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE positions ADD COLUMN investable BOOLEAN "
+                        "NOT NULL DEFAULT 1"
+                    )
+                )
     _migrate_targets_pct_to_int()
 
 
@@ -724,6 +734,7 @@ def _write_snapshot(db: Session) -> None:
 
     payload = {
         "total_usd": result.total,
+        "net_worth_usd": result.net_worth,
         "by_asset_class": {
             s.name: {"value": s.value, "pct": s.pct} for s in result.by_asset_class
         },
@@ -735,7 +746,7 @@ def _write_snapshot(db: Session) -> None:
     db.add(
         Snapshot(
             taken_at=datetime.now(UTC),
-            net_worth_usd=result.total,
+            net_worth_usd=result.net_worth,
             payload_json=json.dumps(payload, sort_keys=True),
         )
     )

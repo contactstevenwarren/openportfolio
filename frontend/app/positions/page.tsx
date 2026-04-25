@@ -158,10 +158,11 @@ export default function PositionsPage() {
     // ticker is intentionally read-only (v0.1.5.1): mutating it can
     // silently unclassify the position or orphan a user-created
     // Classification row. Users fix bad tickers by deleting + re-entering.
-    const changed: Record<string, number | string | null> = {};
+    const changed: Record<string, number | string | boolean | null> = {};
     if (draft.shares !== original.shares) changed.shares = draft.shares;
     if (draft.cost_basis !== original.cost_basis) changed.cost_basis = draft.cost_basis;
     if (draft.market_value !== original.market_value) changed.market_value = draft.market_value;
+    if (draft.investable !== original.investable) changed.investable = draft.investable;
     if (Object.keys(changed).length === 0) {
       setStatus({ kind: 'ok', message: 'No changes.' });
       return;
@@ -684,6 +685,7 @@ export default function PositionsPage() {
                 <th style={th}>Cost basis</th>
                 <th style={th}>Market value</th>
                 <th style={th}>Source</th>
+                <th style={th}>Investable</th>
                 <th style={th}>As of</th>
                 <th style={th}></th>
               </tr>
@@ -782,6 +784,16 @@ export default function PositionsPage() {
                       <Provenance source={p.source} capturedAt={p.as_of}>
                         {p.source}
                       </Provenance>
+                    </td>
+                    <td style={td}>
+                      <input
+                        type="checkbox"
+                        checked={d.investable}
+                        onChange={(e) =>
+                          patchDraft(p.id, { investable: e.target.checked })
+                        }
+                        aria-label={`Investable for #${p.id}`}
+                      />
                     </td>
                     <td style={{ ...td, fontSize: '0.8rem', color: '#666' }}>
                       {p.as_of.slice(0, 10)}

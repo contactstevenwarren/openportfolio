@@ -103,6 +103,10 @@ export type DriftThresholds = {
 
 export type AllocationResult = {
   total: number;
+  /** Sum of every classified position regardless of the investable flag.
+   *  ``total`` is the Investment Portfolio (drives every percentage and
+   *  rebalance suggestion); ``net_worth`` is shown alongside it on the hero. */
+  net_worth: number;
   by_asset_class: AllocationSlice[];
   unclassified_tickers: string[];
   summary?: FiveNumberSummary;
@@ -181,6 +185,7 @@ export type Position = {
   market_value: number | null;
   as_of: string;
   source: string;
+  investable: boolean;
 };
 
 export type PositionPatch = {
@@ -188,6 +193,7 @@ export type PositionPatch = {
   shares?: number;
   cost_basis?: number | null;
   market_value?: number | null;
+  investable?: boolean;
 };
 
 export type TargetRow = { path: string; pct: number };

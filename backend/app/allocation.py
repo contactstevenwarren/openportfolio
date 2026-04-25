@@ -109,7 +109,12 @@ def aggregate(
     # same ticker share one source entry -- the classification is a
     # property of the ticker, not the position.
     classification_sources: dict[str, str] = {}
+    # ``total`` is the Investment Portfolio (drives every percentage and
+    # rebalance suggestion); ``net_worth`` is the full sum across every
+    # classified position regardless of the investable flag, so the hero
+    # can show wealth alongside strategy-relevant totals.
     total = 0.0
+    net_worth = 0.0
 
     for p in positions:
         entry = classify(p.ticker, classifications)
@@ -123,6 +128,15 @@ def aggregate(
             # breakdown table reflects positions that have no dollars
             # attached yet (e.g. pre-market-value commit).
             tickers_by_asset[entry.asset_class].append(p.ticker)
+            continue
+        net_worth += value
+        if p.investable is False:
+            # Counts toward Net worth but not Investment Portfolio. The
+            # ticker appears in /positions only -- we deliberately keep
+            # it out of tickers_by_asset so the ring/breakdown stay
+            # clean. ``is False`` (not ``not p.investable``) so unflushed
+            # ORM instances with the attribute still None default to
+            # investable.
             continue
         total += value
 
@@ -264,7 +278,7 @@ def aggregate(
     alts_pct = pct_of(sum(totals_by_asset.get(c, 0.0) for c in ALTS_CLASSES))
 
     summary = FiveNumberSummary(
-        net_worth=total,
+        net_worth=net_worth,
         cash_pct=cash_pct,
         us_equity_pct=us_equity_pct,
         intl_equity_pct=intl_equity_pct,
@@ -273,6 +287,7 @@ def aggregate(
 
     return AllocationResult(
         total=total,
+        net_worth=net_worth,
         by_asset_class=by_asset_class,
         unclassified_tickers=_dedup(unclassified),
         summary=summary,

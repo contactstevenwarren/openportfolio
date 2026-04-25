@@ -175,6 +175,43 @@ def test_patch_records_override_provenance(
         assert row.llm_span is None
 
 
+def test_patch_position_investable(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    # Default true; flipping to false persists; no-op PATCH leaves the
+    # flag alone; flipping back to true reverts.
+    p = _seed_position(test_db)
+    assert p.investable is True
+
+    r = client.patch(
+        f"/api/positions/{p.id}",
+        json={"investable": False},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["investable"] is False
+    test_db.refresh(p)
+    assert p.investable is False
+
+    # No-op PATCH (no investable key) must not flip it back.
+    r = client.patch(
+        f"/api/positions/{p.id}", json={"shares": 11.0}, headers=auth_headers
+    )
+    assert r.status_code == 200
+    test_db.refresh(p)
+    assert p.investable is False
+
+    r = client.patch(
+        f"/api/positions/{p.id}",
+        json={"investable": True},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["investable"] is True
+    test_db.refresh(p)
+    assert p.investable is True
+
+
 def test_patch_empty_body_is_noop(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:

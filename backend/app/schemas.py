@@ -153,6 +153,7 @@ class PositionRead(BaseModel):
     market_value: float | None
     as_of: datetime
     source: str
+    investable: bool
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -169,6 +170,7 @@ class PositionPatch(BaseModel):
     shares: float | None = None
     cost_basis: float | None = None
     market_value: float | None = None
+    investable: bool | None = None
 
 
 # ----- export (M5) --------------------------------------------------------
@@ -379,6 +381,12 @@ class DriftThresholds(BaseModel):
 
 class AllocationResult(BaseModel):
     total: float
+    # Sum of every classified position's value, regardless of the
+    # ``investable`` flag. ``total`` above is the Investment Portfolio
+    # (drives every percentage and rebalance suggestion); ``net_worth``
+    # is shown on the hero alongside it. Defaults to 0.0 for back-compat
+    # with serialized snapshots that pre-date the field.
+    net_worth: float = 0.0
     by_asset_class: list[AllocationSlice]
     # Tickers held but not present in data/classifications.yaml. UI flags
     # them so the user knows they're missing from the view.
