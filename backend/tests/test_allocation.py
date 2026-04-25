@@ -20,6 +20,7 @@ def _position(
     shares: float = 1.0,
     cost_basis: float | None = None,
     market_value: float | None = None,
+    investable: bool = True,
 ) -> Position:
     return Position(
         ticker=ticker,
@@ -29,6 +30,7 @@ def _position(
         as_of=datetime.now(UTC),
         source="paste",
         account_id=0,
+        investable=investable,
     )
 
 
@@ -132,6 +134,69 @@ def test_mixed_value_sources() -> None:
     assert by_name["equity"].value == 50000.0
     assert by_name["fixed_income"].value == 30000.0
     assert by_name["commodity"].value == 0.0
+
+
+def test_aggregate_excludes_non_investable_from_total_and_tree() -> None:
+    # GLD is non-investable -- counts toward net_worth but not Investment
+    # Portfolio. The commodity slice disappears entirely from the tree.
+    result = aggregate(
+        [
+            _position("VTI", market_value=10000.0),
+            _position("BND", market_value=5000.0),
+            _position("GLD", market_value=3000.0, investable=False),
+        ],
+        _classifications(),
+    )
+    assert result.total == 15000.0
+    assert result.net_worth == 18000.0
+    names = {s.name for s in result.by_asset_class}
+    assert "commodity" not in names
+    pct_sum = sum(s.pct for s in result.by_asset_class)
+    assert abs(pct_sum - 100.0) < 1e-9
+
+
+def test_aggregate_net_worth_equals_total_when_all_investable() -> None:
+    result = aggregate(
+        [
+            _position("VTI", market_value=10000.0),
+            _position("BND", market_value=5000.0),
+        ],
+        _classifications(),
+    )
+    assert result.total == result.net_worth == 15000.0
+
+
+def test_aggregate_summary_net_worth_is_full_net_worth() -> None:
+    # FiveNumberSummary.net_worth tracks the *full* sum, not the filtered
+    # Investment Portfolio total. Locks the contract that Snapshot reads.
+    result = aggregate(
+        [
+            _position("VTI", market_value=10000.0),
+            _position("GLD", market_value=3000.0, investable=False),
+        ],
+        _classifications(),
+    )
+    assert result.summary is not None
+    assert result.summary.net_worth == 13000.0
+    assert result.total == 10000.0
+
+
+def test_aggregate_unflushed_position_treated_as_investable() -> None:
+    # An unflushed ORM Position has investable=None until INSERT. The
+    # filter uses ``is False`` so None still counts toward total.
+    p = Position(
+        ticker="VTI",
+        shares=1.0,
+        market_value=10000.0,
+        cost_basis=None,
+        as_of=datetime.now(UTC),
+        source="paste",
+        account_id=0,
+    )
+    assert p.investable is None
+    result = aggregate([p], _classifications())
+    assert result.total == 10000.0
+    assert result.net_worth == 10000.0
 
 
 def test_unclassified_tickers_surface() -> None:

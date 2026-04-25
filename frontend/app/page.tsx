@@ -176,12 +176,18 @@ export default function Home() {
 
   return (
     <Frame>
-      <h1 style={{ fontSize: '1.4rem', fontWeight: 500, margin: '0 0 1rem' }}>
-        Net worth ·{' '}
-        <Provenance source="sum of committed positions (market_value → cost_basis fallback)">
+      <h1 style={{ fontSize: '1.4rem', fontWeight: 500, margin: '0 0 0.25rem' }}>
+        Investment Portfolio ·{' '}
+        <Provenance source="sum of investable positions (market_value → cost_basis fallback)">
           {formatUSD(data.total)}
         </Provenance>
       </h1>
+      <p style={{ fontSize: '0.9rem', color: '#666', margin: '0 0 1rem' }}>
+        Net worth ·{' '}
+        <Provenance source="sum of all positions (investable + held outside strategy)">
+          {formatUSD(data.net_worth)}
+        </Provenance>
+      </p>
 
       {targetsError && (
         <p style={{ fontSize: '0.85rem', color: '#b45309', marginBottom: '0.5rem' }}>
