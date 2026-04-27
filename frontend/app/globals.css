@@ -52,11 +52,11 @@
   --chart-4: var(--viz-fixed-income);
   --chart-5: var(--viz-real-estate);
 
-  --sidebar: var(--background);
+  --sidebar: var(--muted);
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--muted);
+  --sidebar-accent: var(--border);
   --sidebar-accent-foreground: var(--foreground);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
