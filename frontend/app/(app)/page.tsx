@@ -1,47 +1,52 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/app/components/ui/card";
+import { AccountsCard } from "./_dashboard/sections/accounts-card";
+import { ActivityCard } from "./_dashboard/sections/activity-card";
+import { DonutCard } from "./_dashboard/sections/donut-card";
+import { DriftDetailCard } from "./_dashboard/sections/drift-detail-card";
+import { DriftStatusCard } from "./_dashboard/sections/drift-status-card";
+import { ExposuresCard } from "./_dashboard/sections/exposures-card";
+import { HealthCard } from "./_dashboard/sections/health-card";
+import { HeroSection } from "./_dashboard/sections/hero";
+import { HoldingsCard } from "./_dashboard/sections/holdings-card";
+import { TimelineCard } from "./_dashboard/sections/timeline-card";
 
 export default function HomePage() {
   return (
-    <div className="flex flex-col gap-6 px-4 lg:px-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-h1">OpenPortfolio</h1>
-        <p className="text-body-sm text-muted-foreground max-w-2xl">
-          See what you actually own — including the parts that aren&rsquo;t on
-          any brokerage.
-        </p>
+    <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-4 px-4 md:gap-6 lg:px-6 @lg/main:grid-cols-12">
+      <div className="@lg/main:col-span-12">
+        <HeroSection />
       </div>
 
-      <Card className="max-w-2xl">
-        <CardHeader>
-          <CardTitle className="text-h3">Foundation ready</CardTitle>
-          <CardDescription>
-            shadcn/ui + Tailwind v4 wired against the brand tokens. Content
-            comes next.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="text-body-sm text-muted-foreground">
-          <ul className="list-disc space-y-1 pl-5">
-            <li>
-              Visit <code className="font-mono">/brand</code> for the brand
-              identity reference.
-            </li>
-            <li>
-              Run <code className="font-mono">npm run storybook</code> for the
-              component &amp; token playground.
-            </li>
-            <li>
-              Pre-redesign routes preserved at{" "}
-              <code className="font-mono">/legacy/*</code>.
-            </li>
-          </ul>
-        </CardContent>
-      </Card>
+      <div className="@lg/main:col-span-7">
+        <DonutCard />
+      </div>
+      <div className="@lg/main:col-span-5">
+        <DriftStatusCard />
+      </div>
+
+      <div className="@lg/main:col-span-12">
+        <TimelineCard />
+      </div>
+
+      <div className="@lg/main:col-span-8">
+        <HoldingsCard />
+      </div>
+      <div className="@lg/main:col-span-4">
+        <ExposuresCard />
+      </div>
+
+      <div className="@lg/main:col-span-4">
+        <AccountsCard />
+      </div>
+      <div className="@lg/main:col-span-8">
+        <DriftDetailCard />
+      </div>
+
+      <div className="@lg/main:col-span-8">
+        <ActivityCard />
+      </div>
+      <div className="@lg/main:col-span-4">
+        <HealthCard />
+      </div>
     </div>
   );
 }
