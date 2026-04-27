@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { Cell, Pie, PieChart } from "recharts";
+import { Label, Pie, PieChart, Sector } from "recharts";
+import type { PieSectorShapeProps } from "recharts/types/polar/Pie";
 
 import {
   ChartContainer,
@@ -17,12 +18,12 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-const data = [
-  { category: "cash", label: "Cash", value: 8 },
-  { category: "us-equity", label: "US equity", value: 47 },
-  { category: "intl-equity", label: "Intl equity", value: 14 },
-  { category: "fixed-income", label: "Fixed income", value: 18 },
-  { category: "real-estate", label: "Real estate", value: 13 },
+const chartData = [
+  { category: "cash", label: "Cash", value: 67791, fill: "var(--color-cash)" },
+  { category: "us-equity", label: "US equity", value: 398274, fill: "var(--color-us-equity)" },
+  { category: "intl-equity", label: "Intl equity", value: 118635, fill: "var(--color-intl-equity)" },
+  { category: "fixed-income", label: "Fixed income", value: 152531, fill: "var(--color-fixed-income)" },
+  { category: "real-estate", label: "Real estate", value: 110161, fill: "var(--color-real-estate)" },
 ];
 
 const config = {
@@ -34,30 +35,65 @@ const config = {
   "real-estate": { label: "Real estate", color: "var(--viz-real-estate)" },
 } satisfies ChartConfig;
 
-export const AllocationDonut: Story = {
+const total = chartData.reduce((acc, d) => acc + d.value, 0);
+const ACTIVE_INDEX = chartData.reduce(
+  (best, d, i) => (d.value > chartData[best].value ? i : best),
+  0
+);
+
+export const DonutActive: Story = {
   render: () => (
-    <ChartContainer config={config} className="h-[300px] w-[300px]">
+    <ChartContainer config={config} className="aspect-square w-[300px]">
       <PieChart>
         <ChartTooltip
           cursor={false}
           content={<ChartTooltipContent nameKey="label" hideLabel />}
         />
         <Pie
-          data={data}
+          data={chartData}
           dataKey="value"
           nameKey="category"
-          innerRadius={80}
-          outerRadius={130}
-          stroke="var(--background)"
+          innerRadius={70}
           strokeWidth={3}
-          isAnimationActive={false}
+          stroke="var(--background)"
+          shape={({ index, outerRadius = 0, ...props }: PieSectorShapeProps) =>
+            index === ACTIVE_INDEX ? (
+              <Sector {...props} outerRadius={outerRadius + 8} />
+            ) : (
+              <Sector {...props} outerRadius={outerRadius} />
+            )
+          }
         >
-          {data.map((entry) => (
-            <Cell
-              key={entry.category}
-              fill={`var(--color-${entry.category})`}
-            />
-          ))}
+          <Label
+            content={({ viewBox }) => {
+              if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                return (
+                  <text
+                    x={viewBox.cx}
+                    y={viewBox.cy}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                  >
+                    <tspan
+                      x={viewBox.cx}
+                      y={(viewBox.cy ?? 0) - 10}
+                      className="fill-muted-foreground text-[11px] font-medium tracking-wide uppercase"
+                    >
+                      Total
+                    </tspan>
+                    <tspan
+                      x={viewBox.cx}
+                      y={(viewBox.cy ?? 0) + 12}
+                      className="fill-accent font-mono text-xl font-medium"
+                    >
+                      ${total.toLocaleString()}
+                    </tspan>
+                  </text>
+                );
+              }
+              return null;
+            }}
+          />
         </Pie>
       </PieChart>
     </ChartContainer>

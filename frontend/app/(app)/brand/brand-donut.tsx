@@ -1,6 +1,7 @@
 "use client";
 
-import { Cell, Pie, PieChart } from "recharts";
+import { Label, Pie, PieChart, Sector } from "recharts";
+import type { PieSectorShapeProps } from "recharts/types/polar/Pie";
 
 import {
   ChartContainer,
@@ -9,15 +10,35 @@ import {
   type ChartConfig,
 } from "@/app/components/ui/chart";
 
-const data = [
-  { category: "cash", label: "Cash", value: 8 },
-  { category: "us-equity", label: "US equity", value: 47 },
-  { category: "intl-equity", label: "Intl equity", value: 14 },
-  { category: "fixed-income", label: "Fixed income", value: 18 },
-  { category: "real-estate", label: "Real estate", value: 13 },
+const chartData = [
+  { category: "cash", label: "Cash", value: 67791, fill: "var(--color-cash)" },
+  {
+    category: "us-equity",
+    label: "US equity",
+    value: 398274,
+    fill: "var(--color-us-equity)",
+  },
+  {
+    category: "intl-equity",
+    label: "Intl equity",
+    value: 118635,
+    fill: "var(--color-intl-equity)",
+  },
+  {
+    category: "fixed-income",
+    label: "Fixed income",
+    value: 152531,
+    fill: "var(--color-fixed-income)",
+  },
+  {
+    category: "real-estate",
+    label: "Real estate",
+    value: 110161,
+    fill: "var(--color-real-estate)",
+  },
 ];
 
-const config = {
+const chartConfig = {
   value: { label: "Allocation" },
   cash: { label: "Cash", color: "var(--viz-cash)" },
   "us-equity": { label: "US equity", color: "var(--viz-us-equity)" },
@@ -26,39 +47,70 @@ const config = {
   "real-estate": { label: "Real estate", color: "var(--viz-real-estate)" },
 } satisfies ChartConfig;
 
+const total = chartData.reduce((acc, d) => acc + d.value, 0);
+const ACTIVE_INDEX = chartData.reduce(
+  (best, d, i) => (d.value > chartData[best].value ? i : best),
+  0
+);
+
 export function BrandDonut() {
   return (
-    <div className="relative">
-      <ChartContainer config={config} className="h-[260px] w-[260px]">
-        <PieChart>
-          <ChartTooltip
-            cursor={false}
-            content={<ChartTooltipContent nameKey="label" hideLabel />}
+    <ChartContainer
+      config={chartConfig}
+      className="mx-auto aspect-square w-full max-w-[280px]"
+    >
+      <PieChart>
+        <ChartTooltip
+          cursor={false}
+          content={<ChartTooltipContent nameKey="label" hideLabel />}
+        />
+        <Pie
+          data={chartData}
+          dataKey="value"
+          nameKey="category"
+          innerRadius={70}
+          strokeWidth={3}
+          stroke="var(--background)"
+          shape={({ index, outerRadius = 0, ...props }: PieSectorShapeProps) =>
+            index === ACTIVE_INDEX ? (
+              <Sector {...props} outerRadius={outerRadius + 8} />
+            ) : (
+              <Sector {...props} outerRadius={outerRadius} />
+            )
+          }
+        >
+          <Label
+            content={({ viewBox }) => {
+              if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                return (
+                  <text
+                    x={viewBox.cx}
+                    y={viewBox.cy}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                  >
+                    <tspan
+                      x={viewBox.cx}
+                      y={(viewBox.cy ?? 0) - 10}
+                      className="fill-muted-foreground text-[11px] font-medium tracking-wide uppercase"
+                    >
+                      Total
+                    </tspan>
+                    <tspan
+                      x={viewBox.cx}
+                      y={(viewBox.cy ?? 0) + 12}
+                      className="fill-accent font-mono text-xl font-medium"
+                    >
+                      ${total.toLocaleString()}
+                    </tspan>
+                  </text>
+                );
+              }
+              return null;
+            }}
           />
-          <Pie
-            data={data}
-            dataKey="value"
-            nameKey="category"
-            innerRadius={70}
-            outerRadius={110}
-            stroke="var(--background)"
-            strokeWidth={3}
-            paddingAngle={0}
-            isAnimationActive={false}
-          >
-            {data.map((entry) => (
-              <Cell
-                key={entry.category}
-                fill={`var(--color-${entry.category})`}
-              />
-            ))}
-          </Pie>
-        </PieChart>
-      </ChartContainer>
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1">
-        <span className="text-label text-muted-foreground">Total</span>
-        <span className="text-mono text-accent font-medium">$847,392</span>
-      </div>
-    </div>
+        </Pie>
+      </PieChart>
+    </ChartContainer>
   );
 }
