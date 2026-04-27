@@ -4,7 +4,10 @@
 FROM node:20-slim AS frontend-build
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
-RUN npm ci
+# `npm ci` is strict and skips optional native deps that aren't in the
+# lockfile for the build platform (lockfile generated on darwin-arm64 omits
+# the linux-x64-gnu entry for lightningcss). `npm install` re-resolves them.
+RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
