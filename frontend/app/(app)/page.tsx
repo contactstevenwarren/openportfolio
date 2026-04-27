@@ -8,7 +8,7 @@ import {
 
 export default function HomePage() {
   return (
-    <main className="flex flex-1 flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 px-4 lg:px-6">
       <div className="flex flex-col gap-2">
         <h1 className="text-h1">OpenPortfolio</h1>
         <p className="text-body-sm text-muted-foreground max-w-2xl">
@@ -42,6 +42,6 @@ export default function HomePage() {
           </ul>
         </CardContent>
       </Card>
-    </main>
+    </div>
   );
 }

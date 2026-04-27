@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, Palette, Archive } from "lucide-react";
 
+import * as React from "react";
+
 import {
   Sidebar,
   SidebarContent,
@@ -27,11 +29,13 @@ const reference = [
   { href: "/legacy", label: "Legacy", icon: Archive },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({
+  ...props
+}: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
 
   return (
-    <Sidebar collapsible="icon" variant="inset">
+    <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>

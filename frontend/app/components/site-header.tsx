@@ -19,7 +19,7 @@ import { ThemeToggle } from "@/app/components/theme-toggle";
 
 export function SiteHeader({ title }: { title?: string }) {
   return (
-    <header className="bg-background sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b px-4 md:rounded-t-xl">
+    <header className="bg-background sticky top-0 z-30 flex h-(--header-height) shrink-0 items-center gap-2 border-b px-4 md:rounded-t-xl">
       <SidebarTrigger className="-ml-1" />
       <Separator orientation="vertical" className="mr-2 h-4" />
       {title ? (

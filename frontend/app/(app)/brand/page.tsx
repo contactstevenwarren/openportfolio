@@ -111,7 +111,7 @@ const motionTokens = [
 
 export default function BrandPage() {
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-12 px-6 py-10">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-12 px-4 lg:px-6">
       <header className="flex flex-col gap-3">
         <p className="text-label text-muted-foreground uppercase tracking-wide">
           Brand
@@ -413,7 +413,7 @@ export default function BrandPage() {
         </p>
         <Badge variant="outline">v0.2 · alpha</Badge>
       </footer>
-    </main>
+    </div>
   );
 }
 
