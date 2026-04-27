@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { PositionExtractReview } from '../components/PositionExtractReview';
+import { PositionExtractReview } from '../../components/PositionExtractReview';
 import {
   api,
   type Account,
@@ -16,8 +16,8 @@ import {
   type ExtractedPosition,
   type Position,
   type Taxonomy,
-} from '../lib/api';
-import { scrubPaste } from '../lib/scrub';
+} from '../../lib/api';
+import { scrubPaste } from '../../lib/scrub';
 
 export default function PastePage() {
   const [text, setText] = useState('');

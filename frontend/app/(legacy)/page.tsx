@@ -26,16 +26,16 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 
-import { AllocationTable } from './components/AllocationTable';
-import { DriftStatusPill } from './components/DriftStatusPill';
-import { RebalancePanel } from './components/RebalancePanel';
+import { AllocationTable } from '../components/AllocationTable';
+import { DriftStatusPill } from '../components/DriftStatusPill';
+import { RebalancePanel } from '../components/RebalancePanel';
 import {
   api,
   type AllocationResult,
   type AllocationSlice,
   type DriftBand,
   type TargetsPayload,
-} from './lib/api';
+} from '../lib/api';
 import {
   bandFromAbs,
   driftThresholds,
@@ -44,11 +44,11 @@ import {
   getGroupRows,
   isTargetsEmpty,
   seedFromActuals,
-} from './lib/allocationTargets';
-import { buildAllocationChart } from './lib/buildAllocationChart';
-import { DRILL_CONFIG, getDrillSlices, type Drill } from './lib/drill';
-import { formatUSD, formatUSDCompact, humanize } from './lib/labels';
-import { Provenance } from './lib/provenance';
+} from '../lib/allocationTargets';
+import { buildAllocationChart } from '../lib/buildAllocationChart';
+import { DRILL_CONFIG, getDrillSlices, type Drill } from '../lib/drill';
+import { formatUSD, formatUSDCompact, humanize } from '../lib/labels';
+import { Provenance } from '../lib/provenance';
 
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false });
 

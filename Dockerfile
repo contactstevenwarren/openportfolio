@@ -35,9 +35,10 @@ RUN cd /app/backend && uv sync --frozen --no-dev
 # the Fly persistent volume mounted at runtime for SQLite.
 COPY data/ /app/data/
 
-# Frontend: standalone server + static assets
+# Frontend: standalone server + static assets + public assets
 COPY --from=frontend-build /frontend/.next/standalone /app/frontend
 COPY --from=frontend-build /frontend/.next/static /app/frontend/.next/static
+COPY --from=frontend-build /frontend/public /app/frontend/public
 
 # Nginx + entrypoint
 COPY nginx.conf /etc/nginx/nginx.conf

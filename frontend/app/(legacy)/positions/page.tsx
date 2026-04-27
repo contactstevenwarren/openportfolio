@@ -15,14 +15,14 @@ import {
   type ClassificationRow,
   type ExtractedPosition,
   type Position,
-} from '../lib/api';
+} from '../../lib/api';
 import {
   pdfImportMetaFromExtractionResult,
   stashPdfImportDraftForRouteChange,
   type PdfImportDraftMeta,
-} from '../lib/pdfImportDraft';
-import { humanize } from '../lib/labels';
-import { Provenance } from '../lib/provenance';
+} from '../../lib/pdfImportDraft';
+import { humanize } from '../../lib/labels';
+import { Provenance } from '../../lib/provenance';
 
 type PdfImportPending = {
   rows: ExtractedPosition[];

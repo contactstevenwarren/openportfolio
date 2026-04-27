@@ -14,8 +14,8 @@ import {
   type ClassificationRow,
   type Position,
   type TaxonomyOption,
-} from '../lib/api';
-import { REGION_OPTIONS, humanize } from '../lib/labels';
+} from '../../lib/api';
+import { REGION_OPTIONS, humanize } from '../../lib/labels';
 
 type SourceFilter = 'all' | 'yaml' | 'user';
 

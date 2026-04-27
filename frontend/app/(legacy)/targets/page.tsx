@@ -11,7 +11,7 @@ import {
   type AllocationResult,
   type TargetRow,
   type TargetsPayload,
-} from '../lib/api';
+} from '../../lib/api';
 import {
   EMPTY_TARGETS,
   applyAutoBalance,
@@ -21,9 +21,9 @@ import {
   seedFromActuals,
   sumTargetPct,
   targetSumOk,
-} from '../lib/allocationTargets';
-import { DRILL_CONFIG, getDrillSlices } from '../lib/drill';
-import { humanize } from '../lib/labels';
+} from '../../lib/allocationTargets';
+import { DRILL_CONFIG, getDrillSlices } from '../../lib/drill';
+import { humanize } from '../../lib/labels';
 
 type SectionKey = 'root' | string;
 

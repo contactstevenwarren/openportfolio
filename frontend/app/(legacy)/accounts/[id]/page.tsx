@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 
-import { api, type Account } from '../../lib/api';
-import { humanize } from '../../lib/labels';
+import { api, type Account } from '../../../lib/api';
+import { humanize } from '../../../lib/labels';
 
 export default function AccountDetailPage() {
   const params = useParams();

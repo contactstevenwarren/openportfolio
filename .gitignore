@@ -17,5 +17,8 @@ docker-compose.override.yml
 # OS
 .DS_Store
 
+# Claude Code project-local settings
+.claude/
+
 # Fly
 fly.pid
