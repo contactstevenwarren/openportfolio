@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-import { PositionExtractReview } from '../../../components/PositionExtractReview';
-import { strongLabelMatch } from '../../../lib/accountLabelMatch';
+import { PositionExtractReview } from '../../../../components/PositionExtractReview';
+import { strongLabelMatch } from '../../../../lib/accountLabelMatch';
 import {
   api,
   type Account,
@@ -12,14 +12,14 @@ import {
   type ExtractedPosition,
   type Position,
   type Taxonomy,
-} from '../../../lib/api';
+} from '../../../../lib/api';
 import {
   clearPdfImportDraft,
   consumePdfImportDraftIfPending,
   pdfImportMetaFromExtractionResult,
   stashPdfImportDraftForRouteChange,
   type PdfImportDraftMeta,
-} from '../../../lib/pdfImportDraft';
+} from '../../../../lib/pdfImportDraft';
 
 function sourcePdfString(filename: string, extractedAt: string): string {
   const safeName = filename.replace(/[^\w.\-]+/g, '_').slice(0, 200) || 'statement';

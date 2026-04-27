@@ -12,8 +12,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { api, type Account, type ClassificationRow, type TaxonomyOption } from '../lib/api';
-import { REGION_OPTIONS } from '../lib/labels';
+import { api, type Account, type ClassificationRow, type TaxonomyOption } from '../../lib/api';
+import { REGION_OPTIONS } from '../../lib/labels';
 
 export default function ManualPage() {
   const [label, setLabel] = useState('');

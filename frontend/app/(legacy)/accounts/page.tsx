@@ -8,8 +8,8 @@
 
 import { useEffect, useState } from 'react';
 
-import { api, type Account } from '../lib/api';
-import { humanize } from '../lib/labels';
+import { api, type Account } from '../../lib/api';
+import { humanize } from '../../lib/labels';
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
