@@ -1,0 +1,266 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #fafafa;
+  --foreground: #0a0a0a;
+
+  --primary: var(--foreground);
+  --primary-foreground: var(--background);
+
+  --secondary: #f4f4f5;
+  --secondary-foreground: var(--foreground);
+
+  --accent: #0f766e;
+  --accent-foreground: var(--background);
+  --accent-soft: #ccfbf1;
+
+  --card: var(--background);
+  --card-foreground: var(--foreground);
+  --popover: var(--background);
+  --popover-foreground: var(--foreground);
+
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+
+  --border: #e4e4e7;
+  --input: var(--border);
+  --ring: var(--accent-soft);
+
+  --destructive: #dc2626;
+  --destructive-foreground: var(--background);
+  --destructive-soft: #fee2e2;
+  --success: #16a34a;
+  --success-soft: #dcfce7;
+  --warning: #d97706;
+  --warning-soft: #fef3c7;
+
+  --viz-cash: #d97706;
+  --viz-us-equity: #2563eb;
+  --viz-intl-equity: #0d9488;
+  --viz-fixed-income: #7c3aed;
+  --viz-real-estate: #ea580c;
+  --viz-crypto: #db2777;
+  --viz-alts: #ca8a04;
+  --viz-other: #71717a;
+
+  --chart-1: var(--viz-cash);
+  --chart-2: var(--viz-us-equity);
+  --chart-3: var(--viz-intl-equity);
+  --chart-4: var(--viz-fixed-income);
+  --chart-5: var(--viz-real-estate);
+
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--muted);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+
+  --radius: 0.5rem;
+  --radius-none: 0;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-pill: 9999px;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.10);
+
+  --duration-fast: 120ms;
+  --duration-medium: 200ms;
+  --duration-slow: 300ms;
+  --duration-chart: 400ms;
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+
+  --secondary: #18181b;
+
+  --accent: #2dd4bf;
+  --accent-soft: #134e4a;
+
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa;
+
+  --border: #27272a;
+
+  --destructive: #f87171;
+  --destructive-soft: #450a0a;
+  --success: #4ade80;
+  --success-soft: #14532d;
+  --warning: #fbbf24;
+  --warning-soft: #451a03;
+
+  --viz-cash: #fbbf24;
+  --viz-us-equity: #60a5fa;
+  --viz-intl-equity: #5eead4;
+  --viz-fixed-income: #a78bfa;
+  --viz-real-estate: #fb923c;
+  --viz-crypto: #f472b6;
+  --viz-alts: #facc15;
+  --viz-other: #a1a1aa;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.50);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.60);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+
+  --color-viz-cash: var(--viz-cash);
+  --color-viz-us-equity: var(--viz-us-equity);
+  --color-viz-intl-equity: var(--viz-intl-equity);
+  --color-viz-fixed-income: var(--viz-fixed-income);
+  --color-viz-real-estate: var(--viz-real-estate);
+  --color-viz-crypto: var(--viz-crypto);
+  --color-viz-alts: var(--viz-alts);
+  --color-viz-other: var(--viz-other);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jbm), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-display: 2.5rem;
+  --text-display--line-height: 3rem;
+  --text-display--font-weight: 700;
+  --text-display--letter-spacing: -0.02em;
+
+  --text-h1: 1.75rem;
+  --text-h1--line-height: 2.25rem;
+  --text-h1--font-weight: 600;
+  --text-h1--letter-spacing: -0.01em;
+
+  --text-h2: 1.375rem;
+  --text-h2--line-height: 1.875rem;
+  --text-h2--font-weight: 600;
+  --text-h2--letter-spacing: -0.01em;
+
+  --text-h3: 1.125rem;
+  --text-h3--line-height: 1.625rem;
+  --text-h3--font-weight: 600;
+
+  --text-body: 1rem;
+  --text-body--line-height: 1.5rem;
+  --text-body--font-weight: 400;
+
+  --text-body-sm: 0.875rem;
+  --text-body-sm--line-height: 1.25rem;
+  --text-body-sm--font-weight: 400;
+
+  --text-label: 0.8125rem;
+  --text-label--line-height: 1.125rem;
+  --text-label--font-weight: 500;
+
+  --text-mono: 0.9375rem;
+  --text-mono--line-height: 1.25rem;
+  --text-mono--font-weight: 400;
+
+  --text-mono-sm: 0.8125rem;
+  --text-mono-sm--line-height: 1.125rem;
+  --text-mono-sm--font-weight: 400;
+
+  --radius-none: 0;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-pill: 9999px;
+
+  --shadow-1: var(--shadow-1);
+  --shadow-2: var(--shadow-2);
+  --shadow-3: var(--shadow-3);
+
+  --ease-out: var(--ease-out);
+  --ease-in: var(--ease-in);
+  --ease-in-out: var(--ease-in-out);
+
+  --animate-fade-in: fade-in var(--duration-fast) var(--ease-out);
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-feature-settings: "tnum", "lnum";
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent-soft);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}

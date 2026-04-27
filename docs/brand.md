@@ -4,7 +4,7 @@
 >
 > **Voice:** anti-hype, transparency-first, engineering-honest. Visibility, not advice.
 
-The live, browsable spec lives at [`/brand`](https://openportfolio.fly.dev/brand) (source: `frontend/app/brand/page.tsx`). This file is its scannable summary.
+The live, browsable spec lives at [`/brand`](https://openportfolio.fly.dev/brand) (source: `frontend/app/(app)/brand/page.tsx`). Component reference and token playground live in Storybook (`npm run storybook`). This file is the scannable specification.
 
 ## Principles
 
@@ -31,7 +31,7 @@ Two concentric rings: outer in brand ink, inner in brand teal. Reads as nested h
 **Specs**
 
 - Wordmark: Inter SemiBold (600), letter-spacing `-0.01em`, color `--foreground`.
-- Mark: 24×24 viewBox; outer ring stroke `--foreground` (`#0a0a0a`) 3.5; inner ring stroke `--brand` (`#0f766e`) 3 (light). Dark mode: `#fafafa` outer, `#2dd4bf` inner.
+- Mark: 24×24 viewBox; outer ring stroke `--foreground` (`#0a0a0a`) 3.5; inner ring stroke `--accent` (`#0f766e`) 3 (light). Dark mode: `#fafafa` outer, `#2dd4bf` inner.
 - Clearspace: 0.5× mark height on all sides.
 - Min sizes: mark 16px, wordmark 80px wide.
 
@@ -45,23 +45,32 @@ No fills inside rings · no all-caps · no stretching · no drop shadows · no g
 
 ### Semantic
 
+The token vocabulary follows shadcn/ui conventions so primitives consume it directly without a translation layer. `--primary` is the default text/UI color (ink); `--accent` is the brand teal — used sparingly per the accent-color rule below.
+
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
 | `--background` | `#fafafa` | `#0a0a0a` | Page background |
 | `--foreground` | `#0a0a0a` | `#fafafa` | Primary text |
+| `--primary` | = `--foreground` | = `--foreground` | Default buttons, body |
+| `--primary-foreground` | = `--background` | = `--background` | Text on `--primary` |
 | `--muted` | `#f4f4f5` | `#18181b` | Cards, sections |
 | `--muted-foreground` | `#71717a` | `#a1a1aa` | Secondary text |
+| `--card`, `--popover` | = `--background` | = `--background` | Card / popover surfaces |
 | `--border` | `#e4e4e7` | `#27272a` | Dividers |
-| `--brand` | `#0f766e` | `#2dd4bf` | Brand · sparingly |
-| `--brand-soft` | `#ccfbf1` | `#134e4a` | Focus rings, hovers |
+| `--input` | = `--border` | = `--border` | Form inputs |
+| `--ring` | = `--accent-soft` | = `--accent-soft` | Focus ring (per accessibility rule) |
+| `--accent` | `#0f766e` | `#2dd4bf` | Accent (teal) · sparingly |
+| `--accent-foreground` | = `--background` | = `--background` | Text on `--accent` |
+| `--accent-soft` | `#ccfbf1` | `#134e4a` | Focus rings, soft hovers |
 | `--success` | `#16a34a` | `#4ade80` | Gains (text/icon) |
 | `--success-soft` | `#dcfce7` | `#14532d` | Pill backgrounds |
 | `--warning` | `#d97706` | `#fbbf24` | Warnings (text/icon) |
 | `--warning-soft` | `#fef3c7` | `#451a03` | Pill backgrounds |
 | `--destructive` | `#dc2626` | `#f87171` | Losses (text/icon) |
 | `--destructive-soft` | `#fee2e2` | `#450a0a` | Pill backgrounds |
+| `--chart-1..5` | viz palette | viz palette | First five `--viz-*` for shadcn charts |
 
-**Brand-color rule.** Teal is "almost invisible." Apply only to (a) focus rings, (b) one or two key calls-to-action per view, (c) the total-portfolio-value figure on the dashboard. Teal does not belong in normal links, body text, or general UI chrome.
+**Accent-color rule.** The accent (teal) is "almost invisible." Apply only to (a) focus rings via `--ring`, (b) one or two key calls-to-action per view (use `<Button variant="accent">`, never `variant="default"`), (c) the total-portfolio-value figure on the dashboard. Accent does not belong in normal links, body text, or general UI chrome. The default `<Button>` is ink — opt into accent explicitly.
 
 **Status pill rule.** Pill background uses the matching `-soft` variant (e.g., `--success-soft`); foreground/icon uses the base semantic token. Always pair with a text label or glyph — never color alone.
 
@@ -69,9 +78,9 @@ No fills inside rings · no all-caps · no stretching · no drop shadows · no g
 
 The system follows the user's OS preference via `prefers-color-scheme`. Tokens are defined as CSS custom properties under a scoped root; the dark column above takes effect automatically when the OS is in dark mode — no JavaScript, no FOUC, no toggle UI.
 
-- Tokens live in CSS, never in JS strings. JS components that need concrete color values (charts, generated images) read the JS mirror in `frontend/app/brand/tokens.ts` and subscribe to `matchMedia('(prefers-color-scheme: dark)')` for reactivity.
+- Tokens live in CSS as the single source of truth (`frontend/app/globals.css`). JS components that need concrete color values (generated images, custom chart code) read computed CSS variable values via `getComputedStyle` and subscribe to `matchMedia('(prefers-color-scheme: dark)')` plus the `class="dark"` toggle for reactivity.
 - Both modes ship complete: every semantic token has a light AND dark value. Never partially themed.
-- v0.1: no user-facing theme toggle. Function over form; defer until a roadmap phase pulls it in.
+- Theme follows OS by default (`next-themes` with `defaultTheme="system"`); a header toggle lets users override.
 - Generated assets (favicon, iOS icon, OG card) are rendered without browser context and ship a single light-mode variant. Acceptable for v0.1.
 
 ### Asset categories (data viz)
@@ -87,7 +96,7 @@ The system follows the user's OS preference via `prefers-color-scheme`. Tokens a
 | `--viz-alts` | `#ca8a04` | `#facc15` | Alts |
 | `--viz-other` | `#71717a` | `#a1a1aa` | Other |
 
-Asset-viz teal (`--viz-intl-equity`) is intentionally close to brand teal but distinct. When both appear together (rare), brand teal wins by weight (e.g., bold).
+Asset-viz teal (`--viz-intl-equity`) is intentionally close to the accent teal but distinct. When both appear together (rare), the accent wins by weight (e.g., bold). The first five viz colors are also exposed as `--chart-1..--chart-5` for shadcn `<Chart>` consumers.
 
 ## Typography
 
@@ -165,23 +174,25 @@ Reserved and functional. Motion serves comprehension, never decoration.
 
 The live `/brand` page renders these against the tokens above:
 
-- **Buttons** — primary (teal bg, white text · used sparingly), secondary (border + ink text), ghost (text only).
-- **Links** — `--foreground` color with underline, never teal. (See Links below.)
+- **Buttons** — default (ink bg, light text · the everyday button), accent (teal bg, white text · `variant="accent"`, used sparingly), secondary (border + ink text), ghost (text only).
+- **Links** — `--foreground` color with underline, never accent. (See Links below.)
 - **Status pills** — success / warning / destructive variants. (See Status pill rule above.)
 - **Tabular row** — symbol + figures in JetBrains Mono with tabular nums; names in Inter; numeric columns right-aligned.
-- **Total value emphasis** — the one place teal appears in data: dashboard portfolio total in JetBrains Mono Medium.
+- **Total value emphasis** — the one place accent appears in data: dashboard portfolio total in JetBrains Mono Medium.
 
 ### Links
 
-Inline links use `--foreground` color with `text-decoration: underline` and `text-underline-offset: 0.15em`. Hover thickens the underline; visited state matches default — links don't change color after click. Links never use teal; the brand-color rule reserves `--brand` for focus rings, key actions, and the total-value figure.
+Inline links use `--foreground` color with `text-decoration: underline` and `text-underline-offset: 0.15em`. Hover thickens the underline; visited state matches default — links don't change color after click. Links never use accent; the accent-color rule reserves `--accent` for focus rings, key actions, and the total-value figure.
 
 ### Focus state
 
-Every interactive element gets a 2px outset focus ring in `--brand-soft` with 2px offset. Never remove with `outline: none` unless replaced by an equivalent visual marker.
+Every interactive element gets a 2px outset focus ring in `--ring` (= `--accent-soft`) with 2px offset. Never remove with `outline: none` unless replaced by an equivalent visual marker.
 
 ### Iconography
 
-No icon library. Approved Unicode glyph set:
+Two domains, two rules:
+
+**Data viz** — no icon library. Use the approved Unicode glyph set so that every glyph rendered alongside a number has a defined semantic meaning. Generic "decorative" icons are forbidden in tables, pills, and chart legends.
 
 | Glyph | Meaning |
 | --- | --- |
@@ -196,6 +207,8 @@ No icon library. Approved Unicode glyph set:
 | `←` | Back |
 
 Use `▲`/`▼` for discrete values (gain/loss amounts, status pills). Use `↗`/`↘` for trends over time (sparklines, axes).
+
+**Chrome** — `lucide-react` (the shadcn/ui default). Sidebar collapse, theme toggle, menu, search, and other affordances on container UI may use lucide icons. They never appear next to numbers or inside data viz; that surface remains Unicode-only.
 
 ### Tooltips & popovers
 
@@ -220,7 +233,7 @@ The donut (asset allocation) is the product hero.
 
 - **Segment separation.** Stroke each segment with `--background` color (not a darker line) — creates clean visual separation.
 - **Inner radius.** Donut, not pie — leave room for the total-value label at center.
-- **Center label.** Total portfolio value in JetBrains Mono Medium with "Total" label in Inter Medium above. This is the one teal moment in data viz.
+- **Center label.** Total portfolio value in JetBrains Mono Medium with "Total" label in Inter Medium above. This is the one accent moment in data viz.
 - **Hover.** Selected segment emphasized via stroke or weight; siblings drop opacity. Never spin, never bounce.
 - **Drill-down.** Selected segment expands; non-selected siblings fade. 300ms ease-out.
 - **Empty.** Three-ring outline in `--border` color with prompt: *"Add holdings to see your allocation."*
@@ -243,6 +256,6 @@ Anti-hype, transparency-first, engineering-honest. The voice in copy is operatio
 - WCAG AA contrast (4.5:1) on all foreground/background pairs above for body text.
 - **WCAG AAA (7:1) for hero numbers** — total portfolio value, top-line allocation %. The product's most-read figures earn the higher target.
 - Status is never communicated by color alone — pair with glyph or label (e.g., `▲ +$X` / `▼ −$X`).
-- Focus rings: 2px outset using `--brand-soft`; never removed without replacement.
+- Focus rings: 2px outset using `--ring` (= `--accent-soft`); never removed without replacement.
 - Honor `prefers-reduced-motion: reduce`. Animation is never load-bearing for meaning.
 - Provenance on every user-visible number; missing data is surfaced, not silently zeroed.

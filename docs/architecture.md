@@ -8,14 +8,14 @@ Technical constraints, data model, and operational risks. **Product direction an
 
 | Layer | Choice |
 |---|---|
-| Frontend | Next.js 14 (App Router) |
+| Frontend | Next.js 14 (App Router) + Tailwind v4 + shadcn/ui · see [`frontend-architecture.md`](frontend-architecture.md) |
 | Backend | Python 3.12 + FastAPI |
 | Database | SQLite on Fly.io persistent volume |
 | Auth (v0.1–v0.4) | Env-var admin token (single-user) |
 | Auth (v0.5+) | Auth.js (email magic-link), workspaces |
 | LLM abstraction | LiteLLM |
 | LLM providers (current) | Azure OpenAI (default), Ollama (local) |
-| Charts | Apache ECharts (sunburst + drill-down) |
+| Charts | Recharts via shadcn `<Chart>` (donut + drill-down) · see [`frontend-architecture.md`](frontend-architecture.md) |
 | Price data | `yfinance` + Alpha Vantage fallback |
 | Fund holdings | `yfinance` + in-repo YAML fallback |
 | Hosting | Fly.io (single platform, one `fly.toml`) |

@@ -4,6 +4,9 @@ node_modules/
 next-env.d.ts
 *.tsbuildinfo
 
+# Storybook
+storybook-static/
+
 # Python
 __pycache__/
 *.pyc
