@@ -393,15 +393,15 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function SidebarGroupLabel({
-  className,
-  asChild = false,
-  ...props
-}: React.ComponentProps<"div"> & { asChild?: boolean }) {
+const SidebarGroupLabel = React.forwardRef<
+  HTMLDivElement,
+  React.ComponentProps<"div"> & { asChild?: boolean }
+>(function SidebarGroupLabel({ className, asChild = false, ...props }, ref) {
   const Comp = asChild ? Slot.Root : "div"
 
   return (
     <Comp
+      ref={ref as React.Ref<HTMLDivElement>}
       data-slot="sidebar-group-label"
       data-sidebar="group-label"
       className={cn(
@@ -412,17 +412,17 @@ function SidebarGroupLabel({
       {...props}
     />
   )
-}
+})
 
-function SidebarGroupAction({
-  className,
-  asChild = false,
-  ...props
-}: React.ComponentProps<"button"> & { asChild?: boolean }) {
+const SidebarGroupAction = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentProps<"button"> & { asChild?: boolean }
+>(function SidebarGroupAction({ className, asChild = false, ...props }, ref) {
   const Comp = asChild ? Slot.Root : "button"
 
   return (
     <Comp
+      ref={ref as React.Ref<HTMLButtonElement>}
       data-slot="sidebar-group-action"
       data-sidebar="group-action"
       className={cn(
@@ -435,7 +435,7 @@ function SidebarGroupAction({
       {...props}
     />
   )
-}
+})
 
 function SidebarGroupContent({
   className,
@@ -495,24 +495,31 @@ const sidebarMenuButtonVariants = cva(
   }
 )
 
-function SidebarMenuButton({
-  asChild = false,
-  isActive = false,
-  variant = "default",
-  size = "default",
-  tooltip,
-  className,
-  ...props
-}: React.ComponentProps<"button"> & {
-  asChild?: boolean
-  isActive?: boolean
-  tooltip?: string | React.ComponentProps<typeof TooltipContent>
-} & VariantProps<typeof sidebarMenuButtonVariants>) {
+const SidebarMenuButton = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentProps<"button"> & {
+    asChild?: boolean
+    isActive?: boolean
+    tooltip?: string | React.ComponentProps<typeof TooltipContent>
+  } & VariantProps<typeof sidebarMenuButtonVariants>
+>(function SidebarMenuButton(
+  {
+    asChild = false,
+    isActive = false,
+    variant = "default",
+    size = "default",
+    tooltip,
+    className,
+    ...props
+  },
+  ref
+) {
   const Comp = asChild ? Slot.Root : "button"
   const { isMobile, state } = useSidebar()
 
   const button = (
     <Comp
+      ref={ref as React.Ref<HTMLButtonElement>}
       data-slot="sidebar-menu-button"
       data-sidebar="menu-button"
       data-size={size}
@@ -543,21 +550,23 @@ function SidebarMenuButton({
       />
     </Tooltip>
   )
-}
+})
 
-function SidebarMenuAction({
-  className,
-  asChild = false,
-  showOnHover = false,
-  ...props
-}: React.ComponentProps<"button"> & {
-  asChild?: boolean
-  showOnHover?: boolean
-}) {
+const SidebarMenuAction = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentProps<"button"> & {
+    asChild?: boolean
+    showOnHover?: boolean
+  }
+>(function SidebarMenuAction(
+  { className, asChild = false, showOnHover = false, ...props },
+  ref
+) {
   const Comp = asChild ? Slot.Root : "button"
 
   return (
     <Comp
+      ref={ref as React.Ref<HTMLButtonElement>}
       data-slot="sidebar-menu-action"
       data-sidebar="menu-action"
       className={cn(
@@ -575,7 +584,7 @@ function SidebarMenuAction({
       {...props}
     />
   )
-}
+})
 
 function SidebarMenuBadge({
   className,
@@ -666,21 +675,22 @@ function SidebarMenuSubItem({
   )
 }
 
-function SidebarMenuSubButton({
-  asChild = false,
-  size = "md",
-  isActive = false,
-  className,
-  ...props
-}: React.ComponentProps<"a"> & {
-  asChild?: boolean
-  size?: "sm" | "md"
-  isActive?: boolean
-}) {
+const SidebarMenuSubButton = React.forwardRef<
+  HTMLAnchorElement,
+  React.ComponentProps<"a"> & {
+    asChild?: boolean
+    size?: "sm" | "md"
+    isActive?: boolean
+  }
+>(function SidebarMenuSubButton(
+  { asChild = false, size = "md", isActive = false, className, ...props },
+  ref
+) {
   const Comp = asChild ? Slot.Root : "a"
 
   return (
     <Comp
+      ref={ref as React.Ref<HTMLAnchorElement>}
       data-slot="sidebar-menu-sub-button"
       data-sidebar="menu-sub-button"
       data-size={size}
@@ -696,7 +706,7 @@ function SidebarMenuSubButton({
       {...props}
     />
   )
-}
+})
 
 export {
   Sidebar,
