@@ -4,11 +4,7 @@
 FROM node:20-slim AS frontend-build
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
-# Lockfile was generated on darwin-arm64 and omits the linux-x64-gnu
-# entry for lightningcss (Tailwind v4's native CSS engine). Drop the
-# lock and reinstall so npm resolves the native binary for the actual
-# build platform.
-RUN rm -f package-lock.json && npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
