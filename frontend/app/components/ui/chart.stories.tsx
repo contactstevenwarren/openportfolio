@@ -1,0 +1,101 @@
+import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { Label, Pie, PieChart, Sector } from "recharts";
+import type { PieSectorShapeProps } from "recharts/types/polar/Pie";
+
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "./chart";
+
+const meta = {
+  title: "Primitives/Chart",
+  component: ChartContainer,
+  parameters: { layout: "centered" },
+} satisfies Meta<typeof ChartContainer>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+const chartData = [
+  { category: "cash", label: "Cash", value: 67791, fill: "var(--color-cash)" },
+  { category: "us-equity", label: "US equity", value: 398274, fill: "var(--color-us-equity)" },
+  { category: "intl-equity", label: "Intl equity", value: 118635, fill: "var(--color-intl-equity)" },
+  { category: "fixed-income", label: "Fixed income", value: 152531, fill: "var(--color-fixed-income)" },
+  { category: "real-estate", label: "Real estate", value: 110161, fill: "var(--color-real-estate)" },
+];
+
+const config = {
+  value: { label: "Allocation" },
+  cash: { label: "Cash", color: "var(--viz-cash)" },
+  "us-equity": { label: "US equity", color: "var(--viz-us-equity)" },
+  "intl-equity": { label: "Intl equity", color: "var(--viz-intl-equity)" },
+  "fixed-income": { label: "Fixed income", color: "var(--viz-fixed-income)" },
+  "real-estate": { label: "Real estate", color: "var(--viz-real-estate)" },
+} satisfies ChartConfig;
+
+const total = chartData.reduce((acc, d) => acc + d.value, 0);
+const ACTIVE_INDEX = chartData.reduce(
+  (best, d, i) => (d.value > chartData[best].value ? i : best),
+  0
+);
+
+export const DonutActive: Story = {
+  render: () => (
+    <ChartContainer config={config} className="aspect-square w-[300px]">
+      <PieChart>
+        <ChartTooltip
+          cursor={false}
+          content={<ChartTooltipContent nameKey="label" hideLabel />}
+        />
+        <Pie
+          data={chartData}
+          dataKey="value"
+          nameKey="category"
+          innerRadius={70}
+          strokeWidth={3}
+          stroke="var(--background)"
+          shape={({ index, outerRadius = 0, ...props }: PieSectorShapeProps) =>
+            index === ACTIVE_INDEX ? (
+              <Sector {...props} outerRadius={outerRadius + 8} />
+            ) : (
+              <Sector {...props} outerRadius={outerRadius} />
+            )
+          }
+        >
+          <Label
+            content={({ viewBox }) => {
+              if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                return (
+                  <text
+                    x={viewBox.cx}
+                    y={viewBox.cy}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                  >
+                    <tspan
+                      x={viewBox.cx}
+                      y={(viewBox.cy ?? 0) - 10}
+                      className="fill-muted-foreground text-[11px] font-medium tracking-wide uppercase"
+                    >
+                      Total
+                    </tspan>
+                    <tspan
+                      x={viewBox.cx}
+                      y={(viewBox.cy ?? 0) + 12}
+                      className="fill-accent font-mono text-xl font-medium"
+                    >
+                      ${total.toLocaleString()}
+                    </tspan>
+                  </text>
+                );
+              }
+              return null;
+            }}
+          />
+        </Pie>
+      </PieChart>
+    </ChartContainer>
+  ),
+};
