@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import useSWR from "swr";
 import { Label, Pie, PieChart, Sector } from "recharts";
 import type { PieSectorShapeProps } from "recharts/types/polar/Pie";
 
@@ -16,48 +17,97 @@ import {
 import {
   ChartContainer,
   ChartTooltip,
-  ChartTooltipContent,
   type ChartConfig,
 } from "@/app/components/ui/chart";
-import { Provenance } from "@/app/lib/provenance";
 import {
-  ASSET_CLASS_COLOR,
-  formatPct,
-  formatUsd,
-  mockAllocation,
-  mockNetWorth,
-} from "../mocks";
+  api,
+  type AllocationResult,
+  type AllocationSlice as ApiSlice,
+} from "@/app/lib/api";
+import { driftThresholds } from "@/app/lib/allocationTargets";
+import { humanize } from "@/app/lib/labels";
+import { Provenance } from "@/app/lib/provenance";
+import { ASSET_CLASS_COLOR, formatPct, formatUsd, type AssetClass } from "../mocks";
 
-// Sort by value desc — drives both legend order and pie-slice index.
-const slices = [...mockAllocation].sort((a, b) => b.value - a.value);
-const total = slices.reduce((acc, s) => acc + s.value, 0);
+// API doesn't yet carry per-slice freshness; stub a static source so the
+// dotted-underline + hover tooltip show up everywhere a number is rendered.
+// Replace with real freshness once the backend plumbs it through.
+const STUB_PROVENANCE = { source: "computed" } as const;
 
-const chartData = slices.map((s) => ({
-  class: s.class,
-  label: s.label,
-  value: s.value,
-  fill: `var(--color-${s.class})`,
-}));
+// Drift radius bounds in pixels. R_BASE matches the dashed baseline circle.
+const R_BASE = 100;
+const R_MIN = 90;
+const R_MAX = 110;
+const INNER_RADIUS = 70;
+// Selection cue: dim non-selected wedges. Radius stays untouched so it
+// keeps representing drift only.
+const DIM_OPACITY = 0.35;
 
-const chartConfig: ChartConfig = {
-  value: { label: "Allocation" },
-  ...Object.fromEntries(
-    slices.map((s) => [s.class, { label: s.label, color: ASSET_CLASS_COLOR[s.class] }])
-  ),
+// API L1 names → AssetClass slug used by ASSET_CLASS_COLOR.
+// L1 "equity" lumps US + intl; the donut shows the lump, so we route it
+// through the US-equity blue. Anything not listed falls back to "other".
+const NAME_TO_CLASS: Record<string, AssetClass> = {
+  cash: "cash",
+  equity: "us-equity",
+  us_equity: "us-equity",
+  intl_equity: "intl-equity",
+  fixed_income: "fixed-income",
+  real_estate: "real-estate",
+  crypto: "crypto",
+  alts: "alts",
+  other: "other",
 };
 
-// Default-active = largest slice (index 0 after sort).
-const DEFAULT_ACTIVE = 0;
+type DisplaySlice = {
+  name: string;
+  cls: AssetClass;
+  label: string;
+  value: number;
+  pct: number;
+  targetPct: number | null;
+  driftPct: number | null;
+};
+
+function toDisplaySlices(input: ApiSlice[]): DisplaySlice[] {
+  return [...input]
+    .filter((s) => s.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .map((s) => ({
+      name: s.name,
+      cls: NAME_TO_CLASS[s.name] ?? "other",
+      label: humanize(s.name),
+      value: s.value,
+      pct: s.pct,
+      targetPct: s.target_pct ?? null,
+      driftPct: s.drift_pct ?? null,
+    }));
+}
+
+// Per-slice outer radius in px. Anchored to the drift thresholds: drift inside
+// the minor band sits flush on baseline; drift at the major threshold reaches
+// the full bump; drift between scales linearly; drift past major saturates.
+function computeRings(
+  slices: DisplaySlice[],
+  minorPp: number,
+  majorPp: number,
+): number[] {
+  const span = Math.max(majorPp - minorPp, 0.001);
+  return slices.map((s) => {
+    if (s.driftPct == null) return R_BASE;
+    const abs = Math.abs(s.driftPct);
+    if (abs <= minorPp) return R_BASE;
+    const ratio = Math.min(1, (abs - minorPp) / span);
+    return s.driftPct > 0
+      ? R_BASE + ratio * (R_MAX - R_BASE)
+      : R_BASE - ratio * (R_BASE - R_MIN);
+  });
+}
 
 export function DonutCard() {
-  const [selected, setSelected] = React.useState<number | null>(null);
-  const activeIndex = selected ?? DEFAULT_ACTIVE;
-  const activeSlice = slices[activeIndex];
-  const isSelected = selected !== null;
-
-  const toggle = (i: number) => {
-    setSelected((prev) => (prev === i ? null : i));
-  };
+  const { data, error, isLoading } = useSWR<AllocationResult>(
+    "/api/allocation",
+    api.allocation,
+  );
 
   return (
     <Card className="h-full">
@@ -74,107 +124,215 @@ export function DonutCard() {
         </CardAction>
       </CardHeader>
       <CardContent>
-        <div className="@container/donut-card">
-          <div className="flex flex-col gap-6 @md/donut-card:flex-row @md/donut-card:items-center">
-            <ChartContainer
-              config={chartConfig}
-              className="mx-auto aspect-square w-full max-w-[260px] shrink-0 @md/donut-card:mx-0"
-            >
-              <PieChart>
-                <ChartTooltip
-                  cursor={false}
-                  content={<ChartTooltipContent nameKey="label" hideLabel />}
-                />
-                <Pie
-                  data={chartData}
-                  dataKey="value"
-                  nameKey="class"
-                  innerRadius={70}
-                  strokeWidth={3}
-                  stroke="var(--background)"
-                  shape={({ index, outerRadius = 0, ...props }: PieSectorShapeProps) =>
-                    index === activeIndex ? (
-                      <Sector {...props} outerRadius={outerRadius + 8} />
-                    ) : (
-                      <Sector {...props} outerRadius={outerRadius} />
-                    )
-                  }
-                  onClick={(_, i) => toggle(i)}
-                  className="cursor-pointer"
-                >
-                  <Label
-                    content={({ viewBox }) => {
-                      if (!viewBox || !("cx" in viewBox) || !("cy" in viewBox)) return null;
-                      const cx = viewBox.cx ?? 0;
-                      const cy = viewBox.cy ?? 0;
-                      const labelText = isSelected ? activeSlice.label : "Total";
-                      const valueText = isSelected
-                        ? formatUsd(activeSlice.value, { compact: true })
-                        : formatUsd(total, { compact: true });
-                      const fresh = isSelected ? activeSlice.freshness : mockNetWorth.freshness;
-                      return (
-                        <foreignObject x={cx - 70} y={cy - 26} width={140} height={56}>
-                          <div className="flex h-full w-full flex-col items-center justify-center text-center">
-                            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                              {labelText}
-                            </span>
-                            <span className="font-mono text-xl font-medium text-foreground">
-                              <Provenance
-                                source={fresh.source}
-                                confidence={fresh.confidence}
-                                capturedAt={fresh.capturedAt}
-                              >
-                                {valueText}
-                              </Provenance>
-                            </span>
-                          </div>
-                        </foreignObject>
-                      );
-                    }}
-                  />
-                </Pie>
-              </PieChart>
-            </ChartContainer>
-
-            <ul className="flex flex-1 flex-col gap-1">
-              {slices.map((s, i) => {
-                const isActive = i === activeIndex;
-                return (
-                  <li key={s.class}>
-                    <button
-                      type="button"
-                      onClick={() => toggle(i)}
-                      aria-pressed={isSelected && isActive}
-                      className={
-                        "flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
-                        (isActive ? "bg-muted/40" : "")
-                      }
-                    >
-                      <span
-                        aria-hidden
-                        className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                        style={{ backgroundColor: ASSET_CLASS_COLOR[s.class] }}
-                      />
-                      <span className="flex-1 truncate text-body-sm text-foreground">
-                        {s.label}
-                      </span>
-                      <span className="text-mono-sm tabular-nums text-muted-foreground">
-                        <Provenance
-                          source={s.freshness.source}
-                          confidence={s.freshness.confidence}
-                          capturedAt={s.freshness.capturedAt}
-                        >
-                          {formatPct(s.pct)}
-                        </Provenance>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        </div>
+        <DonutBody data={data} error={error} isLoading={isLoading} />
       </CardContent>
     </Card>
   );
 }
+
+function DonutBody({
+  data,
+  error,
+  isLoading,
+}: {
+  data: AllocationResult | undefined;
+  error: unknown;
+  isLoading: boolean;
+}) {
+  const [selected, setSelected] = React.useState<number | null>(null);
+
+  const slices = data ? toDisplaySlices(data.by_asset_class) : [];
+  const t = driftThresholds(data);
+  const rings = computeRings(slices, t.minor_pct, t.major_pct);
+
+  if (isLoading || (!data && !error)) {
+    return <DonutPlaceholder kind="loading" />;
+  }
+  if (error) {
+    return <DonutPlaceholder kind="error" message={(error as Error).message} />;
+  }
+  if (slices.length === 0) {
+    return <DonutPlaceholder kind="empty" />;
+  }
+
+  const total = slices.reduce((a, s) => a + s.value, 0);
+  const activeIndex = selected ?? 0;
+  const activeSlice = slices[activeIndex];
+  const isSelected = selected !== null;
+  const toggle = (i: number) => setSelected((prev) => (prev === i ? null : i));
+
+  const chartData = slices.map((s) => ({
+    cls: s.cls,
+    label: s.label,
+    value: s.value,
+    pct: s.pct,
+    targetPct: s.targetPct,
+    driftPct: s.driftPct,
+    fill: `var(--color-${s.cls})`,
+  }));
+
+  const chartConfig: ChartConfig = {
+    value: { label: "Allocation" },
+    ...Object.fromEntries(
+      slices.map((s) => [s.cls, { label: s.label, color: ASSET_CLASS_COLOR[s.cls] }]),
+    ),
+  };
+
+  return (
+    <div className="@container/donut-card">
+      <div className="flex flex-col gap-6 @md/donut-card:flex-row @md/donut-card:items-center">
+        <ChartContainer
+          config={chartConfig}
+          className="mx-auto aspect-square w-full max-w-[260px] shrink-0 @md/donut-card:mx-0"
+        >
+          <PieChart>
+            <ChartTooltip cursor={false} content={<DonutTooltip />} />
+            <Pie
+              data={chartData}
+              dataKey="value"
+              nameKey="cls"
+              innerRadius={INNER_RADIUS}
+              outerRadius={R_BASE}
+              strokeWidth={3}
+              stroke="var(--background)"
+              shape={(rawProps: PieSectorShapeProps) => {
+                const { index = 0, ...props } = rawProps;
+                const dim = isSelected && index !== activeIndex;
+                return (
+                  <Sector
+                    {...props}
+                    outerRadius={rings[index] ?? R_BASE}
+                    opacity={dim ? DIM_OPACITY : 1}
+                  />
+                );
+              }}
+              onClick={(_, i) => toggle(i)}
+              className="cursor-pointer"
+            >
+              <Label
+                content={({ viewBox }) => {
+                  if (!viewBox || !("cx" in viewBox) || !("cy" in viewBox)) return null;
+                  const cx = viewBox.cx ?? 0;
+                  const cy = viewBox.cy ?? 0;
+                  const labelText = isSelected ? activeSlice.label : "Total";
+                  const valueText = isSelected
+                    ? formatUsd(activeSlice.value, { compact: true })
+                    : formatUsd(total, { compact: true });
+                  return (
+                    <foreignObject x={cx - 70} y={cy - 26} width={140} height={56}>
+                      <div className="flex h-full w-full flex-col items-center justify-center text-center">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                          {labelText}
+                        </span>
+                        <span className="font-mono text-xl font-medium text-foreground">
+                          <Provenance source={STUB_PROVENANCE.source}>
+                            {valueText}
+                          </Provenance>
+                        </span>
+                      </div>
+                    </foreignObject>
+                  );
+                }}
+              />
+            </Pie>
+          </PieChart>
+        </ChartContainer>
+
+        <ul className="flex flex-1 flex-col gap-1">
+          {slices.map((s, i) => {
+            const isActive = i === activeIndex;
+            return (
+              <li key={s.name}>
+                <button
+                  type="button"
+                  onClick={() => toggle(i)}
+                  aria-pressed={isSelected && isActive}
+                  className={
+                    "flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
+                    (isSelected && isActive ? "bg-muted/40" : "")
+                  }
+                >
+                  <span
+                    aria-hidden
+                    className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                    style={{ backgroundColor: ASSET_CLASS_COLOR[s.cls] }}
+                  />
+                  <span className="flex-1 truncate text-body-sm text-foreground">{s.label}</span>
+                  <span className="text-mono-sm tabular-nums text-muted-foreground">
+                    <Provenance source={STUB_PROVENANCE.source}>
+                      {formatPct(s.pct / 100)}
+                    </Provenance>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+type TooltipPayload = {
+  label: string;
+  value: number;
+  pct: number;
+  targetPct: number | null;
+  driftPct: number | null;
+};
+
+function DonutTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: { payload: TooltipPayload }[];
+}) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  const showDrift = p.targetPct != null && p.driftPct != null;
+  return (
+    <div className="rounded-md border bg-popover px-3 py-2 text-xs shadow-md">
+      <div className="font-medium text-foreground">{p.label}</div>
+      <div className="mt-0.5 text-muted-foreground tabular-nums">
+        {formatUsd(p.value, { compact: true })} · {formatPct(p.pct / 100)}
+      </div>
+      {showDrift ? (
+        <div className="mt-0.5 text-muted-foreground tabular-nums">
+          target {Math.round(p.targetPct!)}% · {formatPp(p.driftPct!)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatPp(pp: number): string {
+  const sign = pp > 0 ? "+" : pp < 0 ? "−" : "";
+  return `${sign}${Math.abs(pp).toFixed(1)}pp`;
+}
+
+function DonutPlaceholder({
+  kind,
+  message,
+}: {
+  kind: "loading" | "error" | "empty";
+  message?: string;
+}) {
+  const text =
+    kind === "loading"
+      ? "Loading allocation…"
+      : kind === "empty"
+        ? "No allocation yet. Add positions to see the donut."
+        : `Couldn't load allocation. ${message ?? ""}`.trim();
+  return (
+    <div className="@container/donut-card">
+      <div className="flex flex-col gap-6 @md/donut-card:flex-row @md/donut-card:items-center">
+        <div className="mx-auto flex aspect-square w-full max-w-[260px] shrink-0 items-center justify-center rounded-full border border-dashed border-border @md/donut-card:mx-0">
+          <span className="px-6 text-center text-body-sm text-muted-foreground">{text}</span>
+        </div>
+        <div className="flex-1" aria-hidden />
+      </div>
+    </div>
+  );
+}
+
