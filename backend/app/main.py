@@ -846,14 +846,16 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
     result = apply_drift(
         result,
         targets,
-        drift_minor_pct=settings.drift_minor_pct,
-        drift_major_pct=settings.drift_major_pct,
+        drift_tolerance_pct=settings.drift_tolerance_pct,
+        drift_act_pct=settings.drift_act_pct,
+        drift_urgent_pct=settings.drift_urgent_pct,
     )
     return result.model_copy(
         update={
             "drift_thresholds": DriftThresholds(
-                minor_pct=int(settings.drift_minor_pct),
-                major_pct=int(settings.drift_major_pct),
+                tolerance_pct=int(settings.drift_tolerance_pct),
+                act_pct=int(settings.drift_act_pct),
+                urgent_pct=int(settings.drift_urgent_pct),
             ),
         },
         deep=False,
@@ -895,8 +897,9 @@ def get_rebalance(
     result = apply_drift(
         result,
         targets,
-        drift_minor_pct=settings.drift_minor_pct,
-        drift_major_pct=settings.drift_major_pct,
+        drift_tolerance_pct=settings.drift_tolerance_pct,
+        drift_act_pct=settings.drift_act_pct,
+        drift_urgent_pct=settings.drift_urgent_pct,
     )
 
     if not any("." not in p for p in targets):
@@ -943,13 +946,14 @@ def get_rebalance(
             result,
             targets,
             amount,
-            drift_minor_pct=settings.drift_minor_pct,
+            drift_tolerance_pct=settings.drift_tolerance_pct,
         )
 
     return compute_rebalance(
         result,
         targets,
-        drift_minor_pct=settings.drift_minor_pct,
+        drift_tolerance_pct=settings.drift_tolerance_pct,
+        drift_act_pct=settings.drift_act_pct,
     )
 
 

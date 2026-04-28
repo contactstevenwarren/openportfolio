@@ -24,7 +24,6 @@ import {
   type AllocationResult,
   type AllocationSlice as ApiSlice,
 } from "@/app/lib/api";
-import { driftThresholds } from "@/app/lib/allocationTargets";
 import { humanize } from "@/app/lib/labels";
 import { Provenance } from "@/app/lib/provenance";
 import { ASSET_CLASS_COLOR, formatPct, formatUsd, type AssetClass } from "../mocks";
@@ -42,6 +41,13 @@ const INNER_RADIUS = 70;
 // Selection cue: dim non-selected wedges. Radius stays untouched so it
 // keeps representing drift only.
 const DIM_OPACITY = 0.35;
+
+// Radial drift encoding: presentation constants, NOT band thresholds. Below
+// DRIFT_FLOOR_PP the wedge sits flush; at DRIFT_CEILING_PP it reaches the
+// full bump. Linear in-between, saturated past the ceiling. Decoupled from
+// the band thresholds so the chart stays a quiet drift signal.
+const DRIFT_FLOOR_PP = 1;
+const DRIFT_CEILING_PP = 10;
 
 // API L1 names → AssetClass slug used by ASSET_CLASS_COLOR.
 // L1 "equity" lumps US + intl; the donut shows the lump, so we route it
@@ -83,20 +89,16 @@ function toDisplaySlices(input: ApiSlice[]): DisplaySlice[] {
     }));
 }
 
-// Per-slice outer radius in px. Anchored to the drift thresholds: drift inside
-// the minor band sits flush on baseline; drift at the major threshold reaches
-// the full bump; drift between scales linearly; drift past major saturates.
-function computeRings(
-  slices: DisplaySlice[],
-  minorPp: number,
-  majorPp: number,
-): number[] {
-  const span = Math.max(majorPp - minorPp, 0.001);
+// Per-slice outer radius in px. Linear growth from DRIFT_FLOOR_PP (flush) to
+// DRIFT_CEILING_PP (full bump), saturated above. Endpoints are presentation
+// constants, deliberately decoupled from the band thresholds.
+function computeRings(slices: DisplaySlice[]): number[] {
+  const span = DRIFT_CEILING_PP - DRIFT_FLOOR_PP;
   return slices.map((s) => {
     if (s.driftPct == null) return R_BASE;
     const abs = Math.abs(s.driftPct);
-    if (abs <= minorPp) return R_BASE;
-    const ratio = Math.min(1, (abs - minorPp) / span);
+    if (abs <= DRIFT_FLOOR_PP) return R_BASE;
+    const ratio = Math.min(1, (abs - DRIFT_FLOOR_PP) / span);
     return s.driftPct > 0
       ? R_BASE + ratio * (R_MAX - R_BASE)
       : R_BASE - ratio * (R_BASE - R_MIN);
@@ -142,8 +144,7 @@ function DonutBody({
   const [selected, setSelected] = React.useState<number | null>(null);
 
   const slices = data ? toDisplaySlices(data.by_asset_class) : [];
-  const t = driftThresholds(data);
-  const rings = computeRings(slices, t.minor_pct, t.major_pct);
+  const rings = computeRings(slices);
 
   if (isLoading || (!data && !error)) {
     return <DonutPlaceholder kind="loading" />;

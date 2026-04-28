@@ -193,8 +193,8 @@ export default function TargetsPage() {
   const keys = sectionKeys();
   const thresholds = alloc.drift_thresholds;
   const minorNote = thresholds
-    ? `Drift bands (preview): ≤${thresholds.minor_pct}% on target, ≤${thresholds.major_pct}% minor (else major).`
-    : 'Drift bands (preview): ≤1% on target, ≤3% minor (else major).';
+    ? `Drift bands (preview): ≤${thresholds.tolerance_pct}% ok, ≤${thresholds.act_pct}% watch, ≤${thresholds.urgent_pct}% act (else urgent).`
+    : 'Drift bands (preview): ≤3% ok, ≤5% watch, ≤10% act (else urgent).';
 
   return (
     <main style={{ padding: '2rem', maxWidth: 900, margin: '0 auto' }}>

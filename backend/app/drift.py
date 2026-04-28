@@ -1,6 +1,12 @@
-"""Target drift vs live allocation (v0.2).
+"""Target drift vs live allocation (v0.2, 4-band redesign).
 
 Math only: compares ``aggregate()`` slices to persisted ``targets`` rows.
+
+Bands (by absolute drift in pp):
+* ``ok``      -- |d| <= tolerance        (no-trade, hold)
+* ``watch``   -- tolerance < |d| <= act
+* ``act``     -- act < |d| <= urgent
+* ``urgent``  -- |d| > urgent
 """
 
 from collections import defaultdict
@@ -8,17 +14,21 @@ from collections import defaultdict
 from .schemas import AllocationResult, AllocationSlice, DriftBand
 
 
-def _band(drift_pct: float, minor: float, major: float) -> DriftBand:
+def _band(
+    drift_pct: float, tolerance: float, act: float, urgent: float
+) -> DriftBand:
     a = abs(drift_pct)
-    if a <= minor:
-        return "on_target"
-    if a <= major:
-        return "minor"
-    return "major"
+    if a <= tolerance:
+        return "ok"
+    if a <= act:
+        return "watch"
+    if a <= urgent:
+        return "act"
+    return "urgent"
 
 
 def _band_rank(b: DriftBand) -> int:
-    return {"major": 3, "minor": 2, "on_target": 1}[b]
+    return {"urgent": 4, "act": 3, "watch": 2, "ok": 1}[b]
 
 
 def _has_root_targets(targets: dict[str, float]) -> bool:
@@ -53,8 +63,9 @@ def _leaf_drifts_non_equity(
     ac: str,
     leaf: AllocationSlice,
     targets: dict[str, float],
-    minor: float,
-    major: float,
+    tolerance: float,
+    act: float,
+    urgent: float,
     *,
     group_on: bool,
     actual_pct_for_sub: float,
@@ -72,7 +83,7 @@ def _leaf_drifts_non_equity(
             deep=False,
         )
     drift = actual_pct_for_sub - tgt
-    band = _band(drift, minor, major)
+    band = _band(drift, tolerance, act, urgent)
     return leaf.model_copy(
         update={
             "target_pct": tgt,
@@ -87,8 +98,9 @@ def _map_region_subtree(
     ac: str,
     region_slice: AllocationSlice,
     targets: dict[str, float],
-    minor: float,
-    major: float,
+    tolerance: float,
+    act: float,
+    urgent: float,
     *,
     equity_drill_on: bool,
     group_on: bool,
@@ -108,7 +120,7 @@ def _map_region_subtree(
                     else 0.0
                 )
                 drift = actual - tgt
-                band = _band(drift, minor, major)
+                band = _band(drift, tolerance, act, urgent)
                 reg_u = {
                     "target_pct": tgt,
                     "drift_pct": drift,
@@ -144,8 +156,9 @@ def _map_region_subtree(
             ac,
             leaf,
             targets,
-            minor,
-            major,
+            tolerance,
+            act,
+            urgent,
             group_on=group_on,
             actual_pct_for_sub=(non_equity_agg or {}).get(leaf.name, 0.0),
         )
@@ -158,12 +171,14 @@ def apply_drift(
     result: AllocationResult,
     targets: dict[str, float],
     *,
-    drift_minor_pct: float,
-    drift_major_pct: float,
+    drift_tolerance_pct: float,
+    drift_act_pct: float,
+    drift_urgent_pct: float,
 ) -> AllocationResult:
     """Return a copy of ``result`` with drift fields filled from ``targets``."""
-    minor = drift_minor_pct
-    major = drift_major_pct
+    tolerance = drift_tolerance_pct
+    act = drift_act_pct
+    urgent = drift_urgent_pct
     root_on = _has_root_targets(targets)
 
     new_top: list[AllocationSlice] = []
@@ -175,7 +190,7 @@ def apply_drift(
             rt = targets.get(ac)
             if rt is not None:
                 drift = ac_slice.pct - rt
-                band = _band(drift, minor, major)
+                band = _band(drift, tolerance, act, urgent)
                 top_u = {
                     "target_pct": rt,
                     "drift_pct": drift,
@@ -208,8 +223,9 @@ def apply_drift(
                 ac,
                 reg,
                 targets,
-                minor,
-                major,
+                tolerance,
+                act,
+                urgent,
                 equity_drill_on=equity_drill,
                 group_on=group_other,
                 non_equity_agg=non_eq_agg,

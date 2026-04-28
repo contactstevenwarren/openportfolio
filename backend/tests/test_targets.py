@@ -217,7 +217,9 @@ def test_allocation_includes_drift_fields(
     body = client.get("/api/allocation", headers=auth_headers).json()
     assert "max_drift" in body
     assert body["max_drift"] is not None
-    assert body["max_drift_band"] == "major"
+    # Default thresholds: tolerance=3, act=5, urgent=10. |drift|=5 lands
+    # at the boundary of watch (tolerance < |d| <= act).
+    assert body["max_drift_band"] == "watch"
     by = {s["name"]: s for s in body["by_asset_class"]}
     assert by["equity"]["target_pct"] == 55.0
     assert abs(by["equity"]["drift_pct"] - 5.0) < 1e-3
@@ -233,7 +235,11 @@ def test_allocation_includes_drift_thresholds(
     test_db.commit()
 
     body = client.get("/api/allocation", headers=auth_headers).json()
-    assert body["drift_thresholds"] == {"minor_pct": 1, "major_pct": 3}
+    assert body["drift_thresholds"] == {
+        "tolerance_pct": 3,
+        "act_pct": 5,
+        "urgent_pct": 10,
+    }
 
 
 def test_put_rejects_fractional_pct(

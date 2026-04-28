@@ -36,11 +36,15 @@ class Settings(BaseSettings):
     # rings -- tested here only via mocks.
     lookthrough_yfinance_enabled: bool = False
 
-    # Drift bands vs target allocation (v0.2). Env: DRIFT_MINOR_PCT,
-    # DRIFT_MAJOR_PCT. Absolute drift within minor threshold counts as
-    # on-target; within major as minor; above major as major.
-    drift_minor_pct: float = 1.0
-    drift_major_pct: float = 3.0
+    # Drift bands vs target allocation (v0.2 -- 4-band redesign). Env:
+    # DRIFT_TOLERANCE_PCT, DRIFT_ACT_PCT, DRIFT_URGENT_PCT. Absolute
+    # drift within tolerance is ``ok`` (no-trade band); above tolerance
+    # but at-or-below act is ``watch``; above act but at-or-below urgent
+    # is ``act``; above urgent is ``urgent``. The rebalance trigger
+    # fires when any class is in ``act`` or ``urgent`` (|drift| > act).
+    drift_tolerance_pct: float = 3.0
+    drift_act_pct: float = 5.0
+    drift_urgent_pct: float = 10.0
 
     # PDF statement text extraction (v0.4). Reject when extracted text
     # exceeds this budget (no silent truncate).
