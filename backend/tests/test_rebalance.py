@@ -10,7 +10,8 @@ from app.classifications import ClassificationEntry
 from app.models import Account, Classification, Position, Target
 from app.rebalance import compute_new_money, compute_rebalance
 
-MINOR = 1.0
+TOLERANCE = 1.0
+ACT = 3.0
 
 
 def _pos(ticker: str, mv: float) -> Position:
@@ -58,7 +59,7 @@ def test_no_root_targets_empty_moves() -> None:
         [_pos("E1", 60_000.0), _pos("B1", 40_000.0)], _classes()
     )
     out = compute_rebalance(
-        result, {"equity.US": 100.0}, drift_minor_pct=MINOR
+        result, {"equity.US": 100.0}, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT
     )
     assert out.moves == []
     assert out.total == result.total
@@ -71,7 +72,7 @@ def test_l1_only_sums_to_zero() -> None:
         _classes(),
     )
     targets = {"equity": 50.0, "fixed_income": 40.0, "cash": 10.0}
-    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     assert len(out.moves) == 3
     assert abs(sum(m.delta_usd for m in out.moves)) < 1e-6
     by = {m.path: m for m in out.moves}
@@ -99,7 +100,7 @@ def test_l1_plus_l2_equity() -> None:
         "equity.US": 40.0,
         "equity.intl_developed": 60.0,
     }
-    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     eq = next(m for m in out.moves if m.path == "equity")
     assert len(eq.children) == 2
     # L2 decomposes the parent L1 dollar move (sell ~10k from equity) across
@@ -136,7 +137,7 @@ def test_full_l2_decompose_buy_splits_by_shortfall() -> None:
         "equity.US": 40.0,
         "equity.intl_developed": 60.0,
     }
-    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     eq = next(m for m in out.moves if m.path == "equity")
     assert eq.delta_usd > 0
     assert abs(sum(c.delta_usd for c in eq.children) - eq.delta_usd) < 1e-6
@@ -154,7 +155,7 @@ def test_hold_band() -> None:
         [_pos("E1", 50_500.0), _pos("B1", 49_500.0)], _classes()
     )
     targets = {"equity": 50.0, "fixed_income": 50.0}
-    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     eq = next(m for m in out.moves if m.path == "equity")
     # drift -0.5% -> within hold band
     assert eq.direction == "hold"
@@ -162,59 +163,59 @@ def test_hold_band() -> None:
     assert eq.delta_usd != 0.0
 
 
-def test_full_trigger_restores_in_band_classes() -> None:
-    """Trigger fires when any class is out of band; all classes with drift then action.
+def test_full_trigger_holds_ok_band_actions_watch_plus() -> None:
+    """Trigger fires when any class is in act/urgent; watch+ act, ok holds.
 
-    Mirrors the user-reported scenario: cash overweight (out of band) and
-    equity underweight (out of band) with several in-band drift classes
-    that previously rendered as ``Hold $X``. Under full-restore, every
-    drift class actions and totals net to zero (no idle cash, no
-    round-trip sells).
+    Under the 4-band redesign, the trigger fires at ``act_pct`` (not at
+    tolerance). When it fires, classes in the ``ok`` band (|drift| <=
+    tolerance) stay ``hold`` even though the portfolio rebalances; all
+    other classes (``watch``, ``act``, ``urgent``) get buy/sell. The
+    drifts are arranged so the ok-band rows themselves net to zero,
+    leaving the watch+ subset self-funding.
     """
     from app.schemas import AllocationResult, AllocationSlice
 
-    # Synthetic 100k portfolio with the same drift signature as the user's:
-    # equity -1.9 pp, real_estate -0.6 pp, cash +3.4 pp, fixed_income -0.5 pp,
-    # private +0.3 pp, commodity -0.3 pp, crypto -0.4 pp.
+    # Synthetic $100k portfolio with mixed-band drift signature:
+    # equity +6 (act), real_estate -5 (watch), cash -4 (watch),
+    # fixed_income +3 (watch), private -0.5 (ok), commodity +0.5 (ok).
+    # ok-band drifts net to 0 -> watch+ deltas self-fund.
     result = AllocationResult(
         total=100_000.0,
         by_asset_class=[
-            AllocationSlice(name="equity", value=53_100.0, pct=53.1, children=[]),
-            AllocationSlice(name="real_estate", value=24_400.0, pct=24.4, children=[]),
-            AllocationSlice(name="cash", value=10_400.0, pct=10.4, children=[]),
-            AllocationSlice(name="fixed_income", value=7_500.0, pct=7.5, children=[]),
-            AllocationSlice(name="private", value=3_300.0, pct=3.3, children=[]),
-            AllocationSlice(name="commodity", value=700.0, pct=0.7, children=[]),
-            AllocationSlice(name="crypto", value=600.0, pct=0.6, children=[]),
+            AllocationSlice(name="equity", value=50_000.0, pct=50.0, children=[]),
+            AllocationSlice(name="real_estate", value=30_000.0, pct=30.0, children=[]),
+            AllocationSlice(name="cash", value=14_000.0, pct=14.0, children=[]),
+            AllocationSlice(name="fixed_income", value=5_000.0, pct=5.0, children=[]),
+            AllocationSlice(name="private", value=500.0, pct=0.5, children=[]),
+            AllocationSlice(name="commodity", value=500.0, pct=0.5, children=[]),
         ],
         unclassified_tickers=[],
     )
     targets = {
-        "equity": 55.0,
+        "equity": 56.0,
         "real_estate": 25.0,
-        "cash": 7.0,
+        "cash": 10.0,
         "fixed_income": 8.0,
-        "private": 3.0,
+        "private": 0.0,
         "commodity": 1.0,
-        "crypto": 1.0,
     }
-    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     by = {m.path: m for m in out.moves}
 
-    # Trigger fires (equity -1.9 and cash +3.4 outside band) -> every drift
-    # class gets a real label, even those within ±1 pp.
-    assert by["equity"].direction == "buy"
-    assert by["cash"].direction == "sell"
-    assert by["real_estate"].direction == "buy"     # +0.6 pp (was Hold pre-fix)
-    assert by["fixed_income"].direction == "buy"    # +0.5 pp (was Hold)
-    assert by["private"].direction == "sell"        # -0.3 pp (was Hold)
-    assert by["commodity"].direction == "buy"       # +0.3 pp (was Hold)
-    assert by["crypto"].direction == "buy"          # +0.4 pp (was Hold)
+    # Trigger fires (equity +6 is in act band). Watch+ classes action;
+    # ok-band classes hold even though the trigger fired.
+    assert by["equity"].direction == "buy"          # +6 pp (act)
+    assert by["real_estate"].direction == "sell"    # -5 pp (watch)
+    assert by["cash"].direction == "sell"           # -4 pp (watch)
+    assert by["fixed_income"].direction == "buy"    # +3 pp (watch)
+    assert by["private"].direction == "hold"        # -0.5 pp (ok)
+    assert by["commodity"].direction == "hold"      # +0.5 pp (ok)
 
-    # Self-funding: sells = buys, net zero.
+    # ok-band drifts net to zero so watch+ moves self-fund: sells == buys.
     sells = sum(-m.delta_usd for m in out.moves if m.direction == "sell")
     buys = sum(m.delta_usd for m in out.moves if m.direction == "buy")
     assert abs(sells - buys) < 1e-6
+    # Total drift across all classes still sums to ~0 (target sums match).
     assert abs(sum(m.delta_usd for m in out.moves)) < 1e-6
 
 
@@ -224,7 +225,7 @@ def test_full_no_trigger_all_hold() -> None:
         [_pos("E1", 50_500.0), _pos("B1", 49_500.0)], _classes()
     )
     targets = {"equity": 50.0, "fixed_income": 50.0}
-    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     for m in out.moves:
         assert m.direction == "hold"
     # Drift dollars still reported on each row for provenance.
@@ -233,7 +234,7 @@ def test_full_no_trigger_all_hold() -> None:
 
 def test_full_l1_hold_band_skips_l2_decompose() -> None:
     """Equity has L2 targets but no class is out of band: no L2 rows."""
-    # Total 100k; equity 60.5k -> 60.5% vs L1 target 60% => drift -0.5 pp (|.| <= MINOR).
+    # Total 100k; equity 60.5k -> 60.5% vs L1 target 60% => drift -0.5 pp (|.| <= TOLERANCE).
     # delta_usd = -0.5% * 100k = -$500 (provenance); direction must stay hold with no L2.
     result = aggregate(
         [
@@ -253,9 +254,9 @@ def test_full_l1_hold_band_skips_l2_decompose() -> None:
         "equity.US": 40.0,
         "equity.intl_developed": 60.0,
     }
-    out = compute_rebalance(result, targets, drift_minor_pct=MINOR)
+    out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     eq = next(m for m in out.moves if m.path == "equity")
-    assert abs(60.0 - eq_slice.pct) <= MINOR  # |target - actual_pct| within hold band
+    assert abs(60.0 - eq_slice.pct) <= TOLERANCE  # |target - actual_pct| within hold band
     assert eq.direction == "hold"
     assert abs(eq.delta_usd - (-500.0)) < 1e-6
     assert eq.children == []
@@ -273,7 +274,7 @@ def test_new_money_gaps_exceed_contribution() -> None:
     )
     targets = {"equity": 50.0, "fixed_income": 40.0, "cash": 10.0}
     out = compute_new_money(
-        result, targets, contribution_usd=5_000.0, drift_minor_pct=MINOR
+        result, targets, contribution_usd=5_000.0, drift_tolerance_pct=TOLERANCE
     )
     assert out.mode == "new_money"
     assert out.contribution_usd == 5_000.0
@@ -313,7 +314,7 @@ def test_new_money_contribution_exceeds_gaps_excess_to_under_target_only() -> No
         result,
         {"equity": 20.0, "fixed_income": 30.0},
         contribution_usd=40.0,
-        drift_minor_pct=MINOR,
+        drift_tolerance_pct=TOLERANCE,
     )
     by = {m.path: m for m in out.moves}
     assert by["equity"].delta_usd == 0.0
@@ -344,7 +345,7 @@ def test_new_money_l2_hierarchical() -> None:
         "equity.intl_developed": 40.0,
     }
     out = compute_new_money(
-        result, targets, contribution_usd=10_000.0, drift_minor_pct=MINOR
+        result, targets, contribution_usd=10_000.0, drift_tolerance_pct=TOLERANCE
     )
     eq = next(m for m in out.moves if m.path == "equity")
     fi = next(m for m in out.moves if m.path == "fixed_income")
@@ -369,7 +370,7 @@ def test_new_money_l2_hierarchical() -> None:
         _classes(),
     )
     out2 = compute_new_money(
-        result2, targets, contribution_usd=10_000.0, drift_minor_pct=MINOR
+        result2, targets, contribution_usd=10_000.0, drift_tolerance_pct=TOLERANCE
     )
     eq2 = next(m for m in out2.moves if m.path == "equity")
     assert abs(eq2.delta_usd - 10_000.0) < 1e-6
@@ -390,13 +391,15 @@ def test_new_money_invalid_amount() -> None:
     for bad in (-1.0, 0.0, float("nan"), float("inf"), float("-inf")):
         with pytest.raises(ValueError):
             compute_new_money(
-                result, targets, contribution_usd=bad, drift_minor_pct=MINOR
+                result, targets, contribution_usd=bad, drift_tolerance_pct=TOLERANCE
             )
 
 
 def test_zero_total_empty_moves() -> None:
     result = aggregate([], _classes())
-    out = compute_rebalance(result, {"equity": 100.0}, drift_minor_pct=MINOR)
+    out = compute_rebalance(
+        result, {"equity": 100.0}, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT
+    )
     assert out.moves == []
     assert out.total == 0.0
 

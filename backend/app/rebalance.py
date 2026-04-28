@@ -1,19 +1,22 @@
-"""Rebalance math (v0.5 M1).
+"""Rebalance math (v0.5 M1, 4-band redesign).
 
 Pure functions over an already-built ``AllocationResult``. No I/O, no DB,
 no HTTP. Two modes:
 
 * ``full`` -- delta vs target for every L1 class (and nested L2 where
   group targets exist). Sum of L1 deltas is ~0. The drift band acts as
-  a **global trigger**: if any class drifts past ``drift_minor_pct``,
-  every class with non-zero drift is restored to target (full restore,
-  trades net to zero). If no class is past the band, every row is hold.
-  When triggered, L2 rows decompose the parent L1 dollar move across
-  sub-buckets (overweights lose first on sells; underweights gain first
-  on buys) so child ``delta_usd`` sums to the parent move.
+  a **global trigger**: if any class drifts past ``drift_act_pct`` (the
+  ``act`` or ``urgent`` band), every class outside the ``ok`` band is
+  restored to target (full restore, trades net to zero). Classes in
+  the ``ok`` band (|drift| <= ``drift_tolerance_pct``) stay ``hold``
+  even when the trigger fires. If no class is past the act band, every
+  row is hold. When triggered, L2 rows decompose the parent L1 dollar
+  move across sub-buckets (overweights lose first on sells; underweights
+  gain first on buys) so child ``delta_usd`` sums to the parent move.
 * ``new_money`` -- distribute a positive USD contribution by gap-fill
   first (``max(0, desired - current)``) and excess proportional to
-  target percent among classes at or under target. No sells.
+  target percent among classes at or under target. No sells. Bands do
+  not gate this mode.
 
 All math in floats; callers round for display.
 """
@@ -78,9 +81,17 @@ def _l2_currents(
     return out
 
 
-def _direction_triggered(delta_usd: float, triggered: bool) -> RebalanceDirection:
-    """Full-mode direction: hold unless the band trigger fired *and* this row has a real action."""
-    if not triggered or abs(delta_usd) < 1.0:
+def _direction_triggered(
+    delta_usd: float, drift_pct: float, triggered: bool, tolerance: float
+) -> RebalanceDirection:
+    """Full-mode direction: hold unless the band trigger fired *and* this row is outside the ``ok`` band.
+
+    Per the 4-band redesign: a class with |drift| <= ``tolerance`` is in
+    the ``ok`` (no-trade) band and stays ``hold`` even when the
+    portfolio-wide trigger fires. Classes in ``watch+`` get buy/sell
+    when triggered.
+    """
+    if not triggered or abs(drift_pct) <= tolerance or abs(delta_usd) < 1.0:
         return "hold"
     return "buy" if delta_usd > 0 else "sell"
 
@@ -174,11 +185,12 @@ def _decompose_l1_delta_into_l2(
 
 
 def _direction_new_money(
-    drift_pct: float, delta_usd: float, minor: float
+    drift_pct: float, delta_usd: float, tolerance: float
 ) -> RebalanceDirection:
-    # Spec: direction becomes "buy" unless the drift band is hold and
-    # delta is 0, then "hold". delta_usd is always >= 0 here.
-    if delta_usd == 0.0 and abs(drift_pct) <= minor:
+    # Spec: direction becomes "buy" unless the drift is in the no-trade
+    # (``ok``) band and delta is 0, then "hold". delta_usd is always
+    # >= 0 here.
+    if delta_usd == 0.0 and abs(drift_pct) <= tolerance:
         return "hold"
     return "buy"
 
@@ -187,9 +199,17 @@ def compute_rebalance(
     result: AllocationResult,
     targets: dict[str, float],
     *,
-    drift_minor_pct: float,
+    drift_tolerance_pct: float,
+    drift_act_pct: float,
 ) -> RebalanceResult:
-    """Full rebalance: deltas to realign every targeted class."""
+    """Full rebalance: deltas to realign every targeted class.
+
+    Trigger fires when any L1 class is in the ``act`` or ``urgent``
+    band (|drift| > ``drift_act_pct``). When triggered, classes in the
+    ``ok`` band (|drift| <= ``drift_tolerance_pct``) stay ``hold``;
+    everything else gets ``buy``/``sell``. When not triggered, every
+    row is ``hold``.
+    """
     total = result.total
     if total <= 0 or not _has_root_targets(targets):
         return RebalanceResult(mode="full", total=total, moves=[])
@@ -205,18 +225,24 @@ def compute_rebalance(
         delta_usd = drift_pct / 100.0 * total
         targeted.append((ac_slice, target, drift_pct, delta_usd))
 
-    # Trigger fires if any targeted class drifts past the minor band.
-    # When triggered: every class restores to target (full restore, net-zero).
-    # When not triggered: every class is hold.
-    triggered = any(abs(drift_pct) > drift_minor_pct for _, _, drift_pct, _ in targeted)
+    # Trigger fires if any targeted class is in the ``act`` or ``urgent``
+    # band -- i.e. |drift| > drift_act_pct. When triggered, every class
+    # outside the ``ok`` band gets a real action; ``ok``-band classes
+    # stay hold. When not triggered, every class is hold.
+    triggered = any(abs(drift_pct) > drift_act_pct for _, _, drift_pct, _ in targeted)
 
     moves: list[RebalanceMove] = []
-    for ac_slice, target, _drift_pct, delta_usd in targeted:
+    for ac_slice, target, drift_pct, delta_usd in targeted:
         ac = ac_slice.name
         children: list[RebalanceMove] = []
-        # Decompose L2 only when this row has a real action (band triggered
-        # somewhere AND this row is moving more than $1).
-        if triggered and _has_group_targets(ac, targets) and abs(delta_usd) >= 1.0:
+        # Decompose L2 only when this row has a real action: trigger
+        # fired, this class is outside the ok band, and delta > $1.
+        if (
+            triggered
+            and abs(drift_pct) > drift_tolerance_pct
+            and _has_group_targets(ac, targets)
+            and abs(delta_usd) >= 1.0
+        ):
             currents = _l2_currents(ac, ac_slice, targets)
             parent_value = ac_slice.value
             children = _decompose_l1_delta_into_l2(
@@ -226,7 +252,9 @@ def compute_rebalance(
         moves.append(
             RebalanceMove(
                 path=ac,
-                direction=_direction_triggered(delta_usd, triggered),
+                direction=_direction_triggered(
+                    delta_usd, drift_pct, triggered, drift_tolerance_pct
+                ),
                 delta_usd=delta_usd,
                 target_pct=target,
                 actual_pct=ac_slice.pct,
@@ -241,7 +269,7 @@ def compute_rebalance(
 def _allocate_new_money(
     items: list[tuple[str, float, float, float, float]],
     contribution: float,
-    minor: float,
+    tolerance: float,
 ) -> dict[str, float]:
     """Gap-fill then proportional-to-target excess.
 
@@ -264,8 +292,8 @@ def _allocate_new_money(
     excess = contribution - total_gap
     under = [
         (key, tgt)
-        for key, _cur, tgt, act, _des in items
-        if act <= tgt + minor
+        for key, _cur, tgt, actual, _des in items
+        if actual <= tgt + tolerance
     ]
     weight_sum = sum(w for _, w in under)
 
@@ -283,7 +311,7 @@ def compute_new_money(
     targets: dict[str, float],
     contribution_usd: float,
     *,
-    drift_minor_pct: float,
+    drift_tolerance_pct: float,
 ) -> RebalanceResult:
     """Distribute ``contribution_usd`` by gap-fill then proportional excess."""
     if not math.isfinite(contribution_usd) or contribution_usd <= 0:
@@ -315,7 +343,7 @@ def compute_new_money(
         l1_items.append((ac, current, tgt, actual_pct, desired))
         l1_slice_by_name[ac] = ac_slice
 
-    l1_buys = _allocate_new_money(l1_items, contribution_usd, drift_minor_pct)
+    l1_buys = _allocate_new_money(l1_items, contribution_usd, drift_tolerance_pct)
 
     moves: list[RebalanceMove] = []
     for ac, current, tgt, actual_pct, _desired in l1_items:
@@ -333,14 +361,14 @@ def compute_new_money(
                 desired2 = t2 / 100.0 * new_parent_total
                 l2_items.append((sub_path, cur_usd, t2, cur_pct, desired2))
 
-            l2_buys = _allocate_new_money(l2_items, buy, drift_minor_pct)
+            l2_buys = _allocate_new_money(l2_items, buy, drift_tolerance_pct)
             for sub_path, cur_usd, t2, cur_pct, _d2 in l2_items:
                 b2 = l2_buys.get(sub_path, 0.0)
                 drift2 = t2 - cur_pct
                 children.append(
                     RebalanceMove(
                         path=sub_path,
-                        direction=_direction_new_money(drift2, b2, drift_minor_pct),
+                        direction=_direction_new_money(drift2, b2, drift_tolerance_pct),
                         delta_usd=b2,
                         target_pct=t2,
                         actual_pct=cur_pct,
@@ -352,7 +380,7 @@ def compute_new_money(
         moves.append(
             RebalanceMove(
                 path=ac,
-                direction=_direction_new_money(drift_pct, buy, drift_minor_pct),
+                direction=_direction_new_money(drift_pct, buy, drift_tolerance_pct),
                 delta_usd=buy,
                 target_pct=tgt,
                 actual_pct=actual_pct,

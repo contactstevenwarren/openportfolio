@@ -83,12 +83,6 @@ export type HealthCounts = {
   lastSnapshotAge: string;
 };
 
-export type DriftStatus =
-  | { kind: "rebalance"; worstGapPct: number }
-  | { kind: "on-track" }
-  | { kind: "no-targets" }
-  | { kind: "no-data" };
-
 const SNAPSHOT_AT = "2026-04-26T18:00:00Z";
 const PRICE_FRESH: Freshness = {
   source: "yfinance",
@@ -152,8 +146,6 @@ export const mockAllocation: AllocationSlice[] = [
     freshness: SNAPSHOT_FRESH,
   },
 ];
-
-export const mockDriftStatus: DriftStatus = { kind: "rebalance", worstGapPct: 0.03 };
 
 export const mockDriftRows: DriftRow[] = [
   {

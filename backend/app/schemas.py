@@ -220,7 +220,7 @@ class ExportResult(BaseModel):
 # ----- allocation ---------------------------------------------------------
 
 
-DriftBand = Literal["on_target", "minor", "major"]
+DriftBand = Literal["ok", "watch", "act", "urgent"]
 
 
 class AllocationSlice(BaseModel):
@@ -372,11 +372,15 @@ ASSET_CLASS_OPTIONS: list[TaxonomyOption] = [
 
 
 class DriftThresholds(BaseModel):
-    """Minor/major drift bands from settings, exposed so the UI can
-    colour ring-2 slices the same way the backend classifies them."""
+    """4-band drift thresholds from settings, exposed so the UI can
+    colour ring-2 slices the same way the backend classifies them.
 
-    minor_pct: int
-    major_pct: int
+    Bands: |drift| <= tolerance => ok; <= act => watch; <= urgent => act;
+    > urgent => urgent. The rebalance trigger fires at act_pct."""
+
+    tolerance_pct: int
+    act_pct: int
+    urgent_pct: int
 
 
 class AllocationResult(BaseModel):
@@ -404,8 +408,9 @@ class AllocationResult(BaseModel):
     max_drift: float | None = None
     max_drift_band: DriftBand | None = None
     # v0.2: drift bands from settings so the frontend can honour env
-    # overrides (DRIFT_MINOR_PCT / DRIFT_MAJOR_PCT) without shipping its
-    # own defaults. None only for older responses that predate the field.
+    # overrides (DRIFT_TOLERANCE_PCT / DRIFT_ACT_PCT / DRIFT_URGENT_PCT)
+    # without shipping its own defaults. None only for older responses
+    # that predate the field.
     drift_thresholds: DriftThresholds | None = None
 
 

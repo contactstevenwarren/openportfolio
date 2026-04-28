@@ -195,23 +195,26 @@ export function applyAutoBalance(
 }
 
 export function driftThresholds(data: AllocationResult | undefined): {
-  minor_pct: number;
-  major_pct: number;
+  tolerance_pct: number;
+  act_pct: number;
+  urgent_pct: number;
 } {
   const d = data?.drift_thresholds;
   return {
-    minor_pct: d?.minor_pct ?? 1,
-    major_pct: d?.major_pct ?? 3,
+    tolerance_pct: d?.tolerance_pct ?? 3,
+    act_pct: d?.act_pct ?? 5,
+    urgent_pct: d?.urgent_pct ?? 10,
   };
 }
 
 export function bandFromAbs(
   abs: number,
-  t: { minor_pct: number; major_pct: number },
+  t: { tolerance_pct: number; act_pct: number; urgent_pct: number },
 ): DriftBand {
-  if (abs <= t.minor_pct) return 'on_target';
-  if (abs <= t.major_pct) return 'minor';
-  return 'major';
+  if (abs <= t.tolerance_pct) return 'ok';
+  if (abs <= t.act_pct) return 'watch';
+  if (abs <= t.urgent_pct) return 'act';
+  return 'urgent';
 }
 
 // Backend contract: root rows use bare asset-class paths ("equity"); group

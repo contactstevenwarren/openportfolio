@@ -41,7 +41,7 @@ def test_no_targets_all_drift_none() -> None:
     result = aggregate(
         [_pos("E1", 60_000.0), _pos("B1", 40_000.0)], _classes()
     )
-    out = apply_drift(result, {}, drift_minor_pct=1.0, drift_major_pct=3.0)
+    out = apply_drift(result, {}, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
     assert out.max_drift is None
     assert out.max_drift_band is None
     for s in out.by_asset_class:
@@ -59,30 +59,32 @@ def test_root_drift_and_max() -> None:
         [_pos("E1", 60_000.0), _pos("B1", 40_000.0)], _classes()
     )
     targets = {"equity": 55.0, "fixed_income": 45.0}
-    out = apply_drift(result, targets, drift_minor_pct=1.0, drift_major_pct=3.0)
+    out = apply_drift(result, targets, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
     eq = next(s for s in out.by_asset_class if s.name == "equity")
     fi = next(s for s in out.by_asset_class if s.name == "fixed_income")
     assert eq.target_pct == 55.0
     assert abs(eq.drift_pct - (eq.pct - 55.0)) < 1e-6
-    assert eq.drift_band == "major"  # |5| > drift_major_pct default path in test
-    assert fi.drift_band == "major"
+    assert eq.drift_band == "act"  # |5| > drift_act_pct=3 in test, <= urgent=10
+    assert fi.drift_band == "act"
     assert out.max_drift is not None
     assert abs(out.max_drift - 5.0) < 1e-6
-    assert out.max_drift_band == "major"
+    assert out.max_drift_band == "act"
 
 
 def test_max_drift_band_worst_on_tie() -> None:
     """Two slices with same |drift| but different bands -> pick worse band."""
     result = aggregate([_pos("E1", 50_000.0), _pos("B1", 50_000.0)], _classes())
     targets = {"equity": 48.5, "fixed_income": 48.5}
-    out = apply_drift(result, targets, drift_minor_pct=1.0, drift_major_pct=3.0)
-    # each drift 1.5% -> minor band
-    assert out.max_drift_band == "minor"
+    out = apply_drift(result, targets, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
+    # each drift 1.5% -> watch band (tolerance=1 < 1.5 <= act=3)
+    assert out.max_drift_band == "watch"
     targets2 = {"equity": 52.0, "fixed_income": 46.0}
-    out2 = apply_drift(result, targets2, drift_minor_pct=0.5, drift_major_pct=3.0)
-    # |2| and |4| -> max 4 is major, slice with 4 wins band major
+    out2 = apply_drift(
+        result, targets2, drift_tolerance_pct=0.5, drift_act_pct=3.0, drift_urgent_pct=10.0
+    )
+    # |2| watch, |4| act (>3, <=10) -- slice with 4 wins band act
     assert abs((out2.max_drift or 0) - 4.0) < 1e-6
-    assert out2.max_drift_band == "major"
+    assert out2.max_drift_band == "act"
 
 
 def test_equity_region_drill_independent_of_root() -> None:
@@ -90,7 +92,7 @@ def test_equity_region_drill_independent_of_root() -> None:
         [_pos("E1", 30_000.0), _pos("E2", 30_000.0)], _classes()
     )
     targets = {"equity.US": 40.0, "equity.intl_developed": 60.0}
-    out = apply_drift(result, targets, drift_minor_pct=1.0, drift_major_pct=3.0)
+    out = apply_drift(result, targets, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
     eq = next(s for s in out.by_asset_class if s.name == "equity")
     assert eq.target_pct is None  # no root targets
     us = next(c for c in eq.children if c.name == "US")
@@ -104,7 +106,7 @@ def test_equity_region_drill_independent_of_root() -> None:
 def test_sector_breakdown_untouched() -> None:
     result = aggregate([_pos("E1", 100_000.0)], _classes())
     targets = {"equity": 100.0}
-    out = apply_drift(result, targets, drift_minor_pct=1.0, drift_major_pct=3.0)
+    out = apply_drift(result, targets, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
     eq = next(s for s in out.by_asset_class if s.name == "equity")
     for sec in eq.sector_breakdown:
         assert sec.target_pct is None
@@ -115,7 +117,7 @@ def test_sector_breakdown_untouched() -> None:
 def test_fixed_income_subclass_aggregate_drift() -> None:
     result = aggregate([_pos("B1", 100_000.0)], _classes())
     targets = {"fixed_income.us_aggregate": 95.0}
-    out = apply_drift(result, targets, drift_minor_pct=1.0, drift_major_pct=3.0)
+    out = apply_drift(result, targets, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
     fi = next(s for s in out.by_asset_class if s.name == "fixed_income")
     for reg in fi.children:
         for leaf in reg.children:
@@ -152,7 +154,7 @@ def test_equity_region_drift_is_pct_of_parent_not_portfolio() -> None:
         _classes(),
     )
     targets = {"equity.US": 40.0, "equity.intl_developed": 60.0}
-    out = apply_drift(result, targets, drift_minor_pct=1.0, drift_major_pct=3.0)
+    out = apply_drift(result, targets, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
     eq = next(s for s in out.by_asset_class if s.name == "equity")
     us = next(c for c in eq.children if c.name == "US")
     intl = next(c for c in eq.children if c.name == "intl_developed")
@@ -180,12 +182,12 @@ def test_non_equity_subclass_drift_is_pct_of_parent_not_portfolio() -> None:
         "fixed_income.us_aggregate": 60.0,
         "fixed_income.us_tips": 40.0,
     }
-    out = apply_drift(result, targets, drift_minor_pct=1.0, drift_major_pct=3.0)
+    out = apply_drift(result, targets, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
     fi = next(s for s in out.by_asset_class if s.name == "fixed_income")
     seen: dict[str, float] = {}
     for reg in fi.children:
         for leaf in reg.children:
             seen[leaf.name] = leaf.drift_pct
-            assert leaf.drift_band == "on_target"
+            assert leaf.drift_band == "ok"
     assert abs(seen["us_aggregate"]) < 1e-6
     assert abs(seen["us_tips"]) < 1e-6

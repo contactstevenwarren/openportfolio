@@ -72,7 +72,7 @@ export type CommitResult = {
   tickers: string[];
 };
 
-export type DriftBand = 'on_target' | 'minor' | 'major';
+export type DriftBand = 'ok' | 'watch' | 'act' | 'urgent';
 
 export type AllocationSlice = {
   name: string;
@@ -97,8 +97,9 @@ export type FiveNumberSummary = {
 };
 
 export type DriftThresholds = {
-  minor_pct: number;
-  major_pct: number;
+  tolerance_pct: number;
+  act_pct: number;
+  urgent_pct: number;
 };
 
 export type AllocationResult = {
@@ -115,7 +116,7 @@ export type AllocationResult = {
   classification_sources: Record<string, string>;
   max_drift?: number | null;
   max_drift_band?: DriftBand;
-  /** When absent, UI uses 1% / 3% absolute drift for band thresholds. */
+  /** When absent, UI uses 3% / 5% / 10% absolute drift for band thresholds. */
   drift_thresholds?: DriftThresholds;
 };
 
