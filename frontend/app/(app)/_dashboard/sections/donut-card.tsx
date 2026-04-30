@@ -22,8 +22,10 @@ import {
 import {
   api,
   type AllocationResult,
-  type AllocationSlice as ApiSlice,
+  type AllocationSlice,
+  type DriftBand,
 } from "@/app/lib/api";
+import { useSandbox } from "@/app/lib/sandbox-context";
 import { humanize } from "@/app/lib/labels";
 import { Provenance } from "@/app/lib/provenance";
 import { ASSET_CLASS_COLOR, formatPct, formatUsd, type AssetClass } from "../mocks";
@@ -52,7 +54,7 @@ const DRIFT_CEILING_PP = 10;
 // API L1 names → AssetClass slug used by ASSET_CLASS_COLOR.
 // L1 "equity" lumps US + intl; the donut shows the lump, so we route it
 // through the US-equity blue. Anything not listed falls back to "other".
-const NAME_TO_CLASS: Record<string, AssetClass> = {
+export const NAME_TO_CLASS: Record<string, AssetClass> = {
   cash: "cash",
   equity: "us-equity",
   us_equity: "us-equity",
@@ -72,9 +74,10 @@ type DisplaySlice = {
   pct: number;
   targetPct: number | null;
   driftPct: number | null;
+  driftBand: DriftBand | null;
 };
 
-function toDisplaySlices(input: ApiSlice[]): DisplaySlice[] {
+function toDisplaySlices(input: AllocationSlice[]): DisplaySlice[] {
   return [...input]
     .filter((s) => s.value > 0)
     .sort((a, b) => b.value - a.value)
@@ -86,6 +89,7 @@ function toDisplaySlices(input: ApiSlice[]): DisplaySlice[] {
       pct: s.pct,
       targetPct: s.target_pct ?? null,
       driftPct: s.drift_pct ?? null,
+      driftBand: s.drift_band ?? null,
     }));
 }
 
@@ -110,11 +114,21 @@ export function DonutCard() {
     "/api/allocation",
     api.allocation,
   );
+  const { simulatedSlices } = useSandbox();
+  const isSimulating = simulatedSlices != null;
 
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle className="text-h3">Allocation</CardTitle>
+        <CardTitle className="text-h3">
+          Allocation
+          {isSimulating && (
+            <span className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2.5 py-1 text-body-sm font-medium text-warning">
+              <span aria-hidden>◎</span>
+              <span>Simulated</span>
+            </span>
+          )}
+        </CardTitle>
         <CardDescription>By asset class</CardDescription>
         <CardAction>
           <Link
@@ -126,7 +140,12 @@ export function DonutCard() {
         </CardAction>
       </CardHeader>
       <CardContent>
-        <DonutBody data={data} error={error} isLoading={isLoading} />
+        <DonutBody
+          data={data}
+          error={error}
+          isLoading={isLoading}
+          simulatedSlices={simulatedSlices}
+        />
       </CardContent>
     </Card>
   );
@@ -136,14 +155,16 @@ function DonutBody({
   data,
   error,
   isLoading,
+  simulatedSlices,
 }: {
   data: AllocationResult | undefined;
   error: unknown;
   isLoading: boolean;
+  simulatedSlices: AllocationSlice[] | undefined;
 }) {
   const [selected, setSelected] = React.useState<number | null>(null);
 
-  const slices = data ? toDisplaySlices(data.by_asset_class) : [];
+  const slices = toDisplaySlices(simulatedSlices ?? data?.by_asset_class ?? []);
   const rings = computeRings(slices);
 
   if (isLoading || (!data && !error)) {
@@ -239,36 +260,50 @@ function DonutBody({
           </PieChart>
         </ChartContainer>
 
-        <ul className="flex flex-1 flex-col gap-1">
+        <div className="flex flex-1 flex-col gap-0.5">
+          <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 px-2 pb-1.5">
+            <span className="text-label text-muted-foreground">Asset type</span>
+            <span className="w-14 text-right text-label text-muted-foreground">Amount</span>
+            <span className="w-12 text-right text-label text-muted-foreground">Target</span>
+            <span className="w-14 text-right text-label text-muted-foreground">Drift</span>
+          </div>
           {slices.map((s, i) => {
             const isActive = i === activeIndex;
             return (
-              <li key={s.name}>
+              <div key={s.name}>
                 <button
                   type="button"
                   onClick={() => toggle(i)}
                   aria-pressed={isSelected && isActive}
                   className={
-                    "flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
+                    "grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
                     (isSelected && isActive ? "bg-muted/40" : "")
                   }
                 >
-                  <span
-                    aria-hidden
-                    className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                    style={{ backgroundColor: ASSET_CLASS_COLOR[s.cls] }}
-                  />
-                  <span className="flex-1 truncate text-body-sm text-foreground">{s.label}</span>
-                  <span className="text-mono-sm tabular-nums text-muted-foreground">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span
+                      aria-hidden
+                      className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                      style={{ backgroundColor: ASSET_CLASS_COLOR[s.cls] }}
+                    />
+                    <span className="truncate text-body-sm text-foreground">{s.label}</span>
+                  </span>
+                  <span className="w-14 text-right text-mono-sm tabular-nums text-muted-foreground">
                     <Provenance source={STUB_PROVENANCE.source}>
-                      {formatPct(s.pct / 100)}
+                      {formatUsd(s.value, { compact: true })}
                     </Provenance>
                   </span>
+                  <span className="w-12 text-right text-mono-sm tabular-nums text-muted-foreground">
+                    {s.targetPct != null ? formatPct(s.targetPct / 100) : "—"}
+                  </span>
+                  <span className={`w-14 text-right text-mono-sm tabular-nums ${driftColor(s.driftBand)}`}>
+                    {s.driftPct != null ? formatPp(s.driftPct) : "—"}
+                  </span>
                 </button>
-              </li>
+              </div>
             );
           })}
-        </ul>
+        </div>
       </div>
     </div>
   );
@@ -310,6 +345,12 @@ function DonutTooltip({
 function formatPp(pp: number): string {
   const sign = pp > 0 ? "+" : pp < 0 ? "−" : "";
   return `${sign}${Math.abs(pp).toFixed(1)}pp`;
+}
+
+function driftColor(band: DriftBand | null): string {
+  if (!band || band === "ok") return "text-muted-foreground";
+  if (band === "urgent") return "text-destructive";
+  return "text-warning";
 }
 
 function DonutPlaceholder({
