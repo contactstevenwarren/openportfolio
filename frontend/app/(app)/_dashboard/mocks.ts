@@ -91,6 +91,10 @@ const PRICE_FRESH: Freshness = {
 };
 const SNAPSHOT_FRESH: Freshness = { source: "snapshot", capturedAt: SNAPSHOT_AT };
 const USER_FRESH: Freshness = { source: "user", capturedAt: "2026-04-25T12:00:00Z" };
+const USER_STALE_45D: Freshness = { source: "user", capturedAt: "2026-03-12T12:00:00Z" };
+const USER_STALE_32D: Freshness = { source: "user", capturedAt: "2026-03-25T12:00:00Z" };
+
+export const STALE_THRESHOLD_DAYS = 30;
 
 export const mockNetWorth = {
   total: 847392,
@@ -282,7 +286,7 @@ export const mockAccounts: Account[] = [
     type: "Real estate",
     value: 75000,
     pctOfNw: 0.089,
-    freshness: USER_FRESH,
+    freshness: USER_STALE_45D,
   },
   {
     id: "acct-hsa",
@@ -306,9 +310,21 @@ export const mockAccounts: Account[] = [
     type: "Alts",
     value: 25791,
     pctOfNw: 0.030,
-    freshness: USER_FRESH,
+    freshness: USER_STALE_32D,
   },
 ];
+
+const INVESTABLE_TYPES = new Set(["Taxable", "IRA", "401(k)", "HSA", "Alts"]);
+const investableTotal = mockAccounts
+  .filter((a) => INVESTABLE_TYPES.has(a.type))
+  .reduce((sum, a) => sum + a.value, 0);
+
+export const mockInvestable = {
+  total: investableTotal,
+  prevTotal: Math.round(investableTotal / 1.0176),
+  asOf: SNAPSHOT_AT,
+  freshness: SNAPSHOT_FRESH,
+};
 
 const monthlyDates = [
   "2025-05-01",
@@ -395,4 +411,21 @@ export function formatPct(value: number, opts: { signed?: boolean; digits?: numb
   const { signed, digits = 1 } = opts;
   const sign = signed && value > 0 ? "+" : "";
   return sign + (value * 100).toFixed(digits) + "%";
+}
+
+export function daysSince(iso: string, now: string | Date = SNAPSHOT_AT): number {
+  const then = new Date(iso).getTime();
+  const ref = typeof now === "string" ? new Date(now).getTime() : now.getTime();
+  return Math.max(0, Math.floor((ref - then) / 86_400_000));
+}
+
+export function getStaleAccounts(accounts: Account[], now: string | Date = SNAPSHOT_AT): Account[] {
+  return accounts
+    .filter(
+      (a) => a.freshness.capturedAt && daysSince(a.freshness.capturedAt, now) > STALE_THRESHOLD_DAYS,
+    )
+    .sort(
+      (a, b) =>
+        daysSince(b.freshness.capturedAt!, now) - daysSince(a.freshness.capturedAt!, now),
+    );
 }
