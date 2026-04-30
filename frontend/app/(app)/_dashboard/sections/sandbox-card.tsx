@@ -175,11 +175,9 @@ export function SandboxCard() {
                   <th className="pb-2 text-right text-label text-muted-foreground">
                     Needs
                   </th>
-                  {moves.length > 0 && (
-                    <th className="pb-2 text-right text-label text-muted-foreground">
-                      Buy
-                    </th>
-                  )}
+                  <th className="pb-2 text-right text-label text-muted-foreground">
+                    Buy
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -201,13 +199,11 @@ export function SandboxCard() {
                         ? `+${formatUsd(row.needsUsd)}`
                         : "—"}
                     </td>
-                    {moves.length > 0 && (
-                      <td className="py-2 text-right text-mono-sm tabular-nums text-foreground">
-                        {row.buyUsd != null
-                          ? `+${formatUsd(row.buyUsd)}`
-                          : "—"}
-                      </td>
-                    )}
+                    <td className="py-2 text-right text-mono-sm tabular-nums text-foreground">
+                      {row.buyUsd != null
+                        ? `+${formatUsd(row.buyUsd)}`
+                        : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
