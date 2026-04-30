@@ -58,29 +58,37 @@ export function SandboxCard() {
   const moveByPath = new Map(moves.map((m) => [m.path, m.delta_usd]));
   const total = allocationData?.total ?? 0;
 
-  // Multi-asset buy-only solution: find X and per-asset x_i such that
-  // (v_i + x_i) / (T + X) = t_i for all underweight i simultaneously.
-  // X = (T·Σt_i − Σv_i) / (1 − Σt_i), then x_i = t_i·(T+X) − v_i.
-  // Use drift_pct < 0 as the underweight signal (avoids float comparison bugs).
+  // Iterative buy-set solver for buy-only rebalancing.
+  // Adding new cash X grows the portfolio total, diluting even at-target assets.
+  // We find the minimal set S and amount X such that x_i = t_i*(T+X) − v_i > 0
+  // for all i in S. Start with all targeted assets, peel off the most overweight
+  // (highest v_i/t_i) one at a time until all x_i are positive.
   const baseSlices = allocationData?.by_asset_class ?? [];
-  const underweight = baseSlices.filter(
-    (s) => s.value > 0 && s.target_pct != null && s.target_pct < 100 &&
-      (s.drift_pct != null ? s.drift_pct < 0 : s.target_pct > s.pct + 0.01),
-  );
-  const sumTargetFrac = underweight.reduce((acc, s) => acc + (s.target_pct ?? 0) / 100, 0);
-  const sumValues = underweight.reduce((acc, s) => acc + s.value, 0);
-  const totalNeeds =
-    sumTargetFrac > 0 && sumTargetFrac < 1 && total > 0
-      ? Math.max(0, (total * sumTargetFrac - sumValues) / (1 - sumTargetFrac))
-      : null;
-  const needsUsdByName = new Map<string, number>(
-    totalNeeds != null
-      ? underweight.map((s) => [
-          s.name,
-          Math.max(0, (s.target_pct! / 100) * (total + totalNeeds) - s.value),
-        ])
-      : [],
-  );
+  const targeted = baseSlices
+    .filter((s) => s.value > 0 && s.target_pct != null && s.target_pct > 0)
+    .sort((a, b) => b.value / b.target_pct! - a.value / a.target_pct!);
+
+  let buySet = [...targeted];
+  let totalNeeds: number | null = null;
+  const needsUsdByName = new Map<string, number>();
+
+  for (let iter = 0; iter <= targeted.length; iter++) {
+    if (buySet.length === 0) break;
+    const sumT = buySet.reduce((acc, s) => acc + s.target_pct! / 100, 0);
+    if (sumT >= 1) { buySet.shift(); continue; }
+    const sumV = buySet.reduce((acc, s) => acc + s.value, 0);
+    const X = (total * sumT - sumV) / (1 - sumT);
+    if (X < 0) { buySet.shift(); continue; }
+    const entries = buySet.map(
+      (s) => [s.name, (s.target_pct! / 100) * (total + X) - s.value] as const,
+    );
+    if (entries.every(([, x]) => x > 0)) {
+      totalNeeds = X;
+      for (const [name, x] of entries) needsUsdByName.set(name, x);
+      break;
+    }
+    buySet.shift();
+  }
 
   const rows: TableRow[] = baseSlices
     .filter((s) => s.value > 0)
