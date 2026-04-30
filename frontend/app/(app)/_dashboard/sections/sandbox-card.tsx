@@ -64,36 +64,44 @@ export function SandboxCard() {
   const moveByPath = new Map(moves.map((m) => [m.path, m.delta_usd]));
   const total = allocationData?.total ?? 0;
 
-  // Iterative buy-set solver for buy-only rebalancing.
-  // Adding new cash X grows the portfolio total, diluting even at-target assets.
-  // We find the minimal set S and amount X such that x_i = t_i*(T+X) − v_i > 0
-  // for all i in S. Start with all targeted assets, peel off the most overweight
-  // (highest v_i/t_i) one at a time until all x_i are positive.
+  // Buy-only rebalancing solver.
+  //
+  // Injecting cash X grows the total, diluting even at-target assets. We solve
+  // for the set S of assets to buy and the total X such that every per-asset
+  // amount x_i = t_i·(T+X) − v_i is strictly positive.
+  //
+  // Strategy: sort by v_i/t_i descending (most overweight first), then try
+  // progressively smaller subsets — dropping one asset from the front each
+  // round — until all x_i are positive. The most overweight asset is always
+  // the one whose x_i goes negative first, so this converges in at most
+  // O(n) iterations.
   const baseSlices = allocationData?.by_asset_class ?? [];
   const targeted = baseSlices
-    .filter((s) => s.value > 0 && s.target_pct != null && s.target_pct > 0)
-    .sort((a, b) => b.value / b.target_pct! - a.value / a.target_pct!);
+    .filter((s): s is typeof s & { target_pct: number } =>
+      s.value > 0 && s.target_pct != null && s.target_pct > 0,
+    )
+    .sort((a, b) => b.value / b.target_pct - a.value / a.target_pct);
 
-  let buySet = [...targeted];
   let totalNeeds: number | null = null;
   const needsUsdByName = new Map<string, number>();
 
-  for (let iter = 0; iter <= targeted.length; iter++) {
-    if (buySet.length === 0) break;
-    const sumT = buySet.reduce((acc, s) => acc + s.target_pct! / 100, 0);
-    if (sumT >= 1) { buySet.shift(); continue; }
-    const sumV = buySet.reduce((acc, s) => acc + s.value, 0);
+  for (let drop = 0; drop < targeted.length; drop++) {
+    const subset = targeted.slice(drop);
+    const sumT = subset.reduce((acc, s) => acc + s.target_pct / 100, 0);
+    if (sumT >= 1) continue; // denominator collapses; drop another asset
+
+    const sumV = subset.reduce((acc, s) => acc + s.value, 0);
     const X = (total * sumT - sumV) / (1 - sumT);
-    if (X < 0) { buySet.shift(); continue; }
-    const entries = buySet.map(
-      (s) => [s.name, (s.target_pct! / 100) * (total + X) - s.value] as const,
+    if (X <= 0) continue;
+
+    const perAsset = subset.map(
+      (s) => [s.name, (s.target_pct / 100) * (total + X) - s.value] as const,
     );
-    if (entries.every(([, x]) => x > 0)) {
+    if (perAsset.every(([, x]) => x > 0)) {
       totalNeeds = X;
-      for (const [name, x] of entries) needsUsdByName.set(name, x);
+      for (const [name, x] of perAsset) needsUsdByName.set(name, x);
       break;
     }
-    buySet.shift();
   }
 
   const rows: TableRow[] = baseSlices
