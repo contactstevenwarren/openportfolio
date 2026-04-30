@@ -40,6 +40,7 @@ Run everything in containers. Never install on the host (no `npm`, `pip`, `brew`
 - One feature per branch, small PRs.
 - Run tests before saying "done."
 - Touches >5 files → stop, ask to split.
+- **Always use subagents when possible.** Delegate exploration, research, and independent slices of work to subagents (Explore for codebase searches, general-purpose for multi-step tasks, Plan for design). Dispatch independent slices in parallel. Reserve the main thread for synthesis and decisions.
 
 ## Skip unless asked
 - UI polish in v0.1 (function over form)
