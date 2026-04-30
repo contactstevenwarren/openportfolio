@@ -52,6 +52,12 @@ export function SandboxCard() {
     setNewCash(isNaN(parsed) ? 0 : parsed);
   }
 
+  function handleSuggestionClick(amount: number) {
+    const rounded = Math.round(amount);
+    setInputValue(String(rounded));
+    setNewCash(rounded);
+  }
+
   const simPctByName = new Map(
     (simulatedSlices ?? []).map((s) => [s.name, s.pct]),
   );
@@ -223,9 +229,13 @@ export function SandboxCard() {
         {totalNeeds != null && totalNeeds > 1 && (
           <p className="text-body-sm text-muted-foreground">
             To close all gaps simultaneously, deploy{" "}
-            <span className="font-medium text-foreground">
+            <button
+              type="button"
+              onClick={() => handleSuggestionClick(totalNeeds)}
+              className="font-medium text-foreground underline underline-offset-2 hover:text-foreground/70"
+            >
               {formatUsd(totalNeeds)}
-            </span>{" "}
+            </button>{" "}
             total.
           </p>
         )}
