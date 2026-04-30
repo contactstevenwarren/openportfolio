@@ -16,149 +16,281 @@ import { humanize } from "@/app/lib/labels";
 import { useSandbox } from "@/app/lib/sandbox-context";
 import { formatPct, formatUsd } from "../mocks";
 
-type TableRow = {
-  path: string;
+type Mode = "deploy" | "rebalance";
+
+type AssetHolding = {
+  name: string;
   label: string;
-  afterPct: number;
-  targetPct: number | null;
-  needsUsd: number | null;
-  buyUsd: number | null;
+  value: number;
+  pct: number;       // 0–100 scale from API
+  targetPct: number; // 0–100 scale from API
 };
 
-function SimBadge({ label }: { label: string }) {
-  return (
-    <span className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2.5 py-1 text-body-sm font-medium text-warning">
-      <span aria-hidden>◎</span>
-      <span>{label}</span>
-    </span>
+type AssetPlan = AssetHolding & { action: number };
+
+type Plan = {
+  assets: AssetPlan[];
+  cashExcess: number;
+  buyTotal: number;
+  sellTotal: number;
+};
+
+function computePlan(
+  holdings: AssetHolding[],
+  currentTotal: number,
+  mode: Mode,
+  newCash: number,
+  includeCashExcess: boolean,
+): Plan {
+  const newTotal = currentTotal + newCash;
+
+  if (mode === "rebalance") {
+    const assets = holdings.map((h) => ({
+      ...h,
+      action: (h.targetPct / 100) * newTotal - h.value,
+    }));
+    return {
+      assets,
+      cashExcess: 0,
+      buyTotal: assets.reduce((s, a) => s + Math.max(0, a.action), 0),
+      sellTotal: assets.reduce((s, a) => s + Math.max(0, -a.action), 0),
+    };
+  }
+
+  // Deploy cash mode — buy-only on non-cash assets
+  const cashName =
+    holdings.find((h) => h.name.toLowerCase() === "cash")?.name ?? null;
+  const cashHolding = holdings.find((h) => h.name === cashName);
+  const cashTarget = cashHolding ? (cashHolding.targetPct / 100) * newTotal : 0;
+  const cashValue = cashHolding?.value ?? 0;
+  const cashOverweight = cashValue > cashTarget;
+  const cashExcess = Math.max(0, cashValue - cashTarget);
+  const cashDrawdown = includeCashExcess && cashOverweight ? cashExcess : 0;
+  const totalAvailable = newCash + cashDrawdown;
+
+  const getDeficit = (h: AssetHolding) =>
+    h.name === cashName && cashOverweight
+      ? 0
+      : Math.max(0, (h.targetPct / 100) * newTotal - h.value);
+  const totalDeficit = holdings.reduce((s, h) => s + getDeficit(h), 0);
+  const sumTargets = holdings.reduce((s, h) => s + h.targetPct / 100, 0);
+
+  const buys: Record<string, number> = Object.fromEntries(
+    holdings.map((h) => [h.name, 0]),
+  );
+  if (totalAvailable > 0) {
+    if (totalDeficit > 0) {
+      const deploy = Math.min(totalAvailable, totalDeficit);
+      for (const h of holdings)
+        buys[h.name] = (deploy * getDeficit(h)) / totalDeficit;
+      const leftover = totalAvailable - totalDeficit;
+      if (leftover > 0 && sumTargets > 0)
+        for (const h of holdings)
+          buys[h.name] += (leftover * (h.targetPct / 100)) / sumTargets;
+    } else if (sumTargets > 0) {
+      for (const h of holdings)
+        buys[h.name] = (totalAvailable * (h.targetPct / 100)) / sumTargets;
+    }
+  }
+
+  const assets = holdings.map((h) => ({
+    ...h,
+    action: h.name === cashName ? buys[h.name] - cashDrawdown : buys[h.name],
+  }));
+  const cashAsset = assets.find((a) => a.name === cashName);
+  const buyTotal =
+    assets
+      .filter((a) => a.name !== cashName)
+      .reduce((s, a) => s + Math.max(0, a.action), 0) +
+    Math.max(0, cashAsset?.action ?? 0);
+
+  return { assets, cashExcess, buyTotal, sellTotal: 0 };
+}
+
+function checkBalanced(holdings: AssetHolding[], currentTotal: number): boolean {
+  if (currentTotal <= 0 || holdings.length === 0) return false;
+  return holdings.every(
+    (h) => Math.abs(h.value / currentTotal - h.targetPct / 100) < 0.005,
   );
 }
 
+function getHero(
+  mode: Mode,
+  plan: Plan,
+  newCash: number,
+  cashName: string | null,
+): { headline: string; sub: string } {
+  const { buyTotal, sellTotal, assets, cashExcess } = plan;
+  const cashAction = assets.find((a) => a.name === cashName)?.action ?? 0;
+  const usedCash = -cashAction;
+
+  if (mode === "rebalance") {
+    if (buyTotal < 1 && sellTotal < 1)
+      return { headline: "No moves needed", sub: "Portfolio matches target allocation." };
+    const headline =
+      buyTotal >= 1 && sellTotal >= 1
+        ? `Buy ${formatUsd(buyTotal)}, sell ${formatUsd(sellTotal)}`
+        : buyTotal >= 1
+          ? `Buy ${formatUsd(buyTotal)}`
+          : `Sell ${formatUsd(sellTotal)}`;
+    return { headline, sub: "Brings every asset class to target." };
+  }
+
+  if (buyTotal < 1 && Math.abs(cashAction) < 1) {
+    const hint = cashExcess > 0 ? " or enable rebalancing of excess cash" : "";
+    return { headline: "Nothing to deploy", sub: `Add new cash above${hint} to begin.` };
+  }
+  if (newCash > 0 && usedCash > 0.5)
+    return {
+      headline: `Deploy ${formatUsd(newCash + usedCash)}`,
+      sub: `${formatUsd(newCash)} new + ${formatUsd(usedCash)} from cash.`,
+    };
+  if (newCash > 0)
+    return {
+      headline: `Deploy ${formatUsd(newCash)}`,
+      sub: "Distributed across underweight assets.",
+    };
+  if (usedCash > 0.5)
+    return {
+      headline: `Rebalance ${formatUsd(usedCash)} from cash`,
+      sub: "No new money needed — your existing excess cash closes the gaps.",
+    };
+  return { headline: `Buy ${formatUsd(buyTotal)}`, sub: "" };
+}
+
+function getWhyText(
+  mode: Mode,
+  plan: Plan,
+  newCash: number,
+  includeCashExcess: boolean,
+): string {
+  if (mode === "rebalance")
+    return "Full rebalance moves every asset class to its exact target percentage at the current portfolio total. Sells are allowed alongside buys.";
+  const { cashExcess } = plan;
+  const usingCash = includeCashExcess && cashExcess > 0;
+  if (newCash === 0 && !usingCash && cashExcess > 0)
+    return "In buy-only mode, fixing a cash overweight requires diluting it with new buys. Without new cash and without permission to draw down existing cash, there is nothing to deploy.";
+  if (usingCash && newCash === 0)
+    return `Cash above target (${formatUsd(cashExcess)}) is redirected to underweight assets. The portfolio total stays the same — only the mix changes.`;
+  return "Available funds first close any underweight gaps. Any leftover is distributed by target weight so the portfolio remains balanced.";
+}
+
 export function SandboxCard() {
-  const { moves, rebalanceError, isStale, lastAsOf, setNewCash, simulatedSlices } =
-    useSandbox();
+  const { rebalanceError, isStale, lastAsOf, setNewCash } = useSandbox();
+  const [mode, setMode] = useState<Mode>("deploy");
   const [inputValue, setInputValue] = useState("");
+  const [includeCashExcess, setIncludeCashExcess] = useState(true);
+  const [whyOpen, setWhyOpen] = useState(false);
+
   const { data: allocationData } = useSWR<AllocationResult>(
     "/api/allocation",
     api.allocation,
   );
 
-  const isSimulating = simulatedSlices != null;
-
-  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const raw = e.target.value;
-    setInputValue(raw);
-    const parsed = parseFloat(raw.replace(/[^0-9.]/g, ""));
-    setNewCash(isNaN(parsed) ? 0 : parsed);
-  }
-
-  function handleSuggestionClick(amount: number) {
-    const rounded = Math.round(amount);
-    setInputValue(String(rounded));
-    setNewCash(rounded);
-  }
-
-  const simPctByName = new Map(
-    (simulatedSlices ?? []).map((s) => [s.name, s.pct]),
+  const newCash = Math.max(
+    0,
+    parseFloat(inputValue.replace(/[^0-9.]/g, "")) || 0,
   );
-  const moveByPath = new Map(moves.map((m) => [m.path, m.delta_usd]));
-  const total = allocationData?.total ?? 0;
+  const currentTotal = allocationData?.total ?? 0;
 
-  // Buy-only rebalancing solver.
-  //
-  // Injecting cash X grows the total, diluting even at-target assets. We solve
-  // for the set S of assets to buy and the total X such that every per-asset
-  // amount x_i = t_i·(T+X) − v_i is strictly positive.
-  //
-  // Strategy: sort by v_i/t_i descending (most overweight first), then try
-  // progressively smaller subsets — dropping one asset from the front each
-  // round — until all x_i are positive. The most overweight asset is always
-  // the one whose x_i goes negative first, so this converges in at most
-  // O(n) iterations.
-  const baseSlices = allocationData?.by_asset_class ?? [];
-  const targeted = baseSlices
-    .filter((s): s is typeof s & { target_pct: number } =>
-      s.value > 0 && s.target_pct != null && s.target_pct > 0,
-    )
-    .sort((a, b) => b.value / b.target_pct - a.value / a.target_pct);
+  const holdings: AssetHolding[] = (allocationData?.by_asset_class ?? [])
+    .filter((s) => s.value > 0)
+    .map((s) => ({
+      name: s.name,
+      label: humanize(s.name),
+      value: s.value,
+      pct: s.pct,
+      targetPct: s.target_pct ?? 0,
+    }));
 
-  let totalNeeds: number | null = null;
-  const needsUsdByName = new Map<string, number>();
+  const cashName =
+    holdings.find((h) => h.name.toLowerCase() === "cash")?.name ?? null;
+  const cashHolding = holdings.find((h) => h.name === cashName);
+  const cashOverweight = cashHolding
+    ? cashHolding.value > (cashHolding.targetPct / 100) * currentTotal
+    : false;
 
-  for (let drop = 0; drop < targeted.length; drop++) {
-    const subset = targeted.slice(drop);
-    const sumT = subset.reduce((acc, s) => acc + s.target_pct / 100, 0);
-    if (sumT >= 1) continue; // denominator collapses; drop another asset
+  const plan = computePlan(holdings, currentTotal, mode, newCash, includeCashExcess);
+  const balanced = checkBalanced(holdings, currentTotal);
+  const showEmptyState = mode === "deploy" && balanced && newCash === 0;
+  const isToggleOn = includeCashExcess && cashOverweight;
+  const hero = getHero(mode, plan, newCash, cashName);
 
-    const sumV = subset.reduce((acc, s) => acc + s.value, 0);
-    const X = (total * sumT - sumV) / (1 - sumT);
-    if (X <= 0) continue;
-
-    const perAsset = subset.map(
-      (s) => [s.name, (s.target_pct / 100) * (total + X) - s.value] as const,
-    );
-    if (perAsset.every(([, x]) => x > 0)) {
-      totalNeeds = X;
-      for (const [name, x] of perAsset) needsUsdByName.set(name, x);
-      break;
-    }
+  function handleModeChange(m: Mode) {
+    setMode(m);
+    setWhyOpen(false);
+    setInputValue("");
+    setNewCash(0);
+    setIncludeCashExcess(true);
   }
 
-  const rows: TableRow[] = baseSlices
-    .filter((s) => s.value > 0)
-    .map((s) => {
-      const afterPct = isSimulating
-        ? (simPctByName.get(s.name) ?? s.pct)
-        : s.pct;
-      const targetPct = s.target_pct ?? null;
-      const needsUsd = needsUsdByName.get(s.name) ?? null;
-      const buyUsd = moveByPath.get(s.name) ?? null;
-      return {
-        path: s.name,
-        label: humanize(s.name),
-        afterPct,
-        targetPct,
-        needsUsd,
-        buyUsd,
-      };
-    })
-    .sort((a, b) => (b.needsUsd ?? 0) - (a.needsUsd ?? 0));
+  function handleCashChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setInputValue(e.target.value);
+    const parsed = Math.max(
+      0,
+      parseFloat(e.target.value.replace(/[^0-9.]/g, "")) || 0,
+    );
+    setNewCash(parsed);
+  }
+
+  const cashInput = (
+    <div>
+      <label
+        htmlFor="sandbox-cash"
+        className="mb-1.5 block text-label text-muted-foreground"
+      >
+        New cash to deploy
+      </label>
+      <div className="relative">
+        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mono text-muted-foreground">
+          $
+        </span>
+        <input
+          id="sandbox-cash"
+          type="text"
+          inputMode="decimal"
+          placeholder="0"
+          value={inputValue}
+          onChange={handleCashChange}
+          className="w-full rounded-md border border-input bg-transparent py-2 pl-7 pr-3 text-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+      </div>
+    </div>
+  );
 
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle className="text-h3">
-          Sandbox
-          {isSimulating && <SimBadge label="Active" />}
-        </CardTitle>
-        <CardDescription>Deploy new cash, buy-only</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {/* Currency input */}
-        <div>
-          <label
-            htmlFor="sandbox-cash"
-            className="mb-1.5 block text-label text-muted-foreground"
-          >
-            New cash to deploy
-          </label>
-          <div className="relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mono text-muted-foreground">
-              $
-            </span>
-            <input
-              id="sandbox-cash"
-              type="text"
-              inputMode="decimal"
-              placeholder="0"
-              value={inputValue}
-              onChange={handleChange}
-              className="w-full rounded-md border border-input bg-transparent py-2 pl-7 pr-3 text-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 space-y-1">
+            <CardTitle className="text-h3">
+              {mode === "deploy" ? "Deploy cash" : "Full rebalance"}
+            </CardTitle>
+            <CardDescription className="tabular-nums">
+              Portfolio: {formatUsd(currentTotal)}
+              {mode === "rebalance" && " · Sells allowed across all assets"}
+            </CardDescription>
+          </div>
+          <div className="flex shrink-0 gap-0.5 rounded-lg bg-muted p-1">
+            {(["deploy", "rebalance"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => handleModeChange(m)}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  mode === m
+                    ? "bg-background text-foreground shadow-sm ring-1 ring-border"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {m === "deploy" ? "Deploy cash" : "Full rebalance"}
+              </button>
+            ))}
           </div>
         </div>
+      </CardHeader>
 
-        {/* Stale banner */}
+      <CardContent className="flex flex-col gap-4">
         {isStale && (
           <div className="rounded-md bg-warning-soft px-3 py-2 text-body-sm text-warning">
             ⚠ Positions last updated {lastAsOf} — older than 30 days. Guidance
@@ -166,7 +298,6 @@ export function SandboxCard() {
           </div>
         )}
 
-        {/* Error: no targets */}
         {rebalanceError && (
           <p className="text-body-sm text-destructive">
             Rebalancing requires targets.{" "}
@@ -179,80 +310,202 @@ export function SandboxCard() {
           </p>
         )}
 
-        {/* Allocation table */}
-        {rows.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="pb-2 text-label text-muted-foreground">
-                    Asset class
-                  </th>
-                  <th className="pb-2 text-right text-label text-muted-foreground">
-                    After
-                  </th>
-                  <th className="pb-2 text-right text-label text-muted-foreground">
-                    Target
-                  </th>
-                  <th className="pb-2 text-right text-label text-muted-foreground">
-                    Needs
-                  </th>
-                  <th className="pb-2 text-right text-label text-muted-foreground">
-                    Buy
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {rows.map((row) => (
-                  <tr key={row.path}>
-                    <td className="py-2 text-body-sm text-foreground">
-                      {row.label}
-                    </td>
-                    <td className="py-2 text-right text-mono-sm tabular-nums text-muted-foreground">
-                      {formatPct(row.afterPct / 100)}
-                    </td>
-                    <td className="py-2 text-right text-mono-sm tabular-nums text-muted-foreground">
-                      {row.targetPct != null
-                        ? formatPct(row.targetPct / 100)
-                        : "—"}
-                    </td>
-                    <td className="py-2 text-right text-mono-sm tabular-nums text-foreground">
-                      {row.needsUsd != null
-                        ? `+${formatUsd(row.needsUsd)}`
-                        : "—"}
-                    </td>
-                    <td className="py-2 text-right text-mono-sm tabular-nums text-foreground">
-                      {row.buyUsd != null
-                        ? `+${formatUsd(row.buyUsd)}`
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {showEmptyState ? (
+          <>
+            <div className="flex flex-col items-center gap-4 py-10 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500">
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-base font-medium">You&apos;re on target</p>
+                <p className="mx-auto max-w-xs text-sm text-muted-foreground">
+                  No drift to fix. Add new cash below to see how it would be
+                  deployed proportionally to your targets.
+                </p>
+              </div>
+            </div>
+            {cashInput}
+          </>
+        ) : (
+          <>
+            {mode === "deploy" && (
+              <>
+                {cashInput}
 
-        {/* Suggested total */}
-        {totalNeeds != null && totalNeeds > 1 && (
-          <p className="text-body-sm text-muted-foreground">
-            To close all gaps simultaneously, deploy{" "}
-            <button
-              type="button"
-              onClick={() => handleSuggestionClick(totalNeeds)}
-              className="font-medium text-foreground underline underline-offset-2 hover:text-foreground/70"
-            >
-              {formatUsd(totalNeeds)}
-            </button>{" "}
-            total.
-          </p>
-        )}
+                <div
+                  role={cashOverweight ? "button" : undefined}
+                  aria-disabled={!cashOverweight}
+                  onClick={
+                    cashOverweight
+                      ? () => setIncludeCashExcess((v) => !v)
+                      : undefined
+                  }
+                  className={`flex items-center justify-between gap-3 rounded-lg bg-muted px-4 py-3 ${
+                    cashOverweight
+                      ? "cursor-pointer"
+                      : "cursor-not-allowed opacity-50"
+                  }`}
+                >
+                  <div className="grid gap-0.5">
+                    <span className="text-sm">
+                      Include excess cash above target
+                    </span>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {cashOverweight
+                        ? `${formatUsd(plan.cashExcess)} of ${formatUsd(cashHolding?.value ?? 0)} available to redeploy`
+                        : "No excess cash above target"}
+                    </span>
+                  </div>
+                  <div
+                    className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                      isToggleOn ? "bg-accent" : "bg-input"
+                    }`}
+                  >
+                    <span
+                      className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-background shadow transition-transform ${
+                        isToggleOn ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
-        {/* Footer */}
-        <p className="mt-auto text-label text-muted-foreground">
-          Buy-only · Asset-class level · Execute at your broker, then re-upload
-          your statement.
-        </p>
+            <div className="rounded-lg bg-muted px-4 py-4">
+              <p className="mb-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                Plan
+              </p>
+              <p className="text-xl font-medium leading-snug tracking-tight tabular-nums">
+                {hero.headline}
+              </p>
+              {hero.sub && (
+                <p className="mt-2 text-sm text-muted-foreground tabular-nums">
+                  {hero.sub}
+                </p>
+              )}
+            </div>
+
+            {holdings.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="pb-2 text-label text-muted-foreground">
+                        Asset class
+                      </th>
+                      <th className="pb-2 text-right text-label text-muted-foreground">
+                        Position
+                      </th>
+                      <th className="pb-2 text-right text-label text-muted-foreground">
+                        After
+                      </th>
+                      <th className="pb-2 text-right text-label text-muted-foreground">
+                        Target
+                      </th>
+                      <th className="pb-2 text-right text-label text-muted-foreground">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {plan.assets.map((asset) => {
+                      const { action } = asset;
+                      const isCash = asset.name === cashName;
+                      let actionNode: React.ReactNode;
+                      if (Math.abs(action) < 1) {
+                        actionNode = (
+                          <span className="text-muted-foreground">—</span>
+                        );
+                      } else if (isCash) {
+                        if (action > 0)
+                          actionNode = (
+                            <span className="font-medium text-muted-foreground">
+                              Add {formatUsd(action)}
+                            </span>
+                          );
+                        else if (mode === "rebalance")
+                          actionNode = (
+                            <span className="font-medium text-destructive">
+                              Sell {formatUsd(-action)}
+                            </span>
+                          );
+                        else
+                          actionNode = (
+                            <span className="font-medium text-muted-foreground">
+                              Use {formatUsd(-action)}
+                            </span>
+                          );
+                      } else if (action > 0) {
+                        actionNode = (
+                          <span className="font-medium text-foreground">
+                            Buy {formatUsd(action)}
+                          </span>
+                        );
+                      } else {
+                        actionNode = (
+                          <span className="font-medium text-destructive">
+                            Sell {formatUsd(-action)}
+                          </span>
+                        );
+                      }
+
+                      return (
+                        <tr key={asset.name}>
+                          <td className="py-3 text-body-sm text-foreground">
+                            {asset.label}
+                          </td>
+                          <td className="py-3 text-right text-mono-sm tabular-nums text-foreground">
+                            {formatUsd(asset.value)}
+                          </td>
+                          <td className="py-3 text-right text-mono-sm tabular-nums text-muted-foreground">
+                            {formatPct((asset.value + asset.action) / (currentTotal + newCash))}
+                          </td>
+                          <td className="py-3 text-right text-mono-sm tabular-nums text-muted-foreground">
+                            {formatPct(asset.targetPct / 100)}
+                          </td>
+                          <td className="py-3 text-right text-mono-sm tabular-nums">
+                            {actionNode}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="mt-auto flex items-center justify-between gap-4 border-t border-border pt-4">
+              <button
+                type="button"
+                onClick={() => setWhyOpen((v) => !v)}
+                className="text-body-sm text-accent underline-offset-4 hover:underline"
+              >
+                {whyOpen ? "Hide explanation" : "Why these amounts?"}
+              </button>
+              <span className="text-right text-label text-muted-foreground">
+                Execute at your broker, then re-upload your statement
+              </span>
+            </div>
+
+            {whyOpen && (
+              <p className="rounded-lg bg-muted px-4 py-3 text-body-sm text-muted-foreground">
+                {getWhyText(mode, plan, newCash, includeCashExcess)}
+              </p>
+            )}
+          </>
+        )}
       </CardContent>
     </Card>
   );
