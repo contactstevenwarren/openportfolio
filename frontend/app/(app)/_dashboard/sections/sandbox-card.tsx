@@ -58,19 +58,38 @@ export function SandboxCard() {
   const moveByPath = new Map(moves.map((m) => [m.path, m.delta_usd]));
   const total = allocationData?.total ?? 0;
 
-  const rows: TableRow[] = (allocationData?.by_asset_class ?? [])
+  // Multi-asset buy-only solution: find X and per-asset x_i such that
+  // (v_i + x_i) / (T + X) = t_i for all underweight i simultaneously.
+  // X = (T·Σt_i − Σv_i) / (1 − Σt_i), then x_i = t_i·(T+X) − v_i.
+  // Use drift_pct < 0 as the underweight signal (avoids float comparison bugs).
+  const baseSlices = allocationData?.by_asset_class ?? [];
+  const underweight = baseSlices.filter(
+    (s) => s.value > 0 && s.target_pct != null && s.target_pct < 100 &&
+      (s.drift_pct != null ? s.drift_pct < 0 : s.target_pct > s.pct + 0.01),
+  );
+  const sumTargetFrac = underweight.reduce((acc, s) => acc + (s.target_pct ?? 0) / 100, 0);
+  const sumValues = underweight.reduce((acc, s) => acc + s.value, 0);
+  const totalNeeds =
+    sumTargetFrac > 0 && sumTargetFrac < 1 && total > 0
+      ? Math.max(0, (total * sumTargetFrac - sumValues) / (1 - sumTargetFrac))
+      : null;
+  const needsUsdByName = new Map<string, number>(
+    totalNeeds != null
+      ? underweight.map((s) => [
+          s.name,
+          Math.max(0, (s.target_pct! / 100) * (total + totalNeeds) - s.value),
+        ])
+      : [],
+  );
+
+  const rows: TableRow[] = baseSlices
     .filter((s) => s.value > 0)
     .map((s) => {
       const afterPct = isSimulating
         ? (simPctByName.get(s.name) ?? s.pct)
         : s.pct;
       const targetPct = s.target_pct ?? null;
-      // Buy-only formula: solve (equity+x)/(total+x) = target for x.
-      // x = (target*total - equity) / (1 - target)
-      const needsUsd =
-        targetPct != null && targetPct > s.pct && targetPct < 100
-          ? ((targetPct - s.pct) / 100 * total) / (1 - targetPct / 100)
-          : null;
+      const needsUsd = needsUsdByName.get(s.name) ?? null;
       const buyUsd = moveByPath.get(s.name) ?? null;
       return {
         path: s.name,
@@ -194,6 +213,17 @@ export function SandboxCard() {
               </tbody>
             </table>
           </div>
+        )}
+
+        {/* Suggested total */}
+        {totalNeeds != null && totalNeeds > 1 && (
+          <p className="text-body-sm text-muted-foreground">
+            To close all gaps simultaneously, deploy{" "}
+            <span className="font-medium text-foreground">
+              {formatUsd(totalNeeds)}
+            </span>{" "}
+            total.
+          </p>
         )}
 
         {/* Footer */}
