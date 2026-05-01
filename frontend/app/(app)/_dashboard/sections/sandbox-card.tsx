@@ -109,13 +109,6 @@ function computePlan(
   return { assets, cashExcess, buyTotal, sellTotal: 0, gapsClosed: totalAvailable >= totalDeficit };
 }
 
-function checkBalanced(holdings: AssetHolding[], currentTotal: number): boolean {
-  if (currentTotal <= 0 || holdings.length === 0) return false;
-  return holdings.every(
-    (h) => Math.abs(h.value / currentTotal - h.targetPct / 100) < 0.005,
-  );
-}
-
 function getHero(
   mode: Mode,
   plan: Plan,
@@ -249,7 +242,6 @@ export function SandboxCard() {
     : false;
 
   const plan = computePlan(holdings, currentTotal, mode, newCash, includeCashExcess);
-  const balanced = checkBalanced(holdings, currentTotal);
   const suggestedNewCash = computeSuggestedCash(
     holdings, currentTotal, cashName, includeCashExcess,
   );
@@ -259,7 +251,7 @@ export function SandboxCard() {
     return Math.max(0, cashHolding.value - cashTarget);
   })();
   const suggestedTotal = suggestedNewCash + suggestedCashDrawdown;
-  const showEmptyState = mode === "deploy" && balanced && newCash === 0;
+  const showActivePlan = mode === "rebalance" || newCash > 0;
   const isToggleOn = includeCashExcess && cashOverweight;
   const hero = getHero(mode, plan, newCash, cashName);
 
@@ -357,97 +349,56 @@ export function SandboxCard() {
           </p>
         )}
 
-        {showEmptyState ? (
+        {mode === "deploy" && cashInput}
+
+        {mode === "deploy" && suggestedTotal >= 1 && (
+          <button
+            type="button"
+            onClick={() => {
+              const formatted = suggestedNewCash.toFixed(0);
+              setInputValue(formatted);
+              setNewCash(suggestedNewCash);
+            }}
+            className="rounded-md bg-accent-soft px-3 py-2 text-left text-body-sm text-accent hover:brightness-95"
+          >
+            <span className="font-medium tabular-nums">
+              {formatUsd(suggestedTotal)}
+            </span>{" "}
+            closes all allocation gaps
+          </button>
+        )}
+
+        {mode === "deploy" && (
+          <button
+            type="button"
+            disabled={!cashOverweight}
+            onClick={() => setIncludeCashExcess(!includeCashExcess)}
+            className="flex items-center justify-between gap-3 py-1.5 text-left text-body-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span>
+              Redeploy excess cash
+              {cashOverweight && (
+                <span className="ml-1.5 text-muted-foreground tabular-nums">
+                  ({formatUsd(plan.cashExcess)})
+                </span>
+              )}
+            </span>
+            <span
+              className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${
+                isToggleOn ? "bg-accent" : "bg-input"
+              }`}
+            >
+              <span
+                className={`absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-background shadow transition-transform ${
+                  isToggleOn ? "translate-x-3" : "translate-x-0"
+                }`}
+              />
+            </span>
+          </button>
+        )}
+
+        {showActivePlan && (
           <>
-            <div className="flex flex-col items-center gap-4 py-10 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500">
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
-                >
-                  <path d="M20 6L9 17l-5-5" />
-                </svg>
-              </div>
-              <div className="space-y-1.5">
-                <p className="text-base font-medium">You&apos;re on target</p>
-                <p className="mx-auto max-w-xs text-sm text-muted-foreground">
-                  No drift to fix. Add new cash below to see how it would be
-                  deployed proportionally to your targets.
-                </p>
-              </div>
-            </div>
-            {cashInput}
-          </>
-        ) : (
-          <>
-            {mode === "deploy" && (
-              <>
-                {cashInput}
-
-                {suggestedTotal >= 1 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const formatted = suggestedNewCash.toFixed(0);
-                      setInputValue(formatted);
-                      setNewCash(suggestedNewCash);
-                    }}
-                    className="text-left text-body-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                  >
-                    To close all gaps simultaneously, deploy{" "}
-                    <span className="font-medium tabular-nums">
-                      {formatUsd(suggestedTotal)}
-                    </span>{" "}
-                    total
-                  </button>
-                )}
-
-                <div
-                  role={cashOverweight ? "button" : undefined}
-                  aria-disabled={!cashOverweight}
-                  onClick={
-                    cashOverweight
-                      ? () => setIncludeCashExcess(!includeCashExcess)
-                      : undefined
-                  }
-                  className={`flex items-center justify-between gap-3 rounded-lg bg-muted px-4 py-3 ${
-                    cashOverweight
-                      ? "cursor-pointer"
-                      : "cursor-not-allowed opacity-50"
-                  }`}
-                >
-                  <div className="grid gap-0.5">
-                    <span className="text-sm">
-                      Include excess cash above target
-                    </span>
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {cashOverweight
-                        ? `${formatUsd(plan.cashExcess)} of ${formatUsd(cashHolding?.value ?? 0)} available to redeploy`
-                        : "No excess cash above target"}
-                    </span>
-                  </div>
-                  <div
-                    className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-                      isToggleOn ? "bg-accent" : "bg-input"
-                    }`}
-                  >
-                    <span
-                      className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-background shadow transition-transform ${
-                        isToggleOn ? "translate-x-4" : "translate-x-0"
-                      }`}
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
             <div className="rounded-lg bg-muted px-4 py-4">
               <p className="mb-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">
                 Plan
@@ -469,9 +420,6 @@ export function SandboxCard() {
                     <tr className="border-b border-border">
                       <th className="pb-2 text-label text-muted-foreground">
                         Asset class
-                      </th>
-                      <th className="pb-2 text-right text-label text-muted-foreground">
-                        Position
                       </th>
                       <th className="pb-2 text-right text-label text-muted-foreground">
                         After
@@ -530,9 +478,6 @@ export function SandboxCard() {
                         <tr key={asset.name}>
                           <td className="py-3 text-body-sm text-foreground">
                             {asset.label}
-                          </td>
-                          <td className="py-3 text-right text-mono-sm tabular-nums text-foreground">
-                            {formatUsd(asset.value)}
                           </td>
                           <td className="py-3 text-right text-mono-sm tabular-nums text-muted-foreground">
                             {formatPct((asset.value + asset.action) / (currentTotal + newCash))}
