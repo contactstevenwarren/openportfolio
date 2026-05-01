@@ -122,12 +122,6 @@ export function DonutCard() {
       <CardHeader>
         <CardTitle className="text-h3">
           Allocation
-          {isSimulating && (
-            <span className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-warning-soft px-2.5 py-1 text-body-sm font-medium text-warning">
-              <span aria-hidden>◎</span>
-              <span>Simulated</span>
-            </span>
-          )}
         </CardTitle>
         <CardDescription>By asset class</CardDescription>
         <CardAction>

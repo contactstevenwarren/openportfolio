@@ -24,6 +24,8 @@ const DEBOUNCE_MS = 400;
 type SandboxCtx = {
   newCash: number;
   setNewCash: (v: number) => void;
+  includeCashExcess: boolean;
+  setIncludeCashExcess: (v: boolean) => void;
   simulatedSlices: AllocationSlice[] | undefined;
   moves: RebalanceMove[];
   rebalanceError: boolean;
@@ -34,6 +36,8 @@ type SandboxCtx = {
 const Context = createContext<SandboxCtx>({
   newCash: 0,
   setNewCash: () => {},
+  includeCashExcess: false,
+  setIncludeCashExcess: () => {},
   simulatedSlices: undefined,
   moves: [],
   rebalanceError: false,
@@ -48,6 +52,7 @@ export function useSandbox(): SandboxCtx {
 export function SandboxProvider({ children }: { children: ReactNode }) {
   const [newCash, setNewCash] = useState(0);
   const [debouncedCash, setDebouncedCash] = useState(0);
+  const [includeCashExcess, setIncludeCashExcess] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedCash(newCash), DEBOUNCE_MS);
@@ -85,28 +90,78 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
     : null;
 
   const simulatedSlices = useMemo<AllocationSlice[] | undefined>(() => {
-    if (!allocation || !rebalance?.moves || debouncedCash <= 0) return undefined;
+    if (!allocation) return undefined;
+
+    // API-based path: new cash entered
+    if (debouncedCash > 0) {
+      if (!rebalance?.moves) return undefined;
+      const thresholds = driftThresholds(allocation);
+      const deltaByPath = new Map(rebalance.moves.map((m) => [m.path, m.delta_usd]));
+      const newTotal = allocation.total + debouncedCash;
+      return allocation.by_asset_class.map((slice) => {
+        const delta = deltaByPath.get(slice.name) ?? 0;
+        const newValue = slice.value + delta;
+        const newPct = newTotal > 0 ? (newValue / newTotal) * 100 : 0;
+        const driftPct = slice.target_pct != null ? newPct - slice.target_pct : null;
+        return {
+          ...slice,
+          value: newValue,
+          pct: newPct,
+          drift_pct: driftPct,
+          drift_band: driftPct != null ? bandFromAbs(Math.abs(driftPct), thresholds) : undefined,
+        };
+      });
+    }
+
+    // Local path: cash-excess rebalance (no new cash, total stays constant)
+    if (!includeCashExcess) return undefined;
+    const total = allocation.total;
+    const cashSlice = allocation.by_asset_class.find(
+      (s) => s.name.toLowerCase() === "cash",
+    );
+    if (!cashSlice || cashSlice.target_pct == null) return undefined;
+    const cashTarget = (cashSlice.target_pct / 100) * total;
+    const cashExcess = Math.max(0, cashSlice.value - cashTarget);
+    if (cashExcess < 1) return undefined;
+
+    const nonCash = allocation.by_asset_class.filter((s) => s.name !== cashSlice.name);
+    const deficits = nonCash.map((s) =>
+      Math.max(0, ((s.target_pct ?? 0) / 100) * total - s.value),
+    );
+    const totalDeficit = deficits.reduce((a, b) => a + b, 0);
+    if (totalDeficit === 0) return undefined;
+
+    const deploy = Math.min(cashExcess, totalDeficit);
+    const deltas: Record<string, number> = {};
+    nonCash.forEach((s, i) => {
+      deltas[s.name] = (deploy * deficits[i]) / totalDeficit;
+    });
+    const leftover = cashExcess - totalDeficit;
+    if (leftover > 0) {
+      const sumTargets = nonCash.reduce((s, h) => s + (h.target_pct ?? 0) / 100, 0);
+      if (sumTargets > 0) {
+        nonCash.forEach((s) => {
+          deltas[s.name] = (deltas[s.name] ?? 0) + (leftover * ((s.target_pct ?? 0) / 100)) / sumTargets;
+        });
+      }
+    }
+    deltas[cashSlice.name] = -cashExcess;
+
     const thresholds = driftThresholds(allocation);
-    const deltaByPath = new Map(rebalance.moves.map((m) => [m.path, m.delta_usd]));
-    const newTotal = allocation.total + debouncedCash;
     return allocation.by_asset_class.map((slice) => {
-      const delta = deltaByPath.get(slice.name) ?? 0;
+      const delta = deltas[slice.name] ?? 0;
       const newValue = slice.value + delta;
-      const newPct = newTotal > 0 ? (newValue / newTotal) * 100 : 0;
-      const driftPct =
-        slice.target_pct != null ? newPct - slice.target_pct : null;
+      const newPct = total > 0 ? (newValue / total) * 100 : 0;
+      const driftPct = slice.target_pct != null ? newPct - slice.target_pct : null;
       return {
         ...slice,
         value: newValue,
         pct: newPct,
         drift_pct: driftPct,
-        drift_band:
-          driftPct != null
-            ? bandFromAbs(Math.abs(driftPct), thresholds)
-            : undefined,
+        drift_band: driftPct != null ? bandFromAbs(Math.abs(driftPct), thresholds) : undefined,
       };
     });
-  }, [allocation, rebalance, debouncedCash]);
+  }, [allocation, rebalance, debouncedCash, includeCashExcess]);
 
   const moves: RebalanceMove[] = useMemo(
     () =>
@@ -123,6 +178,8 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
       value={{
         newCash,
         setNewCash,
+        includeCashExcess,
+        setIncludeCashExcess,
         simulatedSlices,
         moves,
         rebalanceError: !!rebalanceErr,

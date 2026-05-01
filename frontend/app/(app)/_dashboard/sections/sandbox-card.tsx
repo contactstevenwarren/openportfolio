@@ -158,6 +158,41 @@ function getHero(
   return { headline: `Buy ${formatUsd(buyTotal)}`, sub: "" };
 }
 
+function computeSuggestedCash(
+  holdings: AssetHolding[],
+  currentTotal: number,
+  cashName: string | null,
+  includeCashExcess: boolean,
+): number {
+  const cashHolding = holdings.find((h) => h.name === cashName);
+  const cashOverweight = cashHolding
+    ? cashHolding.value > (cashHolding.targetPct / 100) * currentTotal
+    : false;
+
+  function residual(x: number): number {
+    const newTotal = currentTotal + x;
+    const cashTarget = cashHolding ? (cashHolding.targetPct / 100) * newTotal : 0;
+    const cashExcess = cashHolding ? Math.max(0, cashHolding.value - cashTarget) : 0;
+    const cashDrawdown = includeCashExcess ? cashExcess : 0;
+    const totalAvailable = x + cashDrawdown;
+    const totalDeficit = holdings.reduce((s, h) => {
+      if (h.name === cashName && cashOverweight) return s;
+      return s + Math.max(0, (h.targetPct / 100) * newTotal - h.value);
+    }, 0);
+    return totalAvailable - totalDeficit;
+  }
+
+  if (residual(0) >= 0) return 0;
+
+  let lo = 0, hi = currentTotal * 2;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (residual(mid) >= 0) hi = mid;
+    else lo = mid;
+  }
+  return Math.round(hi);
+}
+
 function getWhyText(
   mode: Mode,
   plan: Plan,
@@ -176,10 +211,9 @@ function getWhyText(
 }
 
 export function SandboxCard() {
-  const { rebalanceError, isStale, lastAsOf, setNewCash } = useSandbox();
+  const { rebalanceError, isStale, lastAsOf, setNewCash, includeCashExcess, setIncludeCashExcess } = useSandbox();
   const [mode, setMode] = useState<Mode>("deploy");
   const [inputValue, setInputValue] = useState("");
-  const [includeCashExcess, setIncludeCashExcess] = useState(true);
   const [whyOpen, setWhyOpen] = useState(false);
 
   const { data: allocationData } = useSWR<AllocationResult>(
@@ -212,6 +246,15 @@ export function SandboxCard() {
 
   const plan = computePlan(holdings, currentTotal, mode, newCash, includeCashExcess);
   const balanced = checkBalanced(holdings, currentTotal);
+  const suggestedNewCash = computeSuggestedCash(
+    holdings, currentTotal, cashName, includeCashExcess,
+  );
+  const suggestedCashDrawdown = (() => {
+    if (!includeCashExcess || !cashHolding) return 0;
+    const cashTarget = (cashHolding.targetPct / 100) * (currentTotal + suggestedNewCash);
+    return Math.max(0, cashHolding.value - cashTarget);
+  })();
+  const suggestedTotal = suggestedNewCash + suggestedCashDrawdown;
   const showEmptyState = mode === "deploy" && balanced && newCash === 0;
   const isToggleOn = includeCashExcess && cashOverweight;
   const hero = getHero(mode, plan, newCash, cashName);
@@ -221,7 +264,7 @@ export function SandboxCard() {
     setWhyOpen(false);
     setInputValue("");
     setNewCash(0);
-    setIncludeCashExcess(true);
+    setIncludeCashExcess(false);
   }
 
   function handleCashChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -344,12 +387,30 @@ export function SandboxCard() {
               <>
                 {cashInput}
 
+                {suggestedTotal >= 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const formatted = suggestedNewCash.toFixed(0);
+                      setInputValue(formatted);
+                      setNewCash(suggestedNewCash);
+                    }}
+                    className="text-left text-body-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    To close all gaps simultaneously, deploy{" "}
+                    <span className="font-medium tabular-nums">
+                      {formatUsd(suggestedTotal)}
+                    </span>{" "}
+                    total
+                  </button>
+                )}
+
                 <div
                   role={cashOverweight ? "button" : undefined}
                   aria-disabled={!cashOverweight}
                   onClick={
                     cashOverweight
-                      ? () => setIncludeCashExcess((v) => !v)
+                      ? () => setIncludeCashExcess(!includeCashExcess)
                       : undefined
                   }
                   className={`flex items-center justify-between gap-3 rounded-lg bg-muted px-4 py-3 ${
