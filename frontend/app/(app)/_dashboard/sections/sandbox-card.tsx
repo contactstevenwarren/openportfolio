@@ -252,8 +252,8 @@ export function SandboxCard() {
     return Math.max(0, cashHolding.value - cashTarget);
   })();
   const suggestedTotal = suggestedNewCash + suggestedCashDrawdown;
-  const showActivePlan = mode === "rebalance" || newCash > 0;
   const isToggleOn = includeCashExcess && cashOverweight;
+  const showActivePlan = mode === "rebalance" || newCash > 0 || isToggleOn;
   const hero = getHero(mode, plan, newCash, cashName);
 
   function handleModeChange(m: Mode) {
