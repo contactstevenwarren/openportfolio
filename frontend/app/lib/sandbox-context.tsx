@@ -91,16 +91,11 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
 
   const simulatedSlices = useMemo<AllocationSlice[] | undefined>(() => {
     if (!allocation) return undefined;
+    const thresholds = driftThresholds(allocation);
 
-    // API-based path: new cash entered
-    if (debouncedCash > 0) {
-      if (!rebalance?.moves) return undefined;
-      const thresholds = driftThresholds(allocation);
-      const deltaByPath = new Map(rebalance.moves.map((m) => [m.path, m.delta_usd]));
-      const newTotal = allocation.total + debouncedCash;
-      return allocation.by_asset_class.map((slice) => {
-        const delta = deltaByPath.get(slice.name) ?? 0;
-        const newValue = slice.value + delta;
+    const applyDeltas = (deltas: Record<string, number>, newTotal: number): AllocationSlice[] =>
+      allocation.by_asset_class.map((slice) => {
+        const newValue = slice.value + (deltas[slice.name] ?? 0);
         const newPct = newTotal > 0 ? (newValue / newTotal) * 100 : 0;
         const driftPct = slice.target_pct != null ? newPct - slice.target_pct : null;
         return {
@@ -111,56 +106,63 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
           drift_band: driftPct != null ? bandFromAbs(Math.abs(driftPct), thresholds) : undefined,
         };
       });
-    }
 
-    // Local path: cash-excess rebalance (no new cash, total stays constant)
-    if (!includeCashExcess) return undefined;
-    const total = allocation.total;
-    const cashSlice = allocation.by_asset_class.find(
-      (s) => s.name.toLowerCase() === "cash",
-    );
-    if (!cashSlice || cashSlice.target_pct == null) return undefined;
-    const cashTarget = (cashSlice.target_pct / 100) * total;
-    const cashExcess = Math.max(0, cashSlice.value - cashTarget);
-    if (cashExcess < 1) return undefined;
-
-    const nonCash = allocation.by_asset_class.filter((s) => s.name !== cashSlice.name);
-    const deficits = nonCash.map((s) =>
-      Math.max(0, ((s.target_pct ?? 0) / 100) * total - s.value),
-    );
-    const totalDeficit = deficits.reduce((a, b) => a + b, 0);
-    if (totalDeficit === 0) return undefined;
-
-    const deploy = Math.min(cashExcess, totalDeficit);
-    const deltas: Record<string, number> = {};
-    nonCash.forEach((s, i) => {
-      deltas[s.name] = (deploy * deficits[i]) / totalDeficit;
-    });
-    const leftover = cashExcess - totalDeficit;
-    if (leftover > 0) {
-      const sumTargets = nonCash.reduce((s, h) => s + (h.target_pct ?? 0) / 100, 0);
-      if (sumTargets > 0) {
-        nonCash.forEach((s) => {
-          deltas[s.name] = (deltas[s.name] ?? 0) + (leftover * ((s.target_pct ?? 0) / 100)) / sumTargets;
-        });
+    // Compute excess-cash deltas upfront (undefined when toggle is off or no excess)
+    let excessDeltas: Record<string, number> | undefined;
+    if (includeCashExcess) {
+      const cashSlice = allocation.by_asset_class.find(
+        (s) => s.name.toLowerCase() === "cash",
+      );
+      if (cashSlice?.target_pct != null) {
+        const cashTarget = (cashSlice.target_pct / 100) * allocation.total;
+        const cashExcess = Math.max(0, cashSlice.value - cashTarget);
+        if (cashExcess >= 1) {
+          const nonCash = allocation.by_asset_class.filter((s) => s.name !== cashSlice.name);
+          const deficits = nonCash.map((s) =>
+            Math.max(0, ((s.target_pct ?? 0) / 100) * allocation.total - s.value),
+          );
+          const totalDeficit = deficits.reduce((a, b) => a + b, 0);
+          if (totalDeficit > 0) {
+            excessDeltas = {};
+            const deploy = Math.min(cashExcess, totalDeficit);
+            nonCash.forEach((s, i) => {
+              excessDeltas![s.name] = (deploy * deficits[i]) / totalDeficit;
+            });
+            const leftover = cashExcess - totalDeficit;
+            if (leftover > 0) {
+              const sumTargets = nonCash.reduce((s, h) => s + (h.target_pct ?? 0) / 100, 0);
+              if (sumTargets > 0) {
+                nonCash.forEach((s) => {
+                  excessDeltas![s.name] =
+                    (excessDeltas![s.name] ?? 0) +
+                    (leftover * ((s.target_pct ?? 0) / 100)) / sumTargets;
+                });
+              }
+            }
+            excessDeltas[cashSlice.name] = -cashExcess;
+          }
+        }
       }
     }
-    deltas[cashSlice.name] = -cashExcess;
 
-    const thresholds = driftThresholds(allocation);
-    return allocation.by_asset_class.map((slice) => {
-      const delta = deltas[slice.name] ?? 0;
-      const newValue = slice.value + delta;
-      const newPct = total > 0 ? (newValue / total) * 100 : 0;
-      const driftPct = slice.target_pct != null ? newPct - slice.target_pct : null;
-      return {
-        ...slice,
-        value: newValue,
-        pct: newPct,
-        drift_pct: driftPct,
-        drift_band: driftPct != null ? bandFromAbs(Math.abs(driftPct), thresholds) : undefined,
-      };
-    });
+    if (debouncedCash > 0) {
+      // API still loading — show excess-cash result if available, else blank
+      if (!rebalance?.moves) {
+        return excessDeltas ? applyDeltas(excessDeltas, allocation.total) : undefined;
+      }
+      // API responded — combine new-money deltas with optional excess-cash deltas
+      const combined: Record<string, number> = {};
+      rebalance.moves.forEach((m) => { combined[m.path] = m.delta_usd; });
+      if (excessDeltas) {
+        allocation.by_asset_class.forEach((s) => {
+          combined[s.name] = (combined[s.name] ?? 0) + (excessDeltas![s.name] ?? 0);
+        });
+      }
+      return applyDeltas(combined, allocation.total + debouncedCash);
+    }
+
+    // No new cash — excess-cash only
+    return excessDeltas ? applyDeltas(excessDeltas, allocation.total) : undefined;
   }, [allocation, rebalance, debouncedCash, includeCashExcess]);
 
   const moves: RebalanceMove[] = useMemo(
