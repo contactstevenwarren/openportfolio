@@ -27,7 +27,25 @@ export function HeroSection() {
 
   return (
     <section className="grid grid-cols-1 gap-6 px-1 py-2 @lg/main:grid-cols-12">
-      <div className="flex flex-col gap-2 @lg/main:col-span-6">
+      <div className="flex flex-col gap-2 @lg/main:col-span-4">
+        <p className="text-label uppercase tracking-wide text-muted-foreground">
+          Investable portfolio
+        </p>
+        <p className="text-display font-mono tabular-nums">
+          <Provenance
+            source={mockInvestable.freshness.source}
+            confidence={mockInvestable.freshness.confidence}
+            capturedAt={mockInvestable.freshness.capturedAt}
+          >
+            {formatUsd(mockInvestable.total)}
+          </Provenance>
+        </p>
+        <p className="text-body-sm text-muted-foreground">
+          {formatPct(investablePct, { digits: 0 })} of net worth
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2 @lg/main:col-span-4 @lg/main:border-l @lg/main:border-border @lg/main:pl-6">
         <p className="text-label uppercase tracking-wide text-muted-foreground">
           Net worth
         </p>
@@ -57,25 +75,7 @@ export function HeroSection() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-2 @lg/main:col-span-3 @lg/main:border-l @lg/main:border-border @lg/main:pl-6">
-        <p className="text-label uppercase tracking-wide text-muted-foreground">
-          Investable portfolio
-        </p>
-        <p className="text-h2 font-mono tabular-nums leading-tight">
-          <Provenance
-            source={mockInvestable.freshness.source}
-            confidence={mockInvestable.freshness.confidence}
-            capturedAt={mockInvestable.freshness.capturedAt}
-          >
-            {formatUsd(mockInvestable.total)}
-          </Provenance>
-        </p>
-        <p className="text-body-sm text-muted-foreground">
-          {formatPct(investablePct, { digits: 0 })} of net worth
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-2 @lg/main:col-span-3 @lg/main:border-l @lg/main:border-border @lg/main:pl-6">
+      <div className="flex flex-col gap-2 @lg/main:col-span-4 @lg/main:border-l @lg/main:border-border @lg/main:pl-6">
         <p className="text-label uppercase tracking-wide text-muted-foreground">
           Status
         </p>
