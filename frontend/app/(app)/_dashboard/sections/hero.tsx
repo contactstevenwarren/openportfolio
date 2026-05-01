@@ -11,19 +11,13 @@ import {
 } from "../mocks";
 
 export function HeroSection() {
-  const { total, prevTotal, asOf, freshness } = mockNetWorth;
+  const { total, prevTotal, freshness } = mockNetWorth;
   const hasDelta = prevTotal != null && prevTotal !== total;
   const deltaUsd = hasDelta ? total - prevTotal : 0;
   const deltaPct = hasDelta ? deltaUsd / prevTotal : 0;
   const positive = deltaUsd > 0;
   const deltaTone = positive ? "text-success" : "text-destructive";
   const deltaGlyph = positive ? "↗" : "↘";
-  const asOfLabel = new Date(asOf).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-
   const investablePct = total > 0 ? mockInvestable.total / total : 0;
 
   const stale = getStaleAccounts(mockAccounts);
@@ -60,7 +54,6 @@ export function HeroSection() {
               </Provenance>
             </span>
           ) : null}
-          <span className="text-label text-muted-foreground">As of {asOfLabel}</span>
         </div>
       </div>
 
