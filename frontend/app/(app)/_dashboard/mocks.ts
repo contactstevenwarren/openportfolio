@@ -24,27 +24,10 @@ export type AllocationSlice = {
   freshness: Freshness;
 };
 
-export type Holding = {
-  ticker: string;
-  name?: string;
-  class: AssetClass;
-  classLabel: string;
-  value: number;
-  pctOfNw: number;
-  account: string;
-  freshness: Freshness;
-};
-
-export type EffectiveExposure = {
-  class: AssetClass;
-  label: string;
-  pct: number;
-  freshness: Freshness;
-};
-
 export type Account = {
   id: string;
   label: string;
+  institution: string;
   type: string;
   value: number;
   pctOfNw: number;
@@ -58,22 +41,6 @@ export type DriftRow = {
   targetPct: number;
   gap: number;
   deltaUsd: number;
-};
-
-export type SnapshotPoint = {
-  date: string;
-  cash: number;
-  "us-equity": number;
-  "intl-equity": number;
-  "fixed-income": number;
-  "real-estate": number;
-};
-
-export type ActivityEvent = {
-  id: string;
-  kind: "snapshot" | "edit" | "extraction";
-  label: string;
-  at: string;
 };
 
 export type HealthCounts = {
@@ -194,71 +161,11 @@ export const mockDriftRows: DriftRow[] = [
   },
 ];
 
-export const mockHoldings: Holding[] = [
-  {
-    ticker: "VTI",
-    name: "Vanguard Total Stock Market",
-    class: "us-equity",
-    classLabel: "US equity",
-    value: 184230,
-    pctOfNw: 0.218,
-    account: "Fidelity Brokerage",
-    freshness: PRICE_FRESH,
-  },
-  {
-    ticker: "VXUS",
-    name: "Vanguard Total International",
-    class: "intl-equity",
-    classLabel: "Intl equity",
-    value: 96120,
-    pctOfNw: 0.113,
-    account: "Fidelity Brokerage",
-    freshness: PRICE_FRESH,
-  },
-  {
-    ticker: "BND",
-    name: "Vanguard Total Bond Market",
-    class: "fixed-income",
-    classLabel: "Fixed income",
-    value: 88450,
-    pctOfNw: 0.104,
-    account: "Schwab IRA",
-    freshness: PRICE_FRESH,
-  },
-  {
-    ticker: "RE-PRIMARY",
-    name: "Primary residence",
-    class: "real-estate",
-    classLabel: "Real estate",
-    value: 75000,
-    pctOfNw: 0.089,
-    account: "Real estate",
-    freshness: USER_FRESH,
-  },
-  {
-    ticker: "VTSAX",
-    name: "Vanguard Total Stock Index Admiral",
-    class: "us-equity",
-    classLabel: "US equity",
-    value: 64812,
-    pctOfNw: 0.077,
-    account: "Schwab IRA",
-    freshness: PRICE_FRESH,
-  },
-];
-
-export const mockExposures: EffectiveExposure[] = [
-  { class: "us-equity", label: "US equity", pct: 0.52, freshness: PRICE_FRESH },
-  { class: "intl-equity", label: "Intl equity", pct: 0.18, freshness: PRICE_FRESH },
-  { class: "fixed-income", label: "Fixed income", pct: 0.16, freshness: PRICE_FRESH },
-  { class: "real-estate", label: "Real estate", pct: 0.08, freshness: USER_FRESH },
-  { class: "cash", label: "Cash", pct: 0.06, freshness: SNAPSHOT_FRESH },
-];
-
 export const mockAccounts: Account[] = [
   {
     id: "acct-fidelity",
     label: "Fidelity Brokerage",
+    institution: "Fidelity",
     type: "Taxable",
     value: 312445,
     pctOfNw: 0.369,
@@ -267,6 +174,7 @@ export const mockAccounts: Account[] = [
   {
     id: "acct-schwab-ira",
     label: "Schwab IRA",
+    institution: "Schwab",
     type: "IRA",
     value: 198320,
     pctOfNw: 0.234,
@@ -275,6 +183,7 @@ export const mockAccounts: Account[] = [
   {
     id: "acct-401k",
     label: "Employer 401(k)",
+    institution: "Vanguard",
     type: "401(k)",
     value: 142880,
     pctOfNw: 0.169,
@@ -283,6 +192,7 @@ export const mockAccounts: Account[] = [
   {
     id: "acct-realestate",
     label: "Primary residence",
+    institution: "Manual",
     type: "Real estate",
     value: 75000,
     pctOfNw: 0.089,
@@ -291,6 +201,7 @@ export const mockAccounts: Account[] = [
   {
     id: "acct-hsa",
     label: "HSA",
+    institution: "HealthEquity",
     type: "HSA",
     value: 51956,
     pctOfNw: 0.061,
@@ -299,6 +210,7 @@ export const mockAccounts: Account[] = [
   {
     id: "acct-cash",
     label: "Ally Savings",
+    institution: "Ally",
     type: "Cash",
     value: 41000,
     pctOfNw: 0.048,
@@ -307,6 +219,7 @@ export const mockAccounts: Account[] = [
   {
     id: "acct-gold",
     label: "Gold (physical)",
+    institution: "Manual",
     type: "Alts",
     value: 25791,
     pctOfNw: 0.030,
@@ -325,51 +238,6 @@ export const mockInvestable = {
   asOf: SNAPSHOT_AT,
   freshness: SNAPSHOT_FRESH,
 };
-
-const monthlyDates = [
-  "2025-05-01",
-  "2025-06-01",
-  "2025-07-01",
-  "2025-08-01",
-  "2025-09-01",
-  "2025-10-01",
-  "2025-11-01",
-  "2025-12-01",
-  "2026-01-01",
-  "2026-02-01",
-  "2026-03-01",
-  "2026-04-01",
-  "2026-04-26",
-];
-
-const baseSnapshot = {
-  cash: 58000,
-  "us-equity": 332000,
-  "intl-equity": 96000,
-  "fixed-income": 134000,
-  "real-estate": 100000,
-};
-
-export const mockSnapshots: SnapshotPoint[] = monthlyDates.map((date, i) => {
-  const growth = 1 + i * 0.012;
-  const noise = 1 + Math.sin(i) * 0.02;
-  return {
-    date,
-    cash: Math.round(baseSnapshot.cash * (1 + i * 0.008)),
-    "us-equity": Math.round(baseSnapshot["us-equity"] * growth * noise),
-    "intl-equity": Math.round(baseSnapshot["intl-equity"] * growth),
-    "fixed-income": Math.round(baseSnapshot["fixed-income"] * (1 + i * 0.005)),
-    "real-estate": Math.round(baseSnapshot["real-estate"] * (1 + i * 0.006)),
-  };
-});
-
-export const mockActivity: ActivityEvent[] = [
-  { id: "a1", kind: "snapshot", label: "Snapshot saved · $847,392", at: "2026-04-26T18:00:00Z" },
-  { id: "a2", kind: "extraction", label: "Imported 12 positions from Fidelity PDF", at: "2026-04-22T14:21:00Z" },
-  { id: "a3", kind: "edit", label: "Updated target: Cash 10% → 8%", at: "2026-04-18T09:15:00Z" },
-  { id: "a4", kind: "edit", label: "Set HSA cash/invested split", at: "2026-04-12T20:40:00Z" },
-  { id: "a5", kind: "snapshot", label: "Snapshot saved · $833,410", at: "2026-04-01T18:00:00Z" },
-];
 
 export const mockHealth: HealthCounts = {
   stalePrices: 2,

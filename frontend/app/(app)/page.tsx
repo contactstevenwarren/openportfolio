@@ -1,13 +1,9 @@
 import { SandboxProvider } from "@/app/lib/sandbox-context";
 import { AccountsCard } from "./_dashboard/sections/accounts-card";
-import { ActivityCard } from "./_dashboard/sections/activity-card";
 import { DonutCard } from "./_dashboard/sections/donut-card";
-import { ExposuresCard } from "./_dashboard/sections/exposures-card";
 import { HealthCard } from "./_dashboard/sections/health-card";
 import { HeroSection } from "./_dashboard/sections/hero";
-import { HoldingsCard } from "./_dashboard/sections/holdings-card";
 import { SandboxCard } from "./_dashboard/sections/sandbox-card";
-import { TimelineCard } from "./_dashboard/sections/timeline-card";
 
 export default function HomePage() {
   return (
@@ -24,24 +20,10 @@ export default function HomePage() {
           <SandboxCard />
         </div>
 
-        <div className="@lg/main:col-span-12">
-          <TimelineCard />
-        </div>
-
-        <div className="@lg/main:col-span-8">
-          <HoldingsCard />
-        </div>
-        <div className="@lg/main:col-span-4">
-          <ExposuresCard />
-        </div>
-
-        <div className="@lg/main:col-span-5">
-          <ActivityCard />
-        </div>
-        <div className="@lg/main:col-span-3">
+        <div className="@lg/main:col-span-7">
           <AccountsCard />
         </div>
-        <div className="@lg/main:col-span-4">
+        <div className="@lg/main:col-span-5">
           <HealthCard />
         </div>
       </div>
