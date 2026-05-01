@@ -33,6 +33,7 @@ type Plan = {
   cashExcess: number;
   buyTotal: number;
   sellTotal: number;
+  gapsClosed: boolean;
 };
 
 function computePlan(
@@ -54,6 +55,7 @@ function computePlan(
       cashExcess: 0,
       buyTotal: assets.reduce((s, a) => s + Math.max(0, a.action), 0),
       sellTotal: assets.reduce((s, a) => s + Math.max(0, -a.action), 0),
+      gapsClosed: true,
     };
   }
 
@@ -104,7 +106,7 @@ function computePlan(
       .reduce((s, a) => s + Math.max(0, a.action), 0) +
     Math.max(0, cashAsset?.action ?? 0);
 
-  return { assets, cashExcess, buyTotal, sellTotal: 0 };
+  return { assets, cashExcess, buyTotal, sellTotal: 0, gapsClosed: totalAvailable >= totalDeficit };
 }
 
 function checkBalanced(holdings: AssetHolding[], currentTotal: number): boolean {
@@ -153,7 +155,9 @@ function getHero(
   if (usedCash > 0.5)
     return {
       headline: `Rebalance ${formatUsd(usedCash)} from cash`,
-      sub: "No new money needed — your existing excess cash closes the gaps.",
+      sub: plan.gapsClosed
+        ? "No new money needed — your existing excess cash closes the gaps."
+        : "Deploys available excess cash toward underweight assets.",
     };
   return { headline: `Buy ${formatUsd(buyTotal)}`, sub: "" };
 }
