@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 
+import { Button } from "@/app/components/ui/button";
 import {
   Card,
   CardContent,
@@ -272,31 +273,6 @@ export function SandboxCard() {
     setNewCash(parsed);
   }
 
-  const cashInput = (
-    <div>
-      <label
-        htmlFor="sandbox-cash"
-        className="mb-1.5 block text-label text-muted-foreground"
-      >
-        New cash to deploy
-      </label>
-      <div className="relative">
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mono text-muted-foreground">
-          $
-        </span>
-        <input
-          id="sandbox-cash"
-          type="text"
-          inputMode="decimal"
-          placeholder="0"
-          value={inputValue}
-          onChange={handleCashChange}
-          className="w-full rounded-md border border-input bg-transparent py-2 pl-7 pr-3 text-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-      </div>
-    </div>
-  );
-
   return (
     <Card className="h-full">
       <CardHeader>
@@ -349,25 +325,6 @@ export function SandboxCard() {
           </p>
         )}
 
-        {mode === "deploy" && cashInput}
-
-        {mode === "deploy" && suggestedTotal >= 1 && (
-          <button
-            type="button"
-            onClick={() => {
-              const formatted = suggestedNewCash.toFixed(0);
-              setInputValue(formatted);
-              setNewCash(suggestedNewCash);
-            }}
-            className="rounded-md bg-accent-soft px-3 py-2 text-left text-body-sm text-accent hover:brightness-95"
-          >
-            <span className="font-medium tabular-nums">
-              {formatUsd(suggestedTotal)}
-            </span>{" "}
-            closes all allocation gaps
-          </button>
-        )}
-
         {mode === "deploy" && (
           <button
             type="button"
@@ -395,6 +352,52 @@ export function SandboxCard() {
               />
             </span>
           </button>
+        )}
+
+        {mode === "deploy" && (
+          <div>
+            <label
+              htmlFor="sandbox-cash"
+              className="mb-1.5 block text-label text-muted-foreground"
+            >
+              New cash to deploy
+            </label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mono text-muted-foreground">
+                  $
+                </span>
+                <input
+                  id="sandbox-cash"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={inputValue}
+                  onChange={handleCashChange}
+                  className="w-full rounded-md border border-input bg-transparent py-2 pl-7 pr-3 text-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+              {suggestedTotal >= 1 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const formatted = suggestedNewCash.toFixed(0);
+                    setInputValue(formatted);
+                    setNewCash(suggestedNewCash);
+                  }}
+                  className="tabular-nums"
+                >
+                  Use {formatUsd(suggestedTotal)}
+                </Button>
+              )}
+            </div>
+            {suggestedTotal >= 1 && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                to close all allocation gaps
+              </p>
+            )}
+          </div>
         )}
 
         {showActivePlan && (
