@@ -12,7 +12,7 @@ flagged as validation_errors by the validation layer so the user can
 review and fix them in the UI, not rejected silently.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from typing import Literal
 
@@ -70,6 +70,18 @@ STALENESS_THRESHOLD_BY_TYPE: dict[str, int] = {
 MANUAL_ACCOUNT_TYPES = {"real_estate", "private"}
 
 
+class InitialAssetPosition(BaseModel):
+    """Initial position for a new real_estate or private account.
+
+    market_value is required. cost_basis and purchase_date are optional.
+    asset_class is always inferred from account.type — not provided by caller.
+    """
+
+    market_value: float = Field(ge=0)
+    cost_basis: float | None = None
+    purchase_date: date | None = None  # becomes as_of on the Position
+
+
 class AccountCreate(BaseModel):
     label: str
     type: str = "brokerage"
@@ -77,6 +89,7 @@ class AccountCreate(BaseModel):
     tax_treatment: str = "taxable"
     staleness_threshold_days: int = 30
     is_archived: bool = False
+    initial_position: InitialAssetPosition | None = None
 
 
 class AccountPatch(BaseModel):
@@ -225,6 +238,7 @@ class PositionPatch(BaseModel):
     shares: float | None = None
     cost_basis: float | None = None
     market_value: float | None = None
+    as_of: datetime | None = None
     investable: bool | None = None
 
 

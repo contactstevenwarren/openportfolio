@@ -225,6 +225,7 @@ export type PositionPatch = {
   shares?: number;
   cost_basis?: number | null;
   market_value?: number | null;
+  as_of?: string;
   investable?: boolean;
 };
 
@@ -351,6 +352,11 @@ export const api = {
     institution_id?: number | null;
     tax_treatment?: 'taxable' | 'tax_deferred' | 'tax_free' | 'hsa';
     staleness_threshold_days?: number;
+    initial_position?: {
+      market_value: number;
+      cost_basis?: number | null;
+      purchase_date?: string | null;
+    };
   }) =>
     fetchJson<Account>('/api/accounts', {
       method: 'POST',

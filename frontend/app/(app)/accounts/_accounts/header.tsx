@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { mutate } from "swr";
 import { PlusIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
@@ -21,7 +21,7 @@ import {
   daysSince,
 } from "./mocks";
 import { InstitutionCombobox, AccountKindCombobox } from "./comboboxes";
-import { UpdateForm } from "./update-form";
+import { UpdateForm, type UpdateFormHandle } from "./update-form";
 
 // ── Stage type ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +44,9 @@ const FORM_DEFAULTS = {
   name: "",
   nameWasEdited: false,
   staleAfterDays: 30,
+  currentValue: "",
+  costBasis: "",
+  purchaseDate: "",
 };
 
 export function Header({ accounts, institutions, addOpen, onAddOpenChange }: HeaderProps) {
@@ -64,17 +67,14 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
   // ── State machine ─────────────────────────────────────────────────────────
   const [stage, setStage] = useState<Stage>("closed");
   const [pendingName, setPendingName] = useState("");
+  const [pendingAccount, setPendingAccount] = useState<Account | null>(null);
 
   // ── UpdateForm footer state ───────────────────────────────────────────────
   const [updateContinueDisabled, setUpdateContinueDisabled] = useState(true);
-  const [updateSubmitted, setUpdateSubmitted] = useState(false);
+  const updateFormRef = useRef<UpdateFormHandle>(null);
 
   const handleUpdateContinueDisabledChange = useCallback((disabled: boolean) => {
     setUpdateContinueDisabled(disabled);
-  }, []);
-
-  const handleUpdateContinue = useCallback(() => {
-    setUpdateSubmitted(true);
   }, []);
 
   // ── Save state ────────────────────────────────────────────────────────────
@@ -88,6 +88,11 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
   const [name, setName] = useState(FORM_DEFAULTS.name);
   const [nameWasEdited, setNameWasEdited] = useState(FORM_DEFAULTS.nameWasEdited);
   const [staleAfterDays, setStaleAfterDays] = useState(FORM_DEFAULTS.staleAfterDays);
+  const [currentValue, setCurrentValue] = useState(FORM_DEFAULTS.currentValue);
+  const [costBasis, setCostBasis] = useState(FORM_DEFAULTS.costBasis);
+  const [purchaseDate, setPurchaseDate] = useState(FORM_DEFAULTS.purchaseDate);
+
+  const isManual = kind?.isManual ?? false;
 
   // Auto-derived name: "${institution} ${kind}" unless the user has manually typed.
   const derivedName =
@@ -116,7 +121,11 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
     setName(FORM_DEFAULTS.name);
     setNameWasEdited(FORM_DEFAULTS.nameWasEdited);
     setStaleAfterDays(FORM_DEFAULTS.staleAfterDays);
+    setCurrentValue(FORM_DEFAULTS.currentValue);
+    setCostBasis(FORM_DEFAULTS.costBasis);
+    setPurchaseDate(FORM_DEFAULTS.purchaseDate);
     setPendingName("");
+    setPendingAccount(null);
     setSaveError(null);
   }
 
@@ -134,7 +143,7 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
     if (!open) {
       setStage("closed");
       resetForm();
-      setUpdateSubmitted(false);
+      setPendingAccount(null);
     }
   }
 
@@ -143,21 +152,43 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
       setSaveError("Pick an account kind before saving.");
       return;
     }
+    if (isManual && (currentValue === "" || isNaN(Number(currentValue)) || Number(currentValue) < 0)) {
+      setSaveError("Current value must be a non-negative number.");
+      return;
+    }
     const resolvedName = displayedName || kind.label || "New account";
     setSaving(true);
     setSaveError(null);
     try {
-      await api.createAccount({
-        label: resolvedName,
-        type: kind.accountType,
-        // institutionId > 0 = real DB row; 0/negative = synthetic placeholder not yet in DB
-        institution_id: institutionId != null && institutionId > 0 ? institutionId : null,
-        tax_treatment: kind.taxTreatment,
-        staleness_threshold_days: staleAfterDays,
-      });
-      await mutate("/api/accounts");
-      setPendingName(resolvedName);
-      setStage("update");
+      if (isManual) {
+        await api.createAccount({
+          label: resolvedName,
+          type: kind.accountType,
+          tax_treatment: kind.taxTreatment,
+          staleness_threshold_days: staleAfterDays,
+          initial_position: {
+            market_value: Number(currentValue),
+            cost_basis: costBasis !== "" ? Number(costBasis) : null,
+            purchase_date: purchaseDate !== "" ? purchaseDate : null,
+          },
+        });
+        await mutate("/api/accounts");
+        setStage("closed");
+        resetForm();
+      } else {
+        const created = await api.createAccount({
+          label: resolvedName,
+          type: kind.accountType,
+          // institutionId > 0 = real DB row; 0/negative = synthetic placeholder not yet in DB
+          institution_id: institutionId != null && institutionId > 0 ? institutionId : null,
+          tax_treatment: kind.taxTreatment,
+          staleness_threshold_days: staleAfterDays,
+        });
+        await mutate("/api/accounts");
+        setPendingName(resolvedName);
+        setPendingAccount(created);
+        setStage("update");
+      }
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Failed to create account.");
     } finally {
@@ -212,15 +243,17 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
               </p>
             )}
 
-            {/* Institution */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-body-sm font-medium">Institution</label>
-              <InstitutionCombobox
-                institutions={institutions}
-                value={institutionId}
-                onChange={handleInstitutionChange}
-              />
-            </div>
+            {/* Institution — hidden for manual (real_estate / private) kinds */}
+            {!isManual && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-body-sm font-medium">Institution</label>
+                <InstitutionCombobox
+                  institutions={institutions}
+                  value={institutionId}
+                  onChange={handleInstitutionChange}
+                />
+              </div>
+            )}
 
             {/* Account kind */}
             <div className="flex flex-col gap-1.5">
@@ -228,39 +261,103 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
               <AccountKindCombobox value={kind} onChange={handleKindChange} />
             </div>
 
-            {/* Account name — optional, auto-filled */}
+            {/* Asset/Account name — optional for non-manual, required for manual */}
             <div className="flex flex-col gap-1.5">
               <label className="text-body-sm font-medium" htmlFor="add-account-name">
-                Account name
-                <span className="ml-1.5 text-body-sm font-normal text-muted-foreground">
-                  (optional)
-                </span>
+                {isManual ? "Asset name" : "Account name"}
+                {!isManual && (
+                  <span className="ml-1.5 text-body-sm font-normal text-muted-foreground">
+                    (optional)
+                  </span>
+                )}
               </label>
               <input
                 id="add-account-name"
                 type="text"
                 value={displayedName}
-                placeholder={derivedName || "e.g. Vanguard Roth IRA"}
+                placeholder={derivedName || (isManual ? "e.g. 123 Main St" : "e.g. Vanguard Roth IRA")}
                 onChange={(e) => handleNameChange(e.target.value)}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
 
-            {/* Mark as stale after N days */}
-            <div className="flex items-center gap-2 py-1">
-              <label htmlFor="stale-after" className="text-body-sm text-foreground shrink-0">
-                Mark as stale after
-              </label>
-              <input
-                id="stale-after"
-                type="number"
-                min={1}
-                value={staleAfterDays}
-                onChange={(e) => setStaleAfterDays(Number(e.target.value))}
-                className="w-20 rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-              <span className="text-body-sm text-muted-foreground shrink-0">days</span>
-            </div>
+            {/* Current value — only for manual kinds */}
+            {isManual && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-body-sm font-medium" htmlFor="add-current-value">
+                  Current value
+                </label>
+                <input
+                  id="add-current-value"
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={currentValue}
+                  placeholder="0.00"
+                  onChange={(e) => setCurrentValue(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+            )}
+
+            {/* Cost basis — only for manual kinds */}
+            {isManual && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-body-sm font-medium" htmlFor="add-cost-basis">
+                  Cost basis
+                  <span className="ml-1.5 text-body-sm font-normal text-muted-foreground">
+                    (optional)
+                  </span>
+                </label>
+                <input
+                  id="add-cost-basis"
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={costBasis}
+                  placeholder="0.00"
+                  onChange={(e) => setCostBasis(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+            )}
+
+            {/* Purchase date — only for manual kinds */}
+            {isManual && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-body-sm font-medium" htmlFor="add-purchase-date">
+                  Purchase date
+                  <span className="ml-1.5 text-body-sm font-normal text-muted-foreground">
+                    (optional)
+                  </span>
+                </label>
+                <input
+                  id="add-purchase-date"
+                  type="date"
+                  value={purchaseDate}
+                  onChange={(e) => setPurchaseDate(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+            )}
+
+            {/* Mark as stale after N days — hidden for manual kinds */}
+            {!isManual && (
+              <div className="flex items-center gap-2 py-1">
+                <label htmlFor="stale-after" className="text-body-sm text-foreground shrink-0">
+                  Mark as stale after
+                </label>
+                <input
+                  id="stale-after"
+                  type="number"
+                  min={1}
+                  value={staleAfterDays}
+                  onChange={(e) => setStaleAfterDays(Number(e.target.value))}
+                  className="w-20 rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <span className="text-body-sm text-muted-foreground shrink-0">days</span>
+              </div>
+            )}
           </div>
 
           <SheetFooter className="px-4 pb-4">
@@ -280,16 +377,20 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
       <Sheet open={stage === "update"} onOpenChange={handleUpdateOpenChange}>
         <SheetContent side="right" className="overflow-y-auto flex flex-col">
           <SheetHeader>
-            <SheetTitle>Update {pendingName}</SheetTitle>
+            <SheetTitle>Import positions — {pendingName}</SheetTitle>
           </SheetHeader>
 
           <div className="flex-1 px-4 py-4">
-            <UpdateForm
-              key={stage === "update" ? "update-open" : "update-closed"}
-              initialMode="pdf"
-              onContinueDisabledChange={handleUpdateContinueDisabledChange}
-              onContinue={handleUpdateContinue}
-            />
+            {pendingAccount && (
+              <UpdateForm
+                ref={updateFormRef}
+                key={stage === "update" ? "update-open" : "update-closed"}
+                account={pendingAccount}
+                initialMode="pdf"
+                onContinueDisabledChange={handleUpdateContinueDisabledChange}
+                onContinue={() => handleUpdateOpenChange(false)}
+              />
+            )}
           </div>
 
           <SheetFooter className="px-4 pb-4 gap-2">
@@ -298,15 +399,13 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
                 Cancel
               </Button>
             </SheetClose>
-            {!updateSubmitted && (
-              <Button
-                size="sm"
-                disabled={updateContinueDisabled}
-                onClick={handleUpdateContinue}
-              >
-                Continue
-              </Button>
-            )}
+            <Button
+              size="sm"
+              disabled={updateContinueDisabled}
+              onClick={() => updateFormRef.current?.handleContinue()}
+            >
+              Continue
+            </Button>
           </SheetFooter>
         </SheetContent>
       </Sheet>
