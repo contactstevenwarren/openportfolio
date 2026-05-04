@@ -28,7 +28,7 @@ from .llm import classify_ticker, extract_positions
 from .pdf_text import PdfNoTextError, PdfTextTooLargeError, pdf_bytes_to_text
 from .scrub_digits import scrub_digit_runs
 from .lookthrough import Breakdown, get_yaml_breakdowns
-from .models import Account, Classification, Institution, Position, Provenance, Snapshot, Target
+from .models import Account, Classification, FundHolding, Institution, Position, Provenance, Snapshot, Target
 from .schemas import (
     ASSET_CLASS_OPTIONS,
     MANUAL_ACCOUNT_TYPES,
@@ -1693,3 +1693,25 @@ def export_all(db: Session = Depends(get_db)) -> ExportResult:
             for s in db.query(Snapshot).order_by(Snapshot.id).all()
         ],
     )
+
+
+# ----- reset ---------------------------------------------------------------
+
+
+@app.post("/api/reset", status_code=204, dependencies=[Depends(require_admin_token)])
+def reset_all(db: Session = Depends(get_db)) -> None:
+    """Wipe all user-owned account data and start fresh.
+
+    Accounts cascade-delete positions via the FK ondelete="CASCADE" constraint.
+    Classifications are intentionally preserved — they are reference data
+    (YAML-seeded + user overrides), not account-specific state.
+    """
+    # Delete positions explicitly — bulk DELETE bypasses the ORM cascade
+    # and SQLite does not enforce FK constraints without PRAGMA foreign_keys=ON.
+    db.execute(delete(Position))
+    db.execute(delete(Account))
+    db.execute(delete(Target))
+    db.execute(delete(Snapshot))
+    db.execute(delete(Provenance))
+    db.execute(delete(FundHolding))
+    db.commit()

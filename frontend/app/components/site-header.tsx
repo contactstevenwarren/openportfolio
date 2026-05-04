@@ -43,7 +43,6 @@ export function SiteHeader({ title }: { title?: string }) {
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuLabel>Account</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled>Settings</DropdownMenuItem>
             <DropdownMenuItem disabled>Sign out</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

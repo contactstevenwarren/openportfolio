@@ -474,4 +474,5 @@ export const api = {
     fetchJson<void>(`/api/classifications/${encodeURIComponent(ticker)}`, {
       method: 'DELETE',
     }),
+  reset: () => fetchJson<void>('/api/reset', { method: 'POST' }),
 };
