@@ -772,11 +772,11 @@ export function Row({
                       <thead>
                         <tr className="text-muted-foreground text-left border-b border-border">
                           <th className="pb-1 font-medium">Ticker</th>
-                          <th className="pb-1 font-medium text-right">Qty</th>
-                          <th className="pb-1 font-medium text-right">Value</th>
                           {!account.is_manual && (
                             <th className="pb-1 font-medium text-left pl-2">Class</th>
                           )}
+                          <th className="pb-1 font-medium text-right">Qty</th>
+                          <th className="pb-1 font-medium text-right">Value</th>
                           {!account.is_manual && (
                             <th className="pb-1 w-6" />
                           )}
@@ -788,12 +788,6 @@ export function Row({
                           return (
                             <tr key={pos.id} className="border-b border-border/50 last:border-0">
                               <td className="py-1.5 font-mono text-xs">{pos.ticker}</td>
-                              <td className="py-1.5 font-mono text-xs text-right tabular-nums">
-                                {pos.shares.toLocaleString()}
-                              </td>
-                              <td className="py-1.5 font-mono text-xs text-right tabular-nums">
-                                {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
-                              </td>
                               {!account.is_manual && (
                                 <td className="py-1.5 pl-2">
                                   {/* TODO(G3): derive cross-account ticker count once accounts prop is threaded to Row */}
@@ -806,6 +800,12 @@ export function Row({
                                   />
                                 </td>
                               )}
+                              <td className="py-1.5 font-mono text-xs text-right tabular-nums">
+                                {pos.shares.toLocaleString()}
+                              </td>
+                              <td className="py-1.5 font-mono text-xs text-right tabular-nums">
+                                {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
+                              </td>
                               {!account.is_manual && (
                                 <td className="py-1.5">
                                   <button
