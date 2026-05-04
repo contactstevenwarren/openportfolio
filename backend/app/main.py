@@ -59,6 +59,7 @@ from .schemas import (
     PositionRead,
     ProvenanceRead,
     RebalanceResult,
+    SnapshotEarliest,
     SnapshotRead,
     TargetsPayload,
     Taxonomy,
@@ -1261,6 +1262,29 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
             ),
         },
         deep=False,
+    )
+
+
+@app.get("/api/snapshots/earliest", dependencies=[Depends(require_admin_token)])
+def get_earliest_snapshot(db: Session = Depends(get_db)) -> SnapshotEarliest | None:
+    """Return the oldest Snapshot row, or null if none exist."""
+    import json as _json
+
+    snap = db.query(Snapshot).order_by(Snapshot.taken_at.asc()).first()
+    if snap is None:
+        return None
+    total: float | None = None
+    try:
+        payload = _json.loads(snap.payload_json)
+        raw = payload.get("total_usd")
+        if raw is not None:
+            total = float(raw)
+    except Exception:
+        pass
+    return SnapshotEarliest(
+        taken_at=snap.taken_at,
+        net_worth_usd=snap.net_worth_usd,
+        total_usd=total,
     )
 
 

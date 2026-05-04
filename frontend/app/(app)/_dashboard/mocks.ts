@@ -43,12 +43,6 @@ export type DriftRow = {
   deltaUsd: number;
 };
 
-export type HealthCounts = {
-  stalePrices: number;
-  untaggedTickers: number;
-  missingClassifications: number;
-  lastSnapshotAge: string;
-};
 
 const SNAPSHOT_AT = "2026-04-26T18:00:00Z";
 const PRICE_FRESH: Freshness = {
@@ -239,15 +233,9 @@ export const mockInvestable = {
   freshness: SNAPSHOT_FRESH,
 };
 
-export const mockHealth: HealthCounts = {
-  stalePrices: 2,
-  untaggedTickers: 1,
-  missingClassifications: 0,
-  lastSnapshotAge: "1 day ago",
-};
 
 // NOTE: us-equity and intl-equity share --viz-equity (v0.1.6 dashboard donut redesign
-// will collapse these to the single backend 'equity' class). alts→commodity, other→muted.
+// collapsed these to the single backend 'equity' class). alts → --viz-alts alias.
 export const ASSET_CLASS_COLOR: Record<AssetClass, string> = {
   cash: "var(--viz-cash)",
   "us-equity": "var(--viz-equity)",
@@ -255,8 +243,8 @@ export const ASSET_CLASS_COLOR: Record<AssetClass, string> = {
   "fixed-income": "var(--viz-fixed-income)",
   "real-estate": "var(--viz-real-estate)",
   crypto: "var(--viz-crypto)",
-  alts: "var(--viz-commodity)",
-  other: "var(--muted-foreground)",
+  alts: "var(--viz-alts)",
+  other: "var(--viz-other)",
 };
 
 export function formatUsd(value: number, opts: { compact?: boolean; signed?: boolean } = {}) {

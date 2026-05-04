@@ -1,5 +1,4 @@
 import { SandboxProvider } from "@/app/lib/sandbox-context";
-import { AccountsCard } from "./_dashboard/sections/accounts-card";
 import { DonutCard } from "./_dashboard/sections/donut-card";
 import { HealthCard } from "./_dashboard/sections/health-card";
 import { HeroSection } from "./_dashboard/sections/hero";
@@ -20,10 +19,7 @@ export default function HomePage() {
           <SandboxCard />
         </div>
 
-        <div className="@lg/main:col-span-7">
-          <AccountsCard />
-        </div>
-        <div className="@lg/main:col-span-5">
+        <div className="@lg/main:col-span-12">
           <HealthCard />
         </div>
       </div>

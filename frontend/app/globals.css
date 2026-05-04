@@ -42,8 +42,10 @@
   --viz-fixed-income: #7c3aed;
   --viz-real-estate: #ea580c;
   --viz-commodity: #ca8a04;
+  --viz-alts: #ca8a04;       /* alias — brand name for --viz-commodity */
   --viz-crypto: #db2777;
   --viz-private: #71717a;
+  --viz-other: #71717a;      /* brand token for unclassified / other */
 
   --chart-1: var(--viz-cash);
   --chart-2: var(--viz-equity);
@@ -106,8 +108,10 @@
   --viz-fixed-income: #a78bfa;
   --viz-real-estate: #fb923c;
   --viz-commodity: #facc15;
+  --viz-alts: #facc15;
   --viz-crypto: #f472b6;
   --viz-private: #a1a1aa;
+  --viz-other: #a1a1aa;
 
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.40);
   --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.50);
@@ -146,8 +150,10 @@
   --color-viz-fixed-income: var(--viz-fixed-income);
   --color-viz-real-estate: var(--viz-real-estate);
   --color-viz-commodity: var(--viz-commodity);
+  --color-viz-alts: var(--viz-alts);
   --color-viz-crypto: var(--viz-crypto);
   --color-viz-private: var(--viz-private);
+  --color-viz-other: var(--viz-other);
 
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
