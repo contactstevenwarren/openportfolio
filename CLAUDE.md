@@ -34,12 +34,13 @@ Two Dockerfiles exist intentionally — do not merge them:
 - `Dockerfile` — **production only**. Multi-stage, `COPY`s source, used by Fly. Do not touch for dev-only needs.
 - `Dockerfile.dev` — **local only**. Toolchain only (node + npm + uv + nginx); source bind-mounted from the host via `docker-compose.override.yml`. Runs `uvicorn --reload` + `next dev`.
 
-**Commands (always include all three `-f` flags for dev — omitting `docker-compose.override.yml` causes API 503 "admin token not configured"):**
-- First run or after dep changes: `docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.override.yml up -d --build`
-- Day-to-day: `docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.override.yml up -d` — code changes hot-reload, do not add `--build`
+**Commands:**
+- First run or after dep changes: `docker compose up -d --build`
+- Day-to-day: `docker compose up -d` — code changes hot-reload, do not add `--build`
 - Add npm dep: `docker compose exec app sh -c 'cd /app/frontend && npm install <pkg>'`
 - Add Python dep: `docker compose exec app sh -c 'cd /app/backend && uv add <pkg>'`
-- Reset dep volumes: `docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.override.yml down -v`
+- Reset dep volumes: `docker compose down -v`
+- Smoke-test the prod image (no mounts): `docker compose -f docker-compose.yml up -d`
 
 **Verify hot reload works:**
 ```bash
@@ -52,7 +53,7 @@ git checkout backend/app/main.py
 
 **Do not:**
 - Pass `--build` for code-only changes — it's slow and defeats the purpose
-- Edit `Dockerfile`, `entrypoint.sh`, `nginx.conf`, or `fly.toml` for dev-only fixes — edit `Dockerfile.dev` / `entrypoint.dev.sh` / `docker-compose.dev.yml` instead
+- Edit `Dockerfile`, `entrypoint.sh`, `nginx.conf`, or `fly.toml` for dev-only fixes — edit `Dockerfile.dev` / `entrypoint.dev.sh` / `docker-compose.override.yml` instead
 - Install deps on the host — use `docker compose exec` as shown above
 
 ## Mindset

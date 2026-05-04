@@ -205,7 +205,7 @@ export function List({
       {!isFileDragging && (
         <p className="-mb-3 px-4 text-body-sm text-muted-foreground inline-flex items-center gap-1.5">
           <UploadIcon className="size-3.5" aria-hidden="true" />
-          Drop a PDF on a row to update — or click the upload icon.
+          Drop a PDF on a row to import positions — or click the upload icon.
         </p>
       )}
 

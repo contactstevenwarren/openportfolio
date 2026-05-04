@@ -47,9 +47,8 @@ cd openportfolio
 
 # required secrets -- see "Configuration" below for the full list
 cp .env.example .env  # then edit with your Azure/Ollama creds
-                       # if you skip this you'll see 503s on /api/extract
 
-docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.override.yml up -d --build
+docker compose up -d --build
 # first time only: builds Dockerfile.dev and installs deps into named volumes (~2 min)
 open http://localhost:8080
 ```
@@ -59,9 +58,15 @@ First time you open the UI you'll be prompted for the admin token. It's stored i
 Day-to-day, skip `--build` — code changes hot-reload automatically:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.override.yml up -d
+docker compose up -d
 # edit backend .py files  → uvicorn reloads in ~1s
 # edit frontend .tsx/.ts  → Next.js Fast Refresh in-browser
+```
+
+To smoke-test the prod image without bind mounts (what Fly actually runs):
+
+```bash
+docker compose -f docker-compose.yml up -d
 ```
 
 #### When to rebuild (`--build`)
@@ -69,10 +74,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose
 | Situation | Command |
 |---|---|
 | Code change (`.py`, `.tsx`, `.ts`, `.css`, `data/*.yaml`) | no rebuild needed — hot-reload handles it |
-| `frontend/package.json` or `backend/pyproject.toml` changed | add `--build` to the compose command |
-| `Dockerfile.dev`, `nginx.conf`, or `entrypoint.dev.sh` changed | add `--build` to the compose command |
-|| Reset everything (drops named dep volumes) | replace `up -d` with `down -v && up -d --build` |
-|| API 503 "server admin token not configured" | forgot `-f docker-compose.override.yml` — always include all three `-f` flags |
+| `frontend/package.json` or `backend/pyproject.toml` changed | add `--build` to `docker compose up -d` |
+| `Dockerfile.dev`, `nginx.conf`, or `entrypoint.dev.sh` changed | add `--build` to `docker compose up -d` |
+| Reset everything (drops named dep volumes) | `docker compose down -v && docker compose up -d --build` |
 
 ### Run tests
 
