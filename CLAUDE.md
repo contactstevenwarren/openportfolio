@@ -29,6 +29,32 @@ alwaysApply: true
 ## Docker only
 Run everything in containers. Never install on the host (no `npm`, `pip`, `brew`, `apt`, `cargo`, `gem`, etc.). New tools go in `Dockerfile` / `docker-compose.yml`. If it can't run in a container, ask first.
 
+### Local dev (hot reload)
+Two Dockerfiles exist intentionally — do not merge them:
+- `Dockerfile` — **production only**. Multi-stage, `COPY`s source, used by Fly. Do not touch for dev-only needs.
+- `Dockerfile.dev` — **local only**. Toolchain only (node + npm + uv + nginx); source bind-mounted from the host via `docker-compose.override.yml`. Runs `uvicorn --reload` + `next dev`.
+
+**Commands (always include both `-f` flags for dev):**
+- First run or after dep changes: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`
+- Day-to-day: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` — code changes hot-reload, do not add `--build`
+- Add npm dep: `docker compose exec app sh -c 'cd /app/frontend && npm install <pkg>'`
+- Add Python dep: `docker compose exec app sh -c 'cd /app/backend && uv add <pkg>'`
+- Reset dep volumes: `docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v`
+
+**Verify hot reload works:**
+```bash
+curl -s http://localhost:8080/health   # expect {"ok":true}
+echo '# touched' >> backend/app/main.py
+sleep 3
+docker compose logs app --tail=20 | grep -i "reload"   # expect uvicorn reload line
+git checkout backend/app/main.py
+```
+
+**Do not:**
+- Pass `--build` for code-only changes — it's slow and defeats the purpose
+- Edit `Dockerfile`, `entrypoint.sh`, `nginx.conf`, or `fly.toml` for dev-only fixes — edit `Dockerfile.dev` / `entrypoint.dev.sh` / `docker-compose.dev.yml` instead
+- Install deps on the host — use `docker compose exec` as shown above
+
 ## Mindset
 - **Think first.** State assumptions; ask when unclear. Present options rather than picking silently.
 - **Minimum code.** Nothing speculative — no abstractions, config, or error handling for impossible cases. If 200 lines could be 50, rewrite.
