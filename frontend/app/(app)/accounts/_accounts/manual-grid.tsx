@@ -26,6 +26,7 @@ type GridRow = {
 
 type ManualGridProps = {
   account: Account;
+  onSuccess?: () => void;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -47,7 +48,7 @@ function isRowFilled(row: GridRow): boolean {
 
 // ── ManualGrid ─────────────────────────────────────────────────────────────────
 
-export function ManualGrid({ account }: ManualGridProps) {
+export function ManualGrid({ account, onSuccess }: ManualGridProps) {
   const [rows, setRows] = useState<GridRow[]>([emptyRow()]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -103,6 +104,7 @@ export function ManualGrid({ account }: ManualGridProps) {
       await mutate(`/api/positions?account_id=${account.id}`);
       setSavedCount(filledRows.length);
       setRows([emptyRow()]);
+      onSuccess?.();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Commit failed.");
     } finally {

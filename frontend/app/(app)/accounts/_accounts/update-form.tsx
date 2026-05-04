@@ -315,7 +315,7 @@ export const UpdateForm = forwardRef<UpdateFormHandle, UpdateFormProps>(function
 
         {/* ── Manual tab ──────────────────────────────────────────────────── */}
         <TabsContent value="manual">
-          <ManualGrid account={account} />
+          <ManualGrid account={account} onSuccess={onContinue} />
         </TabsContent>
       </Tabs>
     </div>
