@@ -379,7 +379,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
 
         {/* Mismatched-account warning */}
         {matchedAccount && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-body-sm text-amber-800">
+          <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-body-sm text-warning">
             This statement looks like it&apos;s for <strong>{matchedAccount.label}</strong>. Still
             importing into <strong>{account.label}</strong>?
           </div>
@@ -440,9 +440,9 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                   row.validation_errors.length > 0
                     ? "bg-destructive/10"
                     : row.class_source === "llm"
-                    ? "bg-amber-50/60"
+                    ? "bg-warning/10"
                     : row.class_source === "none" && row.asset_class === null
-                    ? "bg-destructive/5"
+                    ? "bg-destructive/10"
                     : "";
 
                 return (
@@ -468,7 +468,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                     {/* Status */}
                     <td className="px-2 py-1.5 text-center font-semibold">
                       {row.status === "new" && <span className="text-green-600">+</span>}
-                      {row.status === "changed" && <span className="text-amber-600">△</span>}
+                      {row.status === "changed" && <span className="text-warning">△</span>}
                       {row.status === "unchanged" && <span className="text-muted-foreground">=</span>}
                       {row.status === "removed" && <span className="text-destructive">−</span>}
                     </td>
