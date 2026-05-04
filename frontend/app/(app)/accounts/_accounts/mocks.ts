@@ -44,9 +44,9 @@ export const ACCOUNT_KINDS: AccountKind[] = [
   { id: "k-401k",        label: "401(k)",             accountType: "brokerage",   taxTreatment: "tax_deferred", defaultStaleness: 30,  isManual: false },
   { id: "k-403b",        label: "403(b)",             accountType: "brokerage",   taxTreatment: "tax_deferred", defaultStaleness: 30,  isManual: false },
   { id: "k-hsa",         label: "HSA",                accountType: "brokerage",   taxTreatment: "hsa",          defaultStaleness: 30,  isManual: false },
-  { id: "k-checking",    label: "Checking",           accountType: "bank",        taxTreatment: "taxable",      defaultStaleness: 7,   isManual: false },
-  { id: "k-savings",     label: "Savings",            accountType: "bank",        taxTreatment: "taxable",      defaultStaleness: 7,   isManual: false },
-  { id: "k-crypto",      label: "Crypto wallet",      accountType: "crypto",      taxTreatment: "taxable",      defaultStaleness: 1,   isManual: false },
+  { id: "k-checking",    label: "Checking",           accountType: "bank",        taxTreatment: "taxable",      defaultStaleness: 30,  isManual: false },
+  { id: "k-savings",     label: "Savings",            accountType: "bank",        taxTreatment: "taxable",      defaultStaleness: 30,  isManual: false },
+  { id: "k-crypto",      label: "Crypto wallet",      accountType: "crypto",      taxTreatment: "taxable",      defaultStaleness: 30,  isManual: false },
   { id: "k-real-estate", label: "Real estate",        accountType: "real_estate", taxTreatment: "taxable",      defaultStaleness: 90,  isManual: true  },
   { id: "k-private",     label: "Private equity",     accountType: "private",     taxTreatment: "taxable",      defaultStaleness: 365, isManual: true  },
 ];
@@ -234,9 +234,23 @@ function daysAgo(days: number): string {
 export const MANUAL_INST_ID = "inst-manual";
 
 export const mockInstitutions: Institution[] = [
-  { id: "inst-vanguard",  name: "Vanguard" },
-  { id: "inst-fidelity",  name: "Fidelity" },
+  // Alphabetical. Existing IDs preserved so mockAccounts references stay valid.
+  { id: "inst-ally",      name: "Ally Bank" },
+  { id: "inst-bofa",      name: "Bank of America" },
+  { id: "inst-capone",    name: "Capital One" },
+  { id: "inst-schwab",    name: "Charles Schwab" },
+  { id: "inst-chase",     name: "Chase" },
   { id: "inst-coinbase",  name: "Coinbase" },
+  { id: "inst-etrade",    name: "E*TRADE" },
+  { id: "inst-empower",   name: "Empower Retirement" },
+  { id: "inst-fidelity",  name: "Fidelity" },
+  { id: "inst-kraken",    name: "Kraken" },
+  { id: "inst-merrill",   name: "Merrill Edge" },
+  { id: "inst-robinhood", name: "Robinhood" },
+  { id: "inst-sofi",      name: "SoFi" },
+  { id: "inst-vanguard",  name: "Vanguard" },
+  { id: "inst-wealthfront", name: "Wealthfront" },
+  { id: "inst-wellsfargo", name: "Wells Fargo" },
   // Built-in escape hatch for assets not tied to a specific institution.
   { id: MANUAL_INST_ID,   name: "Manual / Other" },
 ];
