@@ -34,12 +34,12 @@ Two Dockerfiles exist intentionally — do not merge them:
 - `Dockerfile` — **production only**. Multi-stage, `COPY`s source, used by Fly. Do not touch for dev-only needs.
 - `Dockerfile.dev` — **local only**. Toolchain only (node + npm + uv + nginx); source bind-mounted from the host via `docker-compose.override.yml`. Runs `uvicorn --reload` + `next dev`.
 
-**Commands (always include both `-f` flags for dev):**
-- First run or after dep changes: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`
-- Day-to-day: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` — code changes hot-reload, do not add `--build`
+**Commands (always include all three `-f` flags for dev — omitting `docker-compose.override.yml` causes API 503 "admin token not configured"):**
+- First run or after dep changes: `docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.override.yml up -d --build`
+- Day-to-day: `docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.override.yml up -d` — code changes hot-reload, do not add `--build`
 - Add npm dep: `docker compose exec app sh -c 'cd /app/frontend && npm install <pkg>'`
 - Add Python dep: `docker compose exec app sh -c 'cd /app/backend && uv add <pkg>'`
-- Reset dep volumes: `docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v`
+- Reset dep volumes: `docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.override.yml down -v`
 
 **Verify hot reload works:**
 ```bash

@@ -24,6 +24,7 @@ The frontend pivoted from inline-styled hand-rolled components to **shadcn/ui + 
 | Icons | `lucide-react` (chrome) + Unicode (data viz) | See §Icons |
 | Theme | `next-themes` (`class` strategy, default `system`) | `suppressHydrationWarning` on `<html>` |
 | Charts | Recharts via shadcn `<Chart>` | ECharts retired |
+| Combobox | `cmdk` via shadcn `<Command>` | Powering institution picker and any future combobox UI |
 | Forms (when needed) | `react-hook-form` + `zod` + shadcn `<Form>` | Add lazily |
 | Data fetching | SWR | Existing |
 | Fonts | Inter + JetBrains Mono via `next/font` | Exposed as `--font-inter` / `--font-jbm`, then `--font-sans` / `--font-mono` |
@@ -84,12 +85,16 @@ frontend/
 │   ├── apple-icon.tsx, opengraph-image.tsx, icon.svg
 │   ├── (app)/                     # Route group with shared chrome (sidebar + header)
 │   │   ├── layout.tsx             # SidebarProvider + AppSidebar + SiteHeader
-│   │   ├── page.tsx               # / new home (empty foundation)
+│   │   ├── page.tsx               # / new home (dashboard)
+│   │   ├── accounts/
+│   │   │   ├── page.tsx           # /accounts — account list (UI-only mock pass)
+│   │   │   └── _accounts/        # Private module: mocks, header, filters, list, row
 │   │   └── brand/
 │   │       ├── page.tsx           # Refactored brand identity showcase
 │   │       └── brand-donut.tsx    # Recharts donut (canonical chart example)
 │   ├── components/
 │   │   ├── ui/                    # shadcn primitives + .stories.tsx co-located
+│   │   │   │                      # Includes: command.tsx, popover.tsx (added for combobox)
 │   │   ├── theme-provider.tsx     # next-themes wrapper
 │   │   ├── theme-toggle.tsx       # sun/moon dropdown
 │   │   ├── app-sidebar.tsx        # main nav sidebar
@@ -117,7 +122,8 @@ frontend/
 
 ## Routing & coexistence with legacy
 
-- **`/`** — new home, empty foundation with sidebar shell.
+- **`/`** — new home, dashboard with allocation and account widgets.
+- **`/accounts`** — account list page (UI-only mock pass; real API wiring deferred). Components live in `(app)/accounts/_accounts/`. The `_accounts/` prefix marks the folder as a private module — not a routable segment.
 - **`/brand`** — refactored brand identity showcase (uses shadcn primitives + Recharts donut).
 - **`/legacy/*`** — pre-redesign data-entry routes (forms only; the legacy dashboard was deleted). Visual quality not maintained.
 
@@ -158,7 +164,7 @@ This split is documented in `brand.md`. The rationale: lucide is the de-facto ch
 - **Run:** `npm run storybook` (Vite, port 6006). `npm run build-storybook` for static export.
 - **Framework:** `@storybook/nextjs-vite` (Storybook 9). Vite-based; avoids the webpack tap conflict that breaks `@storybook/nextjs` against Next.js's bundled webpack.
 - **Theme switcher:** `@storybook/addon-themes` toolbar item toggles `class="dark"` on the `<html>` element.
-- **Stories:** primitives co-located in `app/components/ui/*.stories.tsx`; token stories in `app/stories/tokens/*.stories.tsx`.
+- **Stories:** primitives co-located in `app/components/ui/*.stories.tsx`; token stories in `app/stories/tokens/*.stories.tsx`; page-level component stories co-located in `app/(app)/<route>/_<module>/*.stories.tsx` (e.g. `_accounts/row.stories.tsx`).
 - **Excluded from Next.js build:** `tsconfig.json` excludes `**/*.stories.tsx` and `.storybook/**` so dev-only types don't fail production builds.
 
 ## Brand-rule compliance notes
@@ -167,6 +173,8 @@ This split is documented in `brand.md`. The rationale: lucide is the de-facto ch
 - **Skeleton primitive included as a sidebar dependency.** It exists in `app/components/ui/skeleton.tsx` because shadcn's sidebar imports it for `<SidebarMenuSkeleton>`. We do not use `<Skeleton>` directly in our pages — loading states use a thin progress indicator per `brand.md`. If a future shadcn upgrade removes the dependency, delete the file.
 - **AAA hero numbers.** `brand.md` requires WCAG AAA (7:1) contrast for the total-portfolio-value figure and top-line allocation %. A `<HeroNumber>` primitive that enforces this will be added when the dashboard total is built. Until then, the demo on `/brand` and in `Card` stories uses standard contrast — flagged as TODO.
 - **No theme toggle in v0.1** was a brand rule explicitly relaxed in this pivot. The design system now ships a header toggle.
+- **Combobox pattern.** Comboboxes are built from `<Popover>` + `<Command>` (shadcn primitives backed by `cmdk`). The `<InstitutionCombobox>` in `_accounts/header.tsx` is the canonical example: trigger is `<Button variant="outline" role="combobox">`, the popover width matches the trigger via `w-(--radix-popover-trigger-width)`, and `shouldFilter={false}` on `<Command>` delegates filtering to the component's own `useMemo` so the create-on-the-fly row is always in the right position. Copy this pattern for any future combobox field.
+- **Mock-data modules.** Pages in the `(app)/` group that are not yet wired to the real API use a `_<route>/mocks.ts` file for typed seed data. These files use `new Date()` as the reference instant so staleness states stay accurate indefinitely rather than being pinned to a build-time constant.
 
 ## Verification
 
@@ -181,3 +189,6 @@ This split is documented in `brand.md`. The rationale: lucide is the de-facto ch
 - **Legacy deletion.** Targeted for the PR after `/` reaches feature parity with the legacy dashboard. ~7 files + the `app/legacy/` folder.
 - **`<HeroNumber>` primitive.** Enforces AAA contrast and JetBrains Mono Medium styling. Add when first dashboard page lands.
 - **Brand donut drill-down.** When real allocation data is wired up, port the legacy drill-down behavior into the Recharts donut with the brand's specified motion (300ms ease-out, fade-not-rotate).
+- **`/accounts` real data wiring.** Replace `_accounts/mocks.ts` with SWR calls to `/api/accounts` + `/api/positions`. Requires backend schema migration: `Institution` table, `is_archived` / `is_manual` / `staleness_threshold_days` / `tax_treatment` / `account_type` columns on `Account`, per-account `Snapshot` with FK to `Position` rows.
+- **`<Provenance>` primitive.** Full provenance coverage on `/accounts` (every balance, position value, asset-class total). Currently only balance and last-updated carry a `Tooltip`; the architecture hard rule requires all user-visible numbers.
+- **`<HeroNumber>` primitive.** Also needed on `/accounts` header NW figure (currently TODO-flagged at AA contrast).

@@ -38,19 +38,18 @@
   --warning-soft: #fef3c7;
 
   --viz-cash: #d97706;
-  --viz-us-equity: #2563eb;
-  --viz-intl-equity: #0d9488;
+  --viz-equity: #2563eb;
   --viz-fixed-income: #7c3aed;
   --viz-real-estate: #ea580c;
+  --viz-commodity: #ca8a04;
   --viz-crypto: #db2777;
-  --viz-alts: #ca8a04;
-  --viz-other: #71717a;
+  --viz-private: #71717a;
 
   --chart-1: var(--viz-cash);
-  --chart-2: var(--viz-us-equity);
-  --chart-3: var(--viz-intl-equity);
-  --chart-4: var(--viz-fixed-income);
-  --chart-5: var(--viz-real-estate);
+  --chart-2: var(--viz-equity);
+  --chart-3: var(--viz-fixed-income);
+  --chart-4: var(--viz-real-estate);
+  --chart-5: var(--viz-commodity);
 
   --sidebar: var(--muted);
   --sidebar-foreground: var(--foreground);
@@ -103,13 +102,12 @@
   --warning-soft: #451a03;
 
   --viz-cash: #fbbf24;
-  --viz-us-equity: #60a5fa;
-  --viz-intl-equity: #5eead4;
+  --viz-equity: #60a5fa;
   --viz-fixed-income: #a78bfa;
   --viz-real-estate: #fb923c;
+  --viz-commodity: #facc15;
   --viz-crypto: #f472b6;
-  --viz-alts: #facc15;
-  --viz-other: #a1a1aa;
+  --viz-private: #a1a1aa;
 
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.40);
   --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.50);
@@ -144,13 +142,12 @@
   --color-warning-soft: var(--warning-soft);
 
   --color-viz-cash: var(--viz-cash);
-  --color-viz-us-equity: var(--viz-us-equity);
-  --color-viz-intl-equity: var(--viz-intl-equity);
+  --color-viz-equity: var(--viz-equity);
   --color-viz-fixed-income: var(--viz-fixed-income);
   --color-viz-real-estate: var(--viz-real-estate);
+  --color-viz-commodity: var(--viz-commodity);
   --color-viz-crypto: var(--viz-crypto);
-  --color-viz-alts: var(--viz-alts);
-  --color-viz-other: var(--viz-other);
+  --color-viz-private: var(--viz-private);
 
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);

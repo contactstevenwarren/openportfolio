@@ -17,6 +17,9 @@ __pycache__/
 .env.local
 docker-compose.override.yml
 
+# Local SQLite database (dev data; prod lives on Fly persistent volume)
+data/*.db
+
 # OS
 .DS_Store
 

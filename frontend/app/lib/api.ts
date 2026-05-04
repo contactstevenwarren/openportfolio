@@ -27,11 +27,42 @@ export type ExtractionResult = {
   extraction_warnings?: string[];
 };
 
+export type AssetClass =
+  | 'cash'
+  | 'equity'
+  | 'fixed_income'
+  | 'real_estate'
+  | 'commodity'
+  | 'crypto'
+  | 'private';
+
+export type AccountClassBreakdown = {
+  asset_class: AssetClass;
+  value: number;
+};
+
+export type Institution = {
+  id: number;
+  name: string;
+};
+
 export type Account = {
   id: number;
   label: string;
   type: string;
   currency: string;
+  institution_id: number | null;
+  institution_name: string | null;
+  tax_treatment: 'taxable' | 'tax_deferred' | 'tax_free' | 'hsa';
+  balance: number;
+  last_updated_at: string | null;
+  last_update_source: 'paste' | 'pdf' | 'manual' | null;
+  position_count: number;
+  classified_position_count: number;
+  class_breakdown: AccountClassBreakdown[];
+  is_manual: boolean;
+  is_archived: boolean;
+  staleness_threshold_days: number;
 };
 
 export type InlineClassification = {
@@ -313,12 +344,26 @@ export const api = {
       body: JSON.stringify(body),
     }),
   accounts: () => fetchJson<Account[]>('/api/accounts'),
-  createAccount: (body: { label: string; type?: string }) =>
+  institutions: () => fetchJson<Institution[]>('/api/institutions'),
+  createAccount: (body: {
+    label: string;
+    type?: string;
+    institution_id?: number | null;
+    tax_treatment?: 'taxable' | 'tax_deferred' | 'tax_free' | 'hsa';
+    staleness_threshold_days?: number;
+  }) =>
     fetchJson<Account>('/api/accounts', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  patchAccount: (id: number, patch: { label?: string; type?: string }) =>
+  patchAccount: (id: number, patch: {
+    label?: string;
+    type?: string;
+    institution_id?: number | null;
+    tax_treatment?: 'taxable' | 'tax_deferred' | 'tax_free' | 'hsa';
+    staleness_threshold_days?: number;
+    is_archived?: boolean;
+  }) =>
     fetchJson<Account>(`/api/accounts/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
