@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Palette, Archive, Landmark } from "lucide-react";
+import { Home, Palette, Archive, Landmark, Target } from "lucide-react";
 
 import * as React from "react";
 
@@ -23,6 +23,7 @@ import {
 const nav = [
   { href: "/", label: "Home", icon: Home },
   { href: "/accounts", label: "Accounts", icon: Landmark },
+  { href: "/targets", label: "Targets", icon: Target },
   { href: "/brand", label: "Brand", icon: Palette },
 ];
 

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 
 import { Button } from "@/app/components/ui/button";
@@ -210,9 +211,21 @@ function getWhyText(
 
 export function SandboxCard() {
   const { rebalanceError, isStale, lastAsOf, setNewCash, includeCashExcess, setIncludeCashExcess } = useSandbox();
-  const [mode, setMode] = useState<Mode>("deploy");
+  const searchParams = useSearchParams();
+  const [mode, setMode] = useState<Mode>(() =>
+    searchParams.get("tab") === "rebalance" ? "rebalance" : "deploy"
+  );
   const [inputValue, setInputValue] = useState("");
   const [whyOpen, setWhyOpen] = useState(false);
+
+  // React to ?tab=rebalance being added/changed after initial mount
+  // (e.g. same-page navigation from hero CTA).
+  useEffect(() => {
+    if (searchParams.get("tab") === "rebalance") {
+      setMode("rebalance");
+      document.getElementById("rebalance")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [searchParams]);
 
   const { data: allocationData } = useSWR<AllocationResult>(
     "/api/allocation",
@@ -274,7 +287,7 @@ export function SandboxCard() {
   }
 
   return (
-    <Card className="h-full">
+    <Card id="rebalance" className="h-full">
       <CardHeader>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 space-y-1">
@@ -317,7 +330,7 @@ export function SandboxCard() {
           <p className="text-body-sm text-destructive">
             Rebalancing requires targets.{" "}
             <Link
-              href="/legacy/targets"
+              href="/targets"
               className="text-accent underline-offset-4 hover:underline"
             >
               Set targets →

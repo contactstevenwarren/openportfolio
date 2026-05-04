@@ -138,10 +138,10 @@ export function DonutCard() {
         <CardDescription>By asset class</CardDescription>
         <CardAction>
           <Link
-            href="/legacy/positions"
+            href="/targets"
             className="text-body-sm text-muted-foreground hover:text-foreground"
           >
-            View all →
+            Edit targets →
           </Link>
         </CardAction>
       </CardHeader>
