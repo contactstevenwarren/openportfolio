@@ -73,6 +73,18 @@ _TARGET_PATH_RE = re.compile(
 )
 
 
+def _slug(s: str) -> str:
+    """Lowercase slug for synthetic asset tickers (real_estate / private).
+
+    Replaces any run of non-alphanumeric chars (except . _ -) with a single
+    dash, then strips leading/trailing dashes. Falls back to "item" if the
+    result is empty (all-symbol label).
+    """
+    slug = re.sub(r"[^a-z0-9._-]+", "-", s.strip().lower()).strip("-")
+    slug = re.sub(r"-{2,}", "-", slug)
+    return slug or "item"
+
+
 def _targets_sum_ok(pcts: list[int]) -> bool:
     # Targets are integers; require exact 100 so the user's input matches
     # what's persisted (no hidden +/- rounding slop).
@@ -578,6 +590,54 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)) -> Accoun
         staleness_threshold_days=body.staleness_threshold_days,
     )
     db.add(account)
+    db.flush()  # get account.id before creating related rows
+
+    if body.type in MANUAL_ACCOUNT_TYPES and body.initial_position is not None:
+        ip = body.initial_position
+        base_ticker = _slug(body.label)
+        # Auto-suffix on ticker collision in the positions table
+        ticker = base_ticker
+        n = 2
+        while db.query(Position).filter(Position.ticker == ticker).first() is not None:
+            if n > 1000:
+                raise HTTPException(500, "ticker namespace exhausted")
+            ticker = f"{base_ticker}-{n}"
+            n += 1
+
+        as_of: datetime
+        if ip.purchase_date is not None:
+            as_of = datetime(ip.purchase_date.year, ip.purchase_date.month, ip.purchase_date.day, tzinfo=UTC)
+        else:
+            as_of = datetime.now(UTC)
+
+        position = Position(
+            account_id=account.id,
+            ticker=ticker,
+            shares=1.0,
+            market_value=ip.market_value,
+            cost_basis=ip.cost_basis,
+            as_of=as_of,
+            source="manual",
+            investable=True,
+        )
+        db.add(position)
+
+        # Upsert classification: asset_class mirrors account.type
+        existing_cls = db.get(Classification, ticker)
+        if existing_cls is None:
+            db.add(
+                Classification(
+                    ticker=ticker,
+                    asset_class=body.type,
+                    sub_class=None,
+                    sector=None,
+                    region=None,
+                    source="user",
+                )
+            )
+        elif existing_cls.source == "user":
+            existing_cls.asset_class = body.type
+
     db.commit()
     db.refresh(account)
     classifications = {**load_classifications(), **load_user_classifications(db)}
@@ -611,11 +671,30 @@ def delete_account(account_id: int, db: Session = Depends(get_db)) -> None:
     account = db.get(Account, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    # D1: collect synthetic tickers before cascade-delete so we can
+    # clean up orphaned Classification rows afterward.
+    synthetic_tickers: list[str] = []
+    if account.type in MANUAL_ACCOUNT_TYPES:
+        synthetic_tickers = [p.ticker for p in account.positions]
+
     # Positions cascade via the Account.positions relationship
     # (cascade="all, delete-orphan") + schema-level ondelete=CASCADE on
     # Position.account_id. Provenance rows stay as an audit trail,
     # matching the delete_position behavior (v0.1 decision).
     db.delete(account)
+    db.flush()  # apply cascade-delete before checking remaining positions
+
+    # D1: for each synthetic ticker, delete its Classification row if no
+    # other live position references it. Archive is NOT cleaned. Brokerage
+    # deletes do NOT run this path (guarded by account.type check above).
+    for ticker in synthetic_tickers:
+        remaining = db.query(Position).filter(Position.ticker == ticker).count()
+        if remaining == 0:
+            cls_row = db.get(Classification, ticker)
+            if cls_row is not None and cls_row.source == "user":
+                db.delete(cls_row)
+
     db.commit()
 
 
@@ -839,6 +918,31 @@ def commit_positions(
     body: PositionCommit, db: Session = Depends(get_db)
 ) -> CommitResult:
     now = datetime.now(UTC)
+
+    # E1: real_estate and private accounts may only hold one position.
+    # Checked before any writes so the rejection is atomic.
+    if body.account_id is not None:
+        target_account = db.get(Account, body.account_id)
+        if target_account is not None and target_account.type in MANUAL_ACCOUNT_TYPES:
+            existing_count = (
+                db.query(Position)
+                .filter(Position.account_id == body.account_id)
+                .count()
+            )
+            incoming_count = len(body.positions)
+            if body.replace_account:
+                result_count = incoming_count
+            else:
+                result_count = existing_count + incoming_count
+            if result_count > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"This account may only hold one position "
+                        f"(currently has {existing_count}). "
+                        f"Use replace_account=true to overwrite it."
+                    ),
+                )
 
     if body.replace_account:
         if body.account_id is None:

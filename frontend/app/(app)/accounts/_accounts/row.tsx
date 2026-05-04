@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import useSWR, { mutate } from "swr";
-import { ChevronRightIcon, ChevronDownIcon, UploadIcon } from "lucide-react";
+import { ChevronRightIcon, ChevronDownIcon, UploadIcon, Pencil } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
   Sheet,
@@ -13,14 +13,17 @@ import {
   SheetTitle,
   SheetFooter,
 } from "@/app/components/ui/sheet";
-import { UpdateForm, type UpdateMode } from "./update-form";
+import { UpdateForm, type UpdateMode, type UpdateFormHandle } from "./update-form";
+import { UpdateValueSheet } from "./update-value-sheet";
+import { ClassChip } from "./class-chip";
+import { EditPositionSheet } from "./edit-position-sheet";
 import {
   TooltipProvider,
   Tooltip,
   TooltipTrigger,
   TooltipContent,
 } from "@/app/components/ui/tooltip";
-import type { Account, Institution } from "@/app/lib/api";
+import type { Account, Institution, ClassificationRow } from "@/app/lib/api";
 import { api } from "@/app/lib/api";
 import {
   type AccountKind,
@@ -86,20 +89,10 @@ function UpdateSheet({
   trigger: UpdateTrigger;
 }) {
   const [continueDisabled, setContinueDisabled] = useState(true);
-  // Track whether the form has been submitted so footer shows Cancel-only.
-  const [submitted, setSubmitted] = useState(false);
-
-  // Reset submitted state when sheet opens.
-  useEffect(() => {
-    if (open) setSubmitted(false);
-  }, [open]);
+  const formRef = useRef<UpdateFormHandle>(null);
 
   const handleContinueDisabledChange = useCallback((disabled: boolean) => {
     setContinueDisabled(disabled);
-  }, []);
-
-  const handleContinue = useCallback(() => {
-    setSubmitted(true);
   }, []);
 
   return (
@@ -111,12 +104,14 @@ function UpdateSheet({
 
         <div className="flex-1 px-6 py-4">
           <UpdateForm
+            ref={formRef}
             key={`${open}-${trigger.mode}-${trigger.autoSubmit}`}
+            account={account}
             initialMode={trigger.mode}
             autoSubmit={trigger.autoSubmit}
             initialFile={trigger.file}
             onContinueDisabledChange={handleContinueDisabledChange}
-            onContinue={handleContinue}
+            onContinue={() => onOpenChange(false)}
           />
         </div>
 
@@ -124,15 +119,13 @@ function UpdateSheet({
           <SheetClose asChild>
             <Button variant="outline" size="sm">Cancel</Button>
           </SheetClose>
-          {!submitted && (
-            <Button
-              size="sm"
-              disabled={continueDisabled}
-              onClick={handleContinue}
-            >
-              Continue
-            </Button>
-          )}
+          <Button
+            size="sm"
+            disabled={continueDisabled}
+            onClick={() => formRef.current?.handleContinue()}
+          >
+            Continue
+          </Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>
@@ -459,6 +452,27 @@ export function Row({
     { revalidateOnFocus: false }
   );
 
+  // ── Lazy-fetch classifications for non-manual accounts ────────────────────
+  const { data: classifications = [] } = useSWR<ClassificationRow[]>(
+    isExpanded && !account.is_manual ? "/api/classifications" : null,
+    () => api.classifications(),
+    { revalidateOnFocus: false }
+  );
+  const classMap = new Map(classifications.map((c) => [c.ticker, c]));
+
+  // ── Unclassified filter state ──────────────────────────────────────────────
+  const [unclassifiedFilter, setUnclassifiedFilter] = useState(false);
+  const visiblePositions = unclassifiedFilter
+    ? positions.filter((pos) => {
+        const row = classMap.get(pos.ticker);
+        return !row || row.asset_class == null;
+      })
+    : positions;
+
+  // ── Edit position sheet state ──────────────────────────────────────────────
+  const [editPositionId, setEditPositionId] = useState<number | null>(null);
+  const editPosition = positions.find((p) => p.id === editPositionId) ?? null;
+
   // ── UpdateSheet state ──────────────────────────────────────────────────────
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateTrigger, setUpdateTrigger] = useState<UpdateTrigger>({
@@ -471,6 +485,9 @@ export function Row({
     setUpdateTrigger({ mode, autoSubmit, file });
     setUpdateOpen(true);
   }
+
+  // ── UpdateValueSheet state (real_estate / private) ─────────────────────────
+  const [updateValueOpen, setUpdateValueOpen] = useState(false);
 
   // ── Drop target state ──────────────────────────────────────────────────────
   const [isDropTarget, setIsDropTarget] = useState(false);
@@ -509,6 +526,7 @@ export function Row({
     e.stopPropagation();
     setIsDropTarget(false);
     onFileDragEnd();
+    if (account.is_manual) return;
     const file = e.dataTransfer.files[0] ?? null;
     openUpdate("pdf", true, file);
   }
@@ -594,6 +612,19 @@ export function Row({
         onOpenChange={setUpdateOpen}
         trigger={updateTrigger}
       />
+      <UpdateValueSheet
+        account={account}
+        open={updateValueOpen}
+        onOpenChange={setUpdateValueOpen}
+      />
+      {editPosition && (
+        <EditPositionSheet
+          position={editPosition}
+          account={account}
+          open={editPositionId !== null}
+          onOpenChange={(open) => { if (!open) setEditPositionId(null); }}
+        />
+      )}
 
       <div
         className={[
@@ -648,7 +679,7 @@ export function Row({
             <TooltipContent>{provenance}</TooltipContent>
           </Tooltip>
 
-          {/* Update icon button — opens source picker without expanding the row */}
+          {/* Action icon button — Import or Update value depending on account type */}
           {!account.is_archived && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -656,13 +687,22 @@ export function Row({
                   variant="ghost"
                   size="icon-sm"
                   className="shrink-0 text-muted-foreground hover:text-foreground"
-                  onClick={(e) => { e.stopPropagation(); openUpdate(); }}
-                  aria-label={`Import positions — ${account.label}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (account.is_manual) {
+                      setUpdateValueOpen(true);
+                    } else {
+                      openUpdate();
+                    }
+                  }}
+                  aria-label={account.is_manual ? `Update value — ${account.label}` : `Import positions — ${account.label}`}
                 >
                   <UploadIcon className="size-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Import positions — {account.label}</TooltipContent>
+              <TooltipContent>
+                {account.is_manual ? `Update value — ${account.label}` : `Import positions — ${account.label}`}
+              </TooltipContent>
             </Tooltip>
           )}
 
@@ -708,10 +748,19 @@ export function Row({
                       {((seg.value / totalBreakdownValue) * 100).toFixed(1)}%
                     </span>
                   ))}
-                  {unclassifiedCount > 0 && (
-                    <span className="text-body-sm text-muted-foreground">
-                      {unclassifiedCount} position{unclassifiedCount !== 1 ? "s" : ""} unclassified
-                    </span>
+                  {unclassifiedCount > 0 && !account.is_manual && (
+                    <button
+                      type="button"
+                      onClick={() => setUnclassifiedFilter((f) => !f)}
+                      className={[
+                        "text-body-sm px-1.5 py-0.5 rounded transition-colors",
+                        unclassifiedFilter
+                          ? "bg-amber-200 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300"
+                          : "text-amber-600 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/50",
+                      ].join(" ")}
+                    >
+                      {unclassifiedCount} unclassified
+                    </button>
                   )}
                 </div>
 
@@ -723,42 +772,102 @@ export function Row({
                       <thead>
                         <tr className="text-muted-foreground text-left border-b border-border">
                           <th className="pb-1 font-medium">Ticker</th>
+                          {!account.is_manual && (
+                            <th className="pb-1 font-medium text-left pl-2">Class</th>
+                          )}
                           <th className="pb-1 font-medium text-right">Qty</th>
                           <th className="pb-1 font-medium text-right">Value</th>
+                          {!account.is_manual && (
+                            <th className="pb-1 w-6" />
+                          )}
                         </tr>
                       </thead>
                       <tbody>
-                        {positions.map((pos) => (
-                          <tr key={pos.id} className="border-b border-border/50 last:border-0">
-                            <td className="py-1.5 font-mono text-xs">{pos.ticker}</td>
-                            <td className="py-1.5 font-mono text-xs text-right tabular-nums">
-                              {pos.shares.toLocaleString()}
-                            </td>
-                            <td className="py-1.5 font-mono text-xs text-right tabular-nums">
-                              {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
-                            </td>
-                          </tr>
-                        ))}
+                        {visiblePositions.map((pos) => {
+                          const classRow = classMap.get(pos.ticker) ?? null;
+                          return (
+                            <tr key={pos.id} className="border-b border-border/50 last:border-0">
+                              <td className="py-1.5 font-mono text-xs">{pos.ticker}</td>
+                              {!account.is_manual && (
+                                <td className="py-1.5 pl-2">
+                                  {/* TODO(G3): derive cross-account ticker count once accounts prop is threaded to Row */}
+                                  <ClassChip
+                                    ticker={pos.ticker}
+                                    assetClass={classRow?.asset_class ?? null}
+                                    source={classRow?.source ?? null}
+                                    accountId={account.id}
+                                    accountCountForTicker={0}
+                                  />
+                                </td>
+                              )}
+                              <td className="py-1.5 font-mono text-xs text-right tabular-nums">
+                                {pos.shares.toLocaleString()}
+                              </td>
+                              <td className="py-1.5 font-mono text-xs text-right tabular-nums">
+                                {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
+                              </td>
+                              {!account.is_manual && (
+                                <td className="py-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditPositionId(pos.id)}
+                                    className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                    aria-label={`Edit ${pos.ticker}`}
+                                  >
+                                    <Pencil className="size-3" />
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                     {/* Mobile */}
                     <div className="sm:hidden mt-3 flex flex-col">
-                      {positions.map((pos) => (
-                        <div
-                          key={pos.id}
-                          className="flex justify-between items-center py-2 border-b border-border/50 last:border-0"
-                        >
-                          <p className="font-mono text-xs text-foreground">{pos.ticker}</p>
-                          <div className="text-right">
-                            <p className="font-mono text-xs tabular-nums text-foreground">
-                              {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
-                            </p>
-                            <p className="font-mono text-xs tabular-nums text-muted-foreground">
-                              {pos.shares.toLocaleString()}
-                            </p>
+                      {visiblePositions.map((pos) => {
+                        const classRow = classMap.get(pos.ticker) ?? null;
+                        return (
+                          <div
+                            key={pos.id}
+                            className="flex justify-between items-center py-2 border-b border-border/50 last:border-0"
+                          >
+                            <div className="flex flex-col gap-1">
+                              <p className="font-mono text-xs text-foreground">{pos.ticker}</p>
+                              {!account.is_manual && (
+                                // TODO(G3): derive cross-account ticker count once accounts prop is threaded to Row
+                                <ClassChip
+                                  ticker={pos.ticker}
+                                  assetClass={classRow?.asset_class ?? null}
+                                  source={classRow?.source ?? null}
+                                  accountId={account.id}
+                                  accountCountForTicker={0}
+                                />
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-right">
+                                <p className="font-mono text-xs tabular-nums text-foreground">
+                                  {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
+                                </p>
+                                <p className="font-mono text-xs tabular-nums text-muted-foreground">
+                                  {pos.shares.toLocaleString()}
+                                </p>
+                              </div>
+                              {!account.is_manual && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditPositionId(pos.id)}
+                                  className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                  aria-label={`Edit ${pos.ticker}`}
+                                >
+                                  <Pencil className="size-3" />
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </>
                 ) : (
@@ -787,9 +896,15 @@ export function Row({
               ) : (
                 <>
                   <EditSheet account={account} institutions={institutions} />
-                  <Button size="sm" onClick={() => openUpdate()}>
-                    Import positions
-                  </Button>
+                  {account.is_manual ? (
+                    <Button size="sm" onClick={() => setUpdateValueOpen(true)}>
+                      Update value
+                    </Button>
+                  ) : (
+                    <Button size="sm" onClick={() => openUpdate()}>
+                      Import positions
+                    </Button>
+                  )}
                 </>
               )}
             </div>

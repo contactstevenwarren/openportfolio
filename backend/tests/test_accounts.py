@@ -331,3 +331,285 @@ def test_hsa_migration_is_idempotent(test_db: Session) -> None:
     account = test_db.query(Account).filter_by(label="HSA Again").one()
     assert account.type == "brokerage"
     assert account.tax_treatment == "hsa"
+
+
+# --- atomic asset account creation (PR 1A) --------------------------------
+
+
+def test_create_real_estate_account_with_position(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """POST /api/accounts with initial_position creates account + position + classification atomically."""
+    r = client.post(
+        "/api/accounts",
+        json={
+            "label": "My Home",
+            "type": "real_estate",
+            "initial_position": {"market_value": 500000.0, "cost_basis": 300000.0},
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 201
+    account = r.json()
+    assert account["type"] == "real_estate"
+    assert account["position_count"] == 1
+
+    positions = client.get("/api/positions", headers=auth_headers).json()
+    assert len(positions) == 1
+    pos = positions[0]
+    assert pos["ticker"] == "my-home"
+    assert pos["market_value"] == 500000.0
+    assert pos["cost_basis"] == 300000.0
+    assert pos["shares"] == 1.0
+    assert pos["source"] == "manual"
+
+    classifications = client.get("/api/classifications", headers=auth_headers).json()
+    cls_row = next((c for c in classifications if c["ticker"] == "my-home"), None)
+    assert cls_row is not None
+    assert cls_row["asset_class"] == "real_estate"
+    assert cls_row["source"] == "user"
+
+
+def test_create_real_estate_account_without_position(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """Creating a real_estate account without initial_position is allowed."""
+    r = client.post(
+        "/api/accounts",
+        json={"label": "Vacant Lot", "type": "real_estate"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 201
+    assert r.json()["position_count"] == 0
+
+    positions = client.get("/api/positions", headers=auth_headers).json()
+    assert positions == []
+
+
+def test_e1_real_estate_rejects_second_position(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """E1: committing a second position to a real_estate account is rejected with 400."""
+    created = client.post(
+        "/api/accounts",
+        json={
+            "label": "Duplex",
+            "type": "real_estate",
+            "initial_position": {"market_value": 400000.0},
+        },
+        headers=auth_headers,
+    ).json()
+    account_id = created["id"]
+
+    r = client.post(
+        "/api/positions/commit",
+        json={
+            "account_id": account_id,
+            "positions": [
+                {
+                    "ticker": "second-property",
+                    "shares": 1.0,
+                    "market_value": 200000.0,
+                    "confidence": 1.0,
+                    "source_span": "test",
+                }
+            ],
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 400
+    assert "one position" in r.json()["detail"]
+    assert "replace_account=true" in r.json()["detail"]
+
+
+def test_e1_replace_account_allows_one_rejects_two(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """E1: replace_account=True allows replacing with 1 position but rejects 2."""
+    created = client.post(
+        "/api/accounts",
+        json={
+            "label": "Condo",
+            "type": "real_estate",
+            "initial_position": {"market_value": 300000.0},
+        },
+        headers=auth_headers,
+    ).json()
+    account_id = created["id"]
+
+    # replace with a single position — should succeed
+    r = client.post(
+        "/api/positions/commit",
+        json={
+            "account_id": account_id,
+            "replace_account": True,
+            "positions": [
+                {
+                    "ticker": "condo",
+                    "shares": 1.0,
+                    "market_value": 320000.0,
+                    "confidence": 1.0,
+                    "source_span": "test",
+                }
+            ],
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 201
+
+    # replace with two positions — should be rejected
+    r = client.post(
+        "/api/positions/commit",
+        json={
+            "account_id": account_id,
+            "replace_account": True,
+            "positions": [
+                {
+                    "ticker": "condo-a",
+                    "shares": 1.0,
+                    "market_value": 160000.0,
+                    "confidence": 1.0,
+                    "source_span": "test",
+                },
+                {
+                    "ticker": "condo-b",
+                    "shares": 1.0,
+                    "market_value": 160000.0,
+                    "confidence": 1.0,
+                    "source_span": "test",
+                },
+            ],
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 400
+    assert "one position" in r.json()["detail"]
+
+
+def test_d1_classification_cleaned_on_asset_account_delete(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """D1: deleting a real_estate account removes its synthetic classification."""
+    created = client.post(
+        "/api/accounts",
+        json={
+            "label": "Beach House",
+            "type": "real_estate",
+            "initial_position": {"market_value": 800000.0},
+        },
+        headers=auth_headers,
+    ).json()
+    account_id = created["id"]
+
+    classifications_before = client.get("/api/classifications", headers=auth_headers).json()
+    assert any(c["ticker"] == "beach-house" for c in classifications_before)
+
+    r = client.delete(f"/api/accounts/{account_id}", headers=auth_headers)
+    assert r.status_code == 204
+
+    classifications_after = client.get("/api/classifications", headers=auth_headers).json()
+    assert not any(c["ticker"] == "beach-house" for c in classifications_after)
+
+
+def test_d1_recreate_after_delete_uses_same_ticker(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """D1: after deleting an account its ticker is freed so recreating uses the same slug."""
+    created = client.post(
+        "/api/accounts",
+        json={
+            "label": "My Home",
+            "type": "real_estate",
+            "initial_position": {"market_value": 500000.0},
+        },
+        headers=auth_headers,
+    ).json()
+    account_id = created["id"]
+
+    client.delete(f"/api/accounts/{account_id}", headers=auth_headers)
+
+    recreated = client.post(
+        "/api/accounts",
+        json={
+            "label": "My Home",
+            "type": "real_estate",
+            "initial_position": {"market_value": 550000.0},
+        },
+        headers=auth_headers,
+    ).json()
+    assert recreated["label"] == "My Home"
+
+    # After D1 cleanup the "my-home" ticker is free, so the new account
+    # gets "my-home" again (not "my-home-2").
+    positions = client.get("/api/positions", headers=auth_headers).json()
+    assert len(positions) == 1
+    assert positions[0]["ticker"] == "my-home"
+    assert positions[0]["market_value"] == 550000.0
+
+
+def test_d1_orphan_guard_preserves_shared_classification(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """D1: classification is NOT removed if another position still references the ticker."""
+    re_account = client.post(
+        "/api/accounts",
+        json={
+            "label": "Rental",
+            "type": "real_estate",
+            "initial_position": {"market_value": 300000.0},
+        },
+        headers=auth_headers,
+    ).json()
+
+    brokerage = client.post(
+        "/api/accounts",
+        json={"label": "Brokerage", "type": "brokerage"},
+        headers=auth_headers,
+    ).json()
+
+    # Give the brokerage account a position with the same ticker as the real_estate slug
+    from datetime import UTC, datetime as dt
+    test_db.add(
+        Position(
+            account_id=brokerage["id"],
+            ticker="rental",
+            shares=1.0,
+            market_value=300000.0,
+            as_of=dt.now(UTC),
+            source="manual",
+        )
+    )
+    test_db.commit()
+
+    client.delete(f"/api/accounts/{re_account['id']}", headers=auth_headers)
+
+    classifications = client.get("/api/classifications", headers=auth_headers).json()
+    assert any(c["ticker"] == "rental" for c in classifications)
+
+
+def test_patch_position_as_of(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """PATCH /api/positions/{id} with as_of persists the date on the position."""
+    account = client.post(
+        "/api/accounts",
+        json={
+            "label": "Test Brokerage",
+            "type": "real_estate",
+            "initial_position": {"market_value": 100000.0},
+        },
+        headers=auth_headers,
+    ).json()
+
+    positions = client.get("/api/positions", headers=auth_headers).json()
+    assert len(positions) == 1
+    pos_id = positions[0]["id"]
+
+    r = client.patch(
+        f"/api/positions/{pos_id}",
+        json={"as_of": "2024-03-15T00:00:00"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    updated = r.json()
+    assert updated["as_of"].startswith("2024-03-15")
