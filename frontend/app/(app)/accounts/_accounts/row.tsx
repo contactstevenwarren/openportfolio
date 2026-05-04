@@ -540,7 +540,7 @@ export function Row({
                       <th className="pb-1 font-medium">Ticker</th>
                       <th className="pb-1 font-medium text-right">Qty</th>
                       <th className="pb-1 font-medium text-right">Value</th>
-                      <th className="pb-1 font-medium">Asset class</th>
+                      <th className="pb-1 font-medium pl-3">Asset class</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -553,7 +553,7 @@ export function Row({
                         <td className="py-1.5 font-mono text-xs text-right tabular-nums">
                           {formatUsd(pos.value)}
                         </td>
-                        <td className="py-1.5 text-xs">
+                        <td className="py-1.5 text-xs pl-3">
                           <span className="flex items-center gap-1.5">
                             <span
                               className="size-2 rounded-full"
