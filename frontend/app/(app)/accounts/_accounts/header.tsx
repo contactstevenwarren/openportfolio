@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { mutate } from "swr";
 import { PlusIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
@@ -21,7 +21,8 @@ import {
   daysSince,
 } from "./mocks";
 import { InstitutionCombobox, AccountKindCombobox } from "./comboboxes";
-import { UpdateForm, type UpdateFormHandle } from "./update-form";
+import { UpdateForm, type UpdateFormHandle, type Stage as UpdateStage, type UpdateMode, type ReviewTotals } from "./update-form";
+import { cn } from "@/app/lib/utils";
 
 // ── Stage type ─────────────────────────────────────────────────────────────────
 
@@ -71,11 +72,24 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
 
   // ── UpdateForm footer state ───────────────────────────────────────────────
   const [updateContinueDisabled, setUpdateContinueDisabled] = useState(true);
+  const [updateStage, setUpdateStage] = useState<UpdateStage>("entry");
+  const [updateMode, setUpdateMode] = useState<UpdateMode>("pdf");
+  const [updateTotals, setUpdateTotals] = useState<ReviewTotals>(null);
   const updateFormRef = useRef<UpdateFormHandle>(null);
 
   const handleUpdateContinueDisabledChange = useCallback((disabled: boolean) => {
     setUpdateContinueDisabled(disabled);
   }, []);
+
+  // Reset width state when the Update sheet closes
+  const isUpdateOpen = stage === "update";
+  useEffect(() => {
+    if (!isUpdateOpen) {
+      setUpdateStage("entry");
+      setUpdateMode("pdf");
+      setUpdateTotals(null);
+    }
+  }, [isUpdateOpen]);
 
   // ── Save state ────────────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
@@ -375,7 +389,15 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
 
       {/* ── Update Sheet (auto-opened after Save) ────────────────────────── */}
       <Sheet open={stage === "update"} onOpenChange={handleUpdateOpenChange}>
-        <SheetContent side="right" className="overflow-y-auto flex flex-col">
+        <SheetContent
+          side="right"
+          className={cn(
+            "overflow-y-auto flex flex-col transition-[max-width] duration-500 ease-out",
+            updateStage === "review" || updateMode === "manual"
+              ? "sm:max-w-none lg:max-w-4xl"
+              : "sm:max-w-sm"
+          )}
+        >
           <SheetHeader>
             <SheetTitle>Import positions — {pendingName}</SheetTitle>
           </SheetHeader>
@@ -388,24 +410,39 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
                 account={pendingAccount}
                 initialMode="pdf"
                 onContinueDisabledChange={handleUpdateContinueDisabledChange}
+                onStageChange={setUpdateStage}
+                onModeChange={setUpdateMode}
+                onTotalsChange={setUpdateTotals}
                 onContinue={() => handleUpdateOpenChange(false)}
               />
             )}
           </div>
 
           <SheetFooter className="px-4 pb-4 gap-2">
-            <SheetClose asChild>
-              <Button variant="outline" size="sm">
-                Cancel
+            {updateTotals && (
+              <div className="text-body-sm tabular-nums text-muted-foreground border-t border-border pt-3 pb-1">
+                <span>Before: {formatUsd(updateTotals.before)}</span>
+                <span className="mx-2 text-muted-foreground">→</span>
+                <span>After: {formatUsd(updateTotals.after)}</span>
+                <span className={cn("ml-2 font-medium", updateTotals.delta >= 0 ? "text-green-600" : "text-destructive")}>
+                  ({updateTotals.delta >= 0 ? "+" : ""}{formatUsd(updateTotals.delta)})
+                </span>
+              </div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <SheetClose asChild>
+                <Button variant="outline" size="sm">
+                  Cancel
+                </Button>
+              </SheetClose>
+              <Button
+                size="sm"
+                disabled={updateContinueDisabled}
+                onClick={() => updateFormRef.current?.handleContinue()}
+              >
+                Continue
               </Button>
-            </SheetClose>
-            <Button
-              size="sm"
-              disabled={updateContinueDisabled}
-              onClick={() => updateFormRef.current?.handleContinue()}
-            >
-              Continue
-            </Button>
+            </div>
           </SheetFooter>
         </SheetContent>
       </Sheet>
