@@ -101,6 +101,7 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
         })),
       });
       await mutate("/api/accounts");
+      await mutate("/api/classifications");
       await mutate(`/api/positions?account_id=${account.id}`);
       setSavedCount(filledRows.length);
       setRows([emptyRow()]);
