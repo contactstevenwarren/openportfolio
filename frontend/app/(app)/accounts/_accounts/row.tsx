@@ -839,7 +839,7 @@ export function Row({
                                 </td>
                               )}
                               <td className="py-1.5 font-mono text-xs text-right tabular-nums">
-                                {pos.shares.toLocaleString()}
+                                {pos.shares.toLocaleString("en-US")}
                               </td>
                               <td className="py-1.5 font-mono text-xs text-right tabular-nums">
                                 {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
@@ -889,7 +889,7 @@ export function Row({
                                   {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
                                 </p>
                                 <p className="font-mono text-xs tabular-nums text-muted-foreground">
-                                  {pos.shares.toLocaleString()}
+                                  {pos.shares.toLocaleString("en-US")}
                                 </p>
                               </div>
                               {!account.is_manual && (

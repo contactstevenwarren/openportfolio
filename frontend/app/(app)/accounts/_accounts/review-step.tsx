@@ -86,11 +86,15 @@ const REGION_OPTIONS = [
 
 function formatUsdCompact(n: number | null): string {
   if (n == null) return "—";
-  return new Intl.NumberFormat("en-US", {
+  const abs = Math.abs(n);
+  const neg = n < 0 ? "\u2212" : "";
+  const decimals = abs >= 10_000 ? 0 : 2;
+  return neg + new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(n);
+    maximumFractionDigits: decimals,
+    minimumFractionDigits: decimals,
+  }).format(abs);
 }
 
 function formatPct(n: number): string {

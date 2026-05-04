@@ -261,20 +261,25 @@ export const ASSET_CLASS_COLOR: Record<AssetClass, string> = {
 
 export function formatUsd(value: number, opts: { compact?: boolean; signed?: boolean } = {}) {
   const { compact, signed } = opts;
-  const sign = signed && value > 0 ? "+" : "";
+  const posSign = signed && value > 0 ? "+" : "";
+  const abs = Math.abs(value);
+  const negSign = value < 0 ? "\u2212" : "";
   if (compact) {
-    return sign + new Intl.NumberFormat("en-US", {
+    return posSign + negSign + new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
       notation: "compact",
       maximumFractionDigits: 1,
-    }).format(value);
+    }).format(abs);
   }
-  return sign + new Intl.NumberFormat("en-US", {
+  // ≥$10k: no cents; <$10k: show 2 decimal places (brand rule)
+  const decimals = abs >= 10_000 ? 0 : 2;
+  return posSign + negSign + new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value);
+    maximumFractionDigits: decimals,
+    minimumFractionDigits: decimals,
+  }).format(abs);
 }
 
 export function formatPct(value: number, opts: { signed?: boolean; digits?: number } = {}) {
