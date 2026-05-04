@@ -10,8 +10,8 @@ import { formatPct, formatUsd } from "@/app/(app)/_dashboard/mocks";
 
 // ── Routes (TODO: swap when modern pages ship) ────────────────────────────────
 
-const REBALANCE_HREF = "/legacy/rebalance";
-const TARGETS_HREF = "/legacy/targets";
+const REBALANCE_HREF = "/?tab=rebalance";
+const TARGETS_HREF = "/targets";
 const POSITIONS_HREF = "/legacy/positions";
 
 // ── Drift-status helpers (inlined from drift-status-card.tsx) ─────────────────

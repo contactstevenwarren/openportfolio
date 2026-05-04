@@ -87,7 +87,7 @@ export function DriftDetailCard() {
         <CardDescription>Per-class gap to target</CardDescription>
         <CardAction>
           <a
-            href="/legacy/rebalance"
+            href="/?tab=rebalance"
             className="inline-flex items-center gap-1 text-body-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:underline"
           >
             Open rebalance <span aria-hidden>&rarr;</span>

@@ -153,12 +153,12 @@ def _validate_put_targets(body: TargetsPayload, result: AllocationResult) -> Non
                 detail="root targets require at least one funded asset class in allocation",
             )
         provided = {r.path for r in body.root}
-        if required != provided:
+        if not required.issubset(provided):
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "root targets must include every funded asset class exactly once "
-                    f"(expected {sorted(required)}, got {sorted(provided)})"
+                    "root targets must include every funded asset class "
+                    f"(missing {sorted(required - provided)})"
                 ),
             )
         if not _targets_sum_ok([r.pct for r in body.root]):

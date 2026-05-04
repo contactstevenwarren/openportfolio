@@ -289,6 +289,34 @@ def test_put_accepts_integer_boundaries(
     assert sum(row["pct"] for row in rows) == 100
 
 
+def test_put_aspirational_target_unfunded_class(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """Aspirational targets: user holds equity only but sets crypto target > 0.
+    Backend should accept (issubset relaxation) and persist the row.
+    """
+    account = Account(label="T", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add(_position(account.id, "VTI", 90_000.0))
+    test_db.commit()
+
+    body = {
+        "root": [
+            {"path": "equity", "pct": 90},
+            {"path": "crypto", "pct": 10},
+        ],
+        "groups": {},
+    }
+    pr = client.put("/api/targets", headers=auth_headers, json=body)
+    assert pr.status_code == 200
+
+    gr = client.get("/api/targets", headers=auth_headers)
+    root_by_path = {r["path"]: r["pct"] for r in gr.json()["root"]}
+    assert root_by_path["crypto"] == 10
+    assert root_by_path["equity"] == 90
+
+
 def test_put_group_targets_sum_to_100_of_parent(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
