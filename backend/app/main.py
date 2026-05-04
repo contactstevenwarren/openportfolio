@@ -300,6 +300,13 @@ def _migrate_schema(eng: Engine) -> None:
                         "NOT NULL DEFAULT 0"
                     )
                 )
+            if "is_investable" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE accounts ADD COLUMN is_investable BOOLEAN "
+                        "NOT NULL DEFAULT 1"
+                    )
+                )
         # One-shot: migrate legacy type='hsa' rows to type='brokerage' + tax_treatment='hsa'.
         # Idempotent: WHERE type='hsa' matches nothing after first run.
         with eng.begin() as conn:
@@ -566,6 +573,7 @@ def _enrich_account(
         is_manual=is_manual,
         is_archived=account.is_archived,
         staleness_threshold_days=staleness_threshold_days,
+        is_investable=account.is_investable,
     )
 
 
@@ -1127,13 +1135,23 @@ def commit_positions(
     )
 
 
+def _non_investable_account_ids(db: Session) -> frozenset[int]:
+    """Return the set of account IDs whose positions are excluded from Investment Portfolio."""
+    return frozenset(
+        a.id for a in db.query(Account).filter(Account.is_investable.is_(False)).all()
+    )
+
+
 def _write_snapshot(db: Session) -> None:
     """Persist one Snapshot row summarising current portfolio state."""
     import json
 
     positions = db.query(Position).all()
     classifications = {**load_classifications(), **load_user_classifications(db)}
-    result = aggregate(positions, classifications, db=db)
+    result = aggregate(
+        positions, classifications, db=db,
+        non_investable_account_ids=_non_investable_account_ids(db),
+    )
 
     payload = {
         "total_usd": result.total,
@@ -1244,7 +1262,10 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
     # classify() returns an entry carrying source="yaml" or "user" which
     # the allocator surfaces per-ticker for sunburst hover.
     classifications = {**load_classifications(), **load_user_classifications(db)}
-    result = aggregate(positions, classifications, db=db)
+    result = aggregate(
+        positions, classifications, db=db,
+        non_investable_account_ids=_non_investable_account_ids(db),
+    )
     targets = {t.path: float(t.pct) for t in db.query(Target).all()}
     result = apply_drift(
         result,
@@ -1297,7 +1318,10 @@ def get_targets(db: Session = Depends(get_db)) -> dict[str, object]:
 def put_targets(body: TargetsPayload, db: Session = Depends(get_db)) -> dict[str, object]:
     positions = db.query(Position).all()
     classifications = {**load_classifications(), **load_user_classifications(db)}
-    result = aggregate(positions, classifications, db=db)
+    result = aggregate(
+        positions, classifications, db=db,
+        non_investable_account_ids=_non_investable_account_ids(db),
+    )
     _validate_put_targets(body, result)
 
     db.execute(delete(Target))
@@ -1318,7 +1342,10 @@ def get_rebalance(
 ) -> RebalanceResult:
     positions = db.query(Position).all()
     classifications = {**load_classifications(), **load_user_classifications(db)}
-    result = aggregate(positions, classifications, db=db)
+    result = aggregate(
+        positions, classifications, db=db,
+        non_investable_account_ids=_non_investable_account_ids(db),
+    )
     targets = {t.path: float(t.pct) for t in db.query(Target).all()}
     result = apply_drift(
         result,

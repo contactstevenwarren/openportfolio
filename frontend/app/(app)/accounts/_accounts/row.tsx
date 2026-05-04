@@ -41,6 +41,9 @@ import {
   AccountKindCombobox,
   findMatchingKind,
 } from "./comboboxes";
+import { Switch } from "@/app/components/ui/switch";
+
+const INVESTABLE_HINT_KEY = "op:investable-hint-dismissed";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -305,10 +308,17 @@ function DangerZone({
 type EditSheetProps = {
   account: Account;
   institutions: Institution[];
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
-function EditSheet({ account, institutions }: EditSheetProps) {
-  const [open, setOpen] = useState(false);
+function EditSheet({ account, institutions, open: controlledOpen, onOpenChange }: EditSheetProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (v: boolean) => {
+    setInternalOpen(v);
+    onOpenChange?.(v);
+  };
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -325,6 +335,7 @@ function EditSheet({ account, institutions }: EditSheetProps) {
   const [kind, setKind] = useState<AccountKind | null>(initialKind);
   const [name, setName] = useState<string>(account.label);
   const [staleAfterDays, setStaleAfterDays] = useState<number>(account.staleness_threshold_days);
+  const [isInvestable, setIsInvestable] = useState<boolean>(account.is_investable);
 
   // Reset all fields when the sheet opens.
   useEffect(() => {
@@ -333,6 +344,7 @@ function EditSheet({ account, institutions }: EditSheetProps) {
       setKind(initialKind);
       setName(account.label);
       setStaleAfterDays(account.staleness_threshold_days);
+      setIsInvestable(account.is_investable);
       setSaveError(null);
     }
     // initialKind is derived from `account` fields already in the deps
@@ -366,6 +378,7 @@ function EditSheet({ account, institutions }: EditSheetProps) {
         tax_treatment: (kind?.taxTreatment ?? account.tax_treatment) as
           'taxable' | 'tax_deferred' | 'tax_free' | 'hsa',
         staleness_threshold_days: staleAfterDays,
+        is_investable: isInvestable,
       });
       await mutate("/api/accounts");
       setOpen(false);
@@ -439,6 +452,28 @@ function EditSheet({ account, institutions }: EditSheetProps) {
             />
             <span className="text-body-sm text-muted-foreground shrink-0">days</span>
           </div>
+
+          {/* Investment Portfolio toggle */}
+          <div className="flex items-start justify-between gap-4 rounded-md border border-border px-3 py-3">
+            <div className="flex flex-col gap-0.5">
+              <label
+                htmlFor={`edit-investable-${account.id}`}
+                className="cursor-pointer text-body-sm font-medium"
+              >
+                Include in Investment Portfolio
+              </label>
+              <p className="text-[12px] text-muted-foreground">
+                {isInvestable
+                  ? "Included in allocation %, drift, and rebalance."
+                  : "Excluded from allocation %, drift, and rebalance. Still counted in Net Worth."}
+              </p>
+            </div>
+            <Switch
+              id={`edit-investable-${account.id}`}
+              checked={isInvestable}
+              onCheckedChange={setIsInvestable}
+            />
+          </div>
         </div>
 
         <DangerZone account={account} onDone={() => setOpen(false)} />
@@ -506,6 +541,34 @@ export function Row({
         return !row || row.asset_class == null;
       })
     : positions;
+
+  // ── Investable hint dismiss state ─────────────────────────────────────────
+  // Shown once for real_estate / private accounts that are still marked investable,
+  // to nudge the user toward the "Include in Investment Portfolio" toggle in Edit.
+  const [hintDismissed, setHintDismissed] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(INVESTABLE_HINT_KEY);
+      const ids: number[] = raw ? JSON.parse(raw) : [];
+      return ids.includes(account.id);
+    } catch {
+      return false;
+    }
+  });
+
+  function dismissHint() {
+    try {
+      const raw = localStorage.getItem(INVESTABLE_HINT_KEY);
+      const ids: number[] = raw ? JSON.parse(raw) : [];
+      if (!ids.includes(account.id)) ids.push(account.id);
+      localStorage.setItem(INVESTABLE_HINT_KEY, JSON.stringify(ids));
+    } catch {
+      // localStorage unavailable — silently suppress
+    }
+    setHintDismissed(true);
+  }
+
+  // ── Edit sheet open state (lifted so the investable hint can open it) ─────
+  const [editSheetOpen, setEditSheetOpen] = useState(false);
 
   // ── Edit position sheet state ──────────────────────────────────────────────
   const [editPositionId, setEditPositionId] = useState<number | null>(null);
@@ -698,6 +761,18 @@ export function Row({
             <p className="font-medium text-foreground text-body-sm truncate">{account.label}</p>
             <p className="text-body-sm text-muted-foreground truncate">{metaLine}</p>
           </div>
+
+          {/* Non-investable badge */}
+          {!account.is_investable && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="shrink-0 inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  Not investable
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>Excluded from allocation, drift, and rebalance. Still in Net Worth.</TooltipContent>
+            </Tooltip>
+          )}
 
           {/* Staleness pill — wrapped in Tooltip for provenance, interactive when stale/aging */}
           <Tooltip>
@@ -918,6 +993,31 @@ export function Row({
               </p>
             )}
 
+            {/* Investable hint — shown once for real_estate/private accounts still in portfolio */}
+            {account.is_manual && account.is_investable && !hintDismissed && (
+              <div className="mt-4 flex items-start justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5">
+                <p className="text-body-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Is this part of your investable portfolio?</span>
+                  {" "}A primary home or illiquid asset can be excluded so it doesn&apos;t affect your allocation targets.{" "}
+                  <button
+                    type="button"
+                    className="font-medium text-foreground underline underline-offset-2 hover:no-underline"
+                    onClick={(e) => { e.stopPropagation(); dismissHint(); setEditSheetOpen(true); }}
+                  >
+                    Open Edit to change
+                  </button>
+                </p>
+                <button
+                  type="button"
+                  aria-label="Dismiss"
+                  onClick={(e) => { e.stopPropagation(); dismissHint(); }}
+                  className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {/* Action buttons */}
             <div className="flex items-center gap-2 mt-4">
               {account.is_archived ? (
@@ -933,7 +1033,12 @@ export function Row({
                 </Button>
               ) : (
                 <>
-                  <EditSheet account={account} institutions={institutions} />
+                  <EditSheet
+                    account={account}
+                    institutions={institutions}
+                    open={editSheetOpen}
+                    onOpenChange={setEditSheetOpen}
+                  />
                   {account.is_manual ? (
                     <Button size="sm" onClick={() => setUpdateValueOpen(true)}>
                       Update value

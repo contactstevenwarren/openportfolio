@@ -63,6 +63,7 @@ export type Account = {
   is_manual: boolean;
   is_archived: boolean;
   staleness_threshold_days: number;
+  is_investable: boolean;
 };
 
 export type InlineClassification = {
@@ -381,6 +382,7 @@ export const api = {
     tax_treatment?: 'taxable' | 'tax_deferred' | 'tax_free' | 'hsa';
     staleness_threshold_days?: number;
     is_archived?: boolean;
+    is_investable?: boolean;
   }) =>
     fetchJson<Account>(`/api/accounts/${id}`, {
       method: 'PATCH',

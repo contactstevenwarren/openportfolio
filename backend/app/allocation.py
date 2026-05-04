@@ -88,6 +88,7 @@ def aggregate(
     positions: list[Position],
     classifications: dict[str, ClassificationEntry],
     db: Session | None = None,
+    non_investable_account_ids: frozenset[int] | None = None,
 ) -> AllocationResult:
     """Produce the 3-ring + 5-number payload for the hero screen."""
     # Nested dict: [asset_class][region][sub_class] -> dollars
@@ -130,6 +131,10 @@ def aggregate(
             tickers_by_asset[entry.asset_class].append(p.ticker)
             continue
         net_worth += value
+        if non_investable_account_ids and p.account_id in non_investable_account_ids:
+            # Account-level exclusion: counts toward Net Worth but not
+            # Investment Portfolio. Same semantics as position-level flag.
+            continue
         if p.investable is False:
             # Counts toward Net worth but not Investment Portfolio. The
             # ticker appears in /positions only -- we deliberately keep

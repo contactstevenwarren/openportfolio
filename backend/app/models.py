@@ -54,6 +54,12 @@ class Account(Base):
     is_archived: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("0"), default=False
     )
+    # When False, all positions in this account are excluded from the
+    # Investment Portfolio total (allocation %, drift, rebalance) but
+    # still contribute to Net Worth. Use for primary home, cars, etc.
+    is_investable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("1"), default=True
+    )
 
     positions: Mapped[list["Position"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
