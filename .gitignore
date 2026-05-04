@@ -28,3 +28,4 @@ data/*.db
 
 # Fly
 fly.pid
+.worktrees
