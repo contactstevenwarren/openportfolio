@@ -27,7 +27,8 @@ import { ManualGrid } from "./manual-grid";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type UpdateMode = "pdf" | "paste" | "manual";
-type Stage = "entry" | "extracting" | "review";
+export type Stage = "entry" | "extracting" | "review";
+export type ReviewTotals = { before: number; after: number; delta: number } | null;
 
 export type UpdateFormProps = {
   account: Account;
@@ -36,6 +37,9 @@ export type UpdateFormProps = {
   initialFile?: File | null;
   onContinueDisabledChange: (disabled: boolean) => void;
   onContinue: () => void;
+  onStageChange?: (stage: Stage) => void;
+  onModeChange?: (mode: UpdateMode) => void;
+  onTotalsChange?: (totals: ReviewTotals) => void;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -59,6 +63,9 @@ export const UpdateForm = forwardRef<UpdateFormHandle, UpdateFormProps>(function
   initialFile = null,
   onContinueDisabledChange,
   onContinue,
+  onStageChange,
+  onModeChange,
+  onTotalsChange,
 }: UpdateFormProps, ref) {
   const [stage, setStage] = useState<Stage>("entry");
   const [mode, setMode] = useState<UpdateMode>(initialMode);
@@ -78,6 +85,10 @@ export const UpdateForm = forwardRef<UpdateFormHandle, UpdateFormProps>(function
 
   // Review-step commit-disabled state (bubbled up via callback)
   const [reviewCommitDisabled, setReviewCommitDisabled] = useState(true);
+
+  // Notify parent of stage / mode changes for sheet-width control
+  useEffect(() => { onStageChange?.(stage); }, [stage, onStageChange]);
+  useEffect(() => { onModeChange?.(mode); }, [mode, onModeChange]);
 
   // Sync initialMode / initialFile / autoSubmit when parent re-opens sheet
   useEffect(() => {
@@ -192,8 +203,10 @@ export const UpdateForm = forwardRef<UpdateFormHandle, UpdateFormProps>(function
         onBack={() => {
           setStage("entry");
           setExtractionResult(null);
+          onTotalsChange?.(null);
         }}
         onCommitDisabledChange={setReviewCommitDisabled}
+        onTotalsChange={onTotalsChange}
       />
     );
   }

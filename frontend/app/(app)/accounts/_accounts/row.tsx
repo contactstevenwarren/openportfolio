@@ -13,7 +13,7 @@ import {
   SheetTitle,
   SheetFooter,
 } from "@/app/components/ui/sheet";
-import { UpdateForm, type UpdateMode, type UpdateFormHandle } from "./update-form";
+import { UpdateForm, type UpdateMode, type UpdateFormHandle, type Stage, type ReviewTotals } from "./update-form";
 import { UpdateValueSheet } from "./update-value-sheet";
 import { ClassChip } from "./class-chip";
 import { EditPositionSheet } from "./edit-position-sheet";
@@ -23,6 +23,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/app/components/ui/tooltip";
+import { cn } from "@/app/lib/utils";
 import type { Account, Institution, ClassificationRow } from "@/app/lib/api";
 import { api } from "@/app/lib/api";
 import {
@@ -89,15 +90,37 @@ function UpdateSheet({
   trigger: UpdateTrigger;
 }) {
   const [continueDisabled, setContinueDisabled] = useState(true);
+  const [stage, setStage] = useState<Stage>("entry");
+  const [mode, setMode] = useState<UpdateMode>(trigger.mode);
+  const [totals, setTotals] = useState<ReviewTotals>(null);
   const formRef = useRef<UpdateFormHandle>(null);
 
   const handleContinueDisabledChange = useCallback((disabled: boolean) => {
     setContinueDisabled(disabled);
   }, []);
 
+  // Reset to narrow + clear totals when sheet closes
+  useEffect(() => {
+    if (!open) {
+      setStage("entry");
+      setMode(trigger.mode);
+      setTotals(null);
+    }
+  }, [open, trigger.mode]);
+
+  // Widen when review stage or manual tab is active
+  const widen = stage === "review" || mode === "manual";
+  const widthClass = widen ? "sm:max-w-none lg:max-w-4xl" : "sm:max-w-sm";
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="overflow-y-auto flex flex-col">
+      <SheetContent
+        side="right"
+        className={cn(
+          "overflow-y-auto flex flex-col transition-[max-width] duration-500 ease-out",
+          widthClass
+        )}
+      >
         <SheetHeader>
           <SheetTitle>Import positions — {account.label}</SheetTitle>
         </SheetHeader>
@@ -111,21 +134,36 @@ function UpdateSheet({
             autoSubmit={trigger.autoSubmit}
             initialFile={trigger.file}
             onContinueDisabledChange={handleContinueDisabledChange}
+            onStageChange={setStage}
+            onModeChange={setMode}
+            onTotalsChange={setTotals}
             onContinue={() => onOpenChange(false)}
           />
         </div>
 
         <SheetFooter className="px-6 pb-6 gap-2">
-          <SheetClose asChild>
-            <Button variant="outline" size="sm">Cancel</Button>
-          </SheetClose>
-          <Button
-            size="sm"
-            disabled={continueDisabled}
-            onClick={() => formRef.current?.handleContinue()}
-          >
-            Continue
-          </Button>
+          {totals && (
+            <div className="text-body-sm tabular-nums text-muted-foreground border-t border-border pt-3 pb-1">
+              <span>Before: {formatUsd(totals.before)}</span>
+              <span className="mx-2 text-muted-foreground">→</span>
+              <span>After: {formatUsd(totals.after)}</span>
+              <span className={cn("ml-2 font-medium", totals.delta >= 0 ? "text-green-600" : "text-destructive")}>
+                ({totals.delta >= 0 ? "+" : ""}{formatUsd(totals.delta)})
+              </span>
+            </div>
+          )}
+          <div className="flex gap-2 justify-end">
+            <SheetClose asChild>
+              <Button variant="outline" size="sm">Cancel</Button>
+            </SheetClose>
+            <Button
+              size="sm"
+              disabled={continueDisabled}
+              onClick={() => formRef.current?.handleContinue()}
+            >
+              Continue
+            </Button>
+          </div>
         </SheetFooter>
       </SheetContent>
     </Sheet>
