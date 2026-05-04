@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
@@ -209,7 +209,7 @@ function getWhyText(
   return "Available funds first close any underweight gaps. Any leftover is distributed by target weight so the portfolio remains balanced.";
 }
 
-export function SandboxCard() {
+function SandboxCardInner() {
   const { rebalanceError, isStale, lastAsOf, setNewCash, includeCashExcess, setIncludeCashExcess } = useSandbox();
   const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>(() =>
@@ -534,5 +534,13 @@ export function SandboxCard() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+export function SandboxCard() {
+  return (
+    <Suspense fallback={null}>
+      <SandboxCardInner />
+    </Suspense>
   );
 }

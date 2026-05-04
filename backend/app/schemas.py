@@ -101,6 +101,7 @@ class AccountPatch(BaseModel):
     tax_treatment: str | None = None
     staleness_threshold_days: int | None = None
     is_archived: bool | None = None
+    is_investable: bool | None = None
 
 
 class AccountClassBreakdown(BaseModel):
@@ -125,6 +126,7 @@ class AccountRead(BaseModel):
     is_manual: bool = False
     is_archived: bool = False
     staleness_threshold_days: int = 30
+    is_investable: bool = True
 
     model_config = ConfigDict(from_attributes=True)
 

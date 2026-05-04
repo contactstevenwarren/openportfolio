@@ -613,3 +613,109 @@ def test_patch_position_as_of(
     assert r.status_code == 200
     updated = r.json()
     assert updated["as_of"].startswith("2024-03-15")
+
+
+# ── is_investable ─────────────────────────────────────────────────────────────
+
+
+def test_account_defaults_to_investable(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    r = client.post(
+        "/api/accounts",
+        json={"label": "Brokerage", "type": "brokerage"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 201
+    assert r.json()["is_investable"] is True
+
+
+def test_patch_is_investable(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    acct = client.post(
+        "/api/accounts",
+        json={"label": "Primary Home", "type": "real_estate"},
+        headers=auth_headers,
+    ).json()
+    r = client.patch(
+        f"/api/accounts/{acct['id']}",
+        json={"is_investable": False},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["is_investable"] is False
+
+    # Toggling back
+    r2 = client.patch(
+        f"/api/accounts/{acct['id']}",
+        json={"is_investable": True},
+        headers=auth_headers,
+    )
+    assert r2.json()["is_investable"] is True
+
+
+def test_non_investable_account_excluded_from_allocation_total(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """Positions in a non-investable account count toward net_worth but not total."""
+    # Investable account: $100k rental property (auto-classifies as real_estate)
+    inv = client.post(
+        "/api/accounts",
+        json={
+            "label": "Rental Property",
+            "type": "real_estate",
+            "initial_position": {"market_value": 100_000.0},
+        },
+        headers=auth_headers,
+    ).json()
+    assert inv.get("id"), f"create investable account failed: {inv}"
+
+    # Non-investable account: $500k primary home
+    home = client.post(
+        "/api/accounts",
+        json={
+            "label": "Primary Home",
+            "type": "real_estate",
+            "initial_position": {"market_value": 500_000.0},
+        },
+        headers=auth_headers,
+    ).json()
+    assert home.get("id"), f"create home account failed: {home}"
+
+    # Mark the home account as non-investable
+    patch_r = client.patch(
+        f"/api/accounts/{home['id']}",
+        json={"is_investable": False},
+        headers=auth_headers,
+    )
+    assert patch_r.status_code == 200
+    assert patch_r.json()["is_investable"] is False
+
+    allocation = client.get("/api/allocation", headers=auth_headers).json()
+
+    # Investment Portfolio total should be $100k (rental only)
+    assert abs(allocation["total"] - 100_000.0) < 1.0
+    # Net Worth should include both: $600k
+    assert abs(allocation["net_worth"] - 600_000.0) < 1.0
+
+
+def test_migrate_schema_adds_is_investable_column(test_db: Session) -> None:
+    """_migrate_schema adds accounts.is_investable on legacy DBs that lack it."""
+    with test_db.bind.begin() as conn:  # type: ignore[union-attr]
+        conn.execute(text("ALTER TABLE accounts RENAME TO accounts_bak"))
+        conn.execute(
+            text(
+                "CREATE TABLE accounts ("
+                "id INTEGER PRIMARY KEY, label VARCHAR(100), type VARCHAR(50), "
+                "currency VARCHAR(3), created_at DATETIME, institution_id INTEGER, "
+                "tax_treatment VARCHAR(20) NOT NULL DEFAULT 'taxable', "
+                "staleness_threshold_days INTEGER NOT NULL DEFAULT 30, "
+                "is_archived BOOLEAN NOT NULL DEFAULT 0"
+                ")"
+            )
+        )
+    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
+    with test_db.bind.begin() as conn:  # type: ignore[union-attr]
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(accounts)"))}
+    assert "is_investable" in cols

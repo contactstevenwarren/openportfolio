@@ -39,6 +39,7 @@ export const seedAccounts: Account[] = [
     is_manual: false,
     is_archived: false,
     staleness_threshold_days: 30,
+    is_investable: true,
   },
   {
     id: 2,
@@ -60,6 +61,7 @@ export const seedAccounts: Account[] = [
     is_manual: false,
     is_archived: false,
     staleness_threshold_days: 30,
+    is_investable: true,
   },
   {
     id: 3,
@@ -78,6 +80,7 @@ export const seedAccounts: Account[] = [
     is_manual: true,
     is_archived: false,
     staleness_threshold_days: 365,
+    is_investable: true,
   },
   // ── Fidelity ─────────────────────────────────────────────────────────────────
   {
@@ -97,6 +100,7 @@ export const seedAccounts: Account[] = [
     is_manual: false,
     is_archived: false,
     staleness_threshold_days: 7,
+    is_investable: true,
   },
   {
     id: 5,
@@ -119,6 +123,7 @@ export const seedAccounts: Account[] = [
     is_manual: false,
     is_archived: false,
     staleness_threshold_days: 30,
+    is_investable: true,
   },
   {
     id: 6,
@@ -137,6 +142,7 @@ export const seedAccounts: Account[] = [
     is_manual: false,
     is_archived: false,
     staleness_threshold_days: 30,
+    is_investable: true,
   },
   // ── Coinbase ─────────────────────────────────────────────────────────────────
   {
@@ -156,6 +162,7 @@ export const seedAccounts: Account[] = [
     is_manual: false,
     is_archived: false,
     staleness_threshold_days: 1,
+    is_investable: true,
   },
   // ── Archived ─────────────────────────────────────────────────────────────────
   {
@@ -175,5 +182,6 @@ export const seedAccounts: Account[] = [
     is_manual: false,
     is_archived: true,
     staleness_threshold_days: 30,
+    is_investable: true,
   },
 ];
