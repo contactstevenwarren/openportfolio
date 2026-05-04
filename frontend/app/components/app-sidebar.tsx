@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Palette, Archive, Landmark, Target } from "lucide-react";
+import { Home, Palette, Archive, Landmark, Settings, Target } from "lucide-react";
 
 import * as React from "react";
 
@@ -115,6 +115,16 @@ export function AppSidebar({
       </SidebarContent>
 
       <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={pathname === "/settings"}>
+              <Link href="/settings">
+                <Settings />
+                <span>Settings</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
         <p className="text-muted-foreground text-xs px-2 py-1">
           v0.2 · alpha
         </p>
