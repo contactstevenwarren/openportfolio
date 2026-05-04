@@ -321,6 +321,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
         });
         await mutate("/api/accounts");
         await mutate(`/api/positions?account_id=${account.id}`);
+        await mutate("/api/classifications");
         onCommitSuccess();
       } catch (e) {
         setCommitError(e instanceof Error ? e.message : "Commit failed.");
