@@ -831,50 +831,58 @@ def _apply_commit_row_classification(
                 )
         else:
             existing_c = db.get(Classification, ticker)
-            if existing_c is None:
-                yaml_entries = load_classifications()
-                yaml_hit = yaml_entries.get(ticker)
-                same_as_yaml = (
-                    yaml_hit is not None
-                    and yaml_hit.asset_class == cls_in.asset_class
+            yaml_entries = load_classifications()
+            yaml_hit = yaml_entries.get(ticker)
+            same_as_yaml = (
+                yaml_hit is not None
+                and yaml_hit.asset_class == cls_in.asset_class
+            )
+            if existing_c is not None:
+                # Update the existing user-owned row with the explicitly
+                # selected class. YAML-baseline rows are left alone.
+                if existing_c.source == "user":
+                    existing_c.asset_class = cls_in.asset_class
+                    existing_c.sub_class = cls_in.sub_class
+                    existing_c.sector = cls_in.sector
+                    existing_c.region = cls_in.region
+            elif not same_as_yaml:
+                db.add(
+                    Classification(
+                        ticker=ticker,
+                        asset_class=cls_in.asset_class,
+                        sub_class=cls_in.sub_class,
+                        sector=cls_in.sector,
+                        region=cls_in.region,
+                        source="user",
+                    )
                 )
-                if not same_as_yaml:
+            if existing_c is None or (existing_c is not None and existing_c.source == "user"):
+                sc = cls_in.suggestion_confidence
+                sr = cls_in.suggestion_reasoning
+                for field, value in (
+                    ("asset_class", cls_in.asset_class),
+                    ("sub_class", cls_in.sub_class),
+                    ("sector", cls_in.sector),
+                    ("region", cls_in.region),
+                ):
+                    conf = (
+                        sc
+                        if field == "asset_class" and sc is not None
+                        else 1.0
+                    )
+                    span = sr if field == "asset_class" else None
                     db.add(
-                        Classification(
-                            ticker=ticker,
-                            asset_class=cls_in.asset_class,
-                            sub_class=cls_in.sub_class,
-                            sector=cls_in.sector,
-                            region=cls_in.region,
-                            source="user",
+                        Provenance(
+                            entity_type="classification",
+                            entity_id=0,
+                            entity_key=ticker,
+                            field=field,
+                            source=source,
+                            confidence=conf,
+                            llm_span=span,
+                            captured_at=now,
                         )
                     )
-                    sc = cls_in.suggestion_confidence
-                    sr = cls_in.suggestion_reasoning
-                    for field, value in (
-                        ("asset_class", cls_in.asset_class),
-                        ("sub_class", cls_in.sub_class),
-                        ("sector", cls_in.sector),
-                        ("region", cls_in.region),
-                    ):
-                        conf = (
-                            sc
-                            if field == "asset_class" and sc is not None
-                            else 1.0
-                        )
-                        span = sr if field == "asset_class" else None
-                        db.add(
-                            Provenance(
-                                entity_type="classification",
-                                entity_id=0,
-                                entity_key=ticker,
-                                field=field,
-                                source=source,
-                                confidence=conf,
-                                llm_span=span,
-                                captured_at=now,
-                            )
-                        )
     return ticker
 
 
@@ -1040,6 +1048,13 @@ def commit_positions(
         for p in stale:
             db.delete(p)
 
+        # Safety net: remove duplicate rows for the same ticker (keeps the
+        # one that was just written, deletes any extras that pre-existed).
+        seen_ids: set[int] = set(created_ids)
+        for p in db.query(Position).filter_by(account_id=account.id).all():
+            if p.ticker.upper() in committed_upper and p.id not in seen_ids:
+                db.delete(p)
+
         db.commit()
         _write_snapshot(db)
         return CommitResult(
@@ -1053,17 +1068,34 @@ def commit_positions(
     for row in body.positions:
         ticker = _apply_commit_row_classification(db, body.source, row, now)
 
-        position = Position(
-            account_id=account.id,
-            ticker=ticker,
-            shares=row.shares,
-            cost_basis=row.cost_basis,
-            market_value=row.market_value,
-            as_of=now,
-            source=body.source,
+        # Upsert: if a position with this ticker already exists in the account,
+        # update it instead of inserting a duplicate row.
+        position = (
+            db.query(Position)
+            .filter(
+                Position.account_id == account.id,
+                func.upper(Position.ticker) == ticker.upper(),
+            )
+            .first()
         )
-        db.add(position)
-        db.flush()  # populate position.id for provenance FK
+        if position is not None:
+            position.shares = row.shares
+            position.cost_basis = row.cost_basis
+            position.market_value = row.market_value
+            position.as_of = now
+            position.source = body.source
+        else:
+            position = Position(
+                account_id=account.id,
+                ticker=ticker,
+                shares=row.shares,
+                cost_basis=row.cost_basis,
+                market_value=row.market_value,
+                as_of=now,
+                source=body.source,
+            )
+            db.add(position)
+            db.flush()  # populate position.id for provenance FK
 
         _add_position_numeric_provenance(
             db,

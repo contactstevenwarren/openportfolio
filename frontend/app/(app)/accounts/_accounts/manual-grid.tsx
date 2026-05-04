@@ -95,7 +95,11 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
                 sub_class: null,
                 sector: null,
                 region: null,
-                auto_suffix: true,
+                // auto_suffix only for manual account types (real_estate/private)
+                // where the ticker is a synthetic slug that may collide. For
+                // real market tickers (brokerage/bank/crypto) we want a plain
+                // upsert on the existing Classification row, not a suffixed new one.
+                auto_suffix: account.is_manual,
               }
             : undefined,
         })),
