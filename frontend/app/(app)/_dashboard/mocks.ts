@@ -43,12 +43,6 @@ export type DriftRow = {
   deltaUsd: number;
 };
 
-export type HealthCounts = {
-  stalePrices: number;
-  untaggedTickers: number;
-  missingClassifications: number;
-  lastSnapshotAge: string;
-};
 
 const SNAPSHOT_AT = "2026-04-26T18:00:00Z";
 const PRICE_FRESH: Freshness = {
@@ -239,12 +233,6 @@ export const mockInvestable = {
   freshness: SNAPSHOT_FRESH,
 };
 
-export const mockHealth: HealthCounts = {
-  stalePrices: 2,
-  untaggedTickers: 1,
-  missingClassifications: 0,
-  lastSnapshotAge: "1 day ago",
-};
 
 // NOTE: us-equity and intl-equity share --viz-equity (v0.1.6 dashboard donut redesign
 // will collapse these to the single backend 'equity' class). alts→commodity, other→muted.
