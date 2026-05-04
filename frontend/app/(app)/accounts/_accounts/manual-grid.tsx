@@ -95,7 +95,7 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
                 sub_class: null,
                 sector: null,
                 region: null,
-                auto_suffix: false,
+                auto_suffix: true,
               }
             : undefined,
         })),
