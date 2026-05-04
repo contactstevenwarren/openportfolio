@@ -77,10 +77,15 @@ type DisplaySlice = {
   driftBand: DriftBand | null;
 };
 
+// Canonical brand order for the legend (brand.md §Charts).
+const CANONICAL_ORDER: AssetClass[] = [
+  "cash", "us-equity", "intl-equity", "fixed-income",
+  "real-estate", "crypto", "alts", "other",
+];
+
 function toDisplaySlices(input: AllocationSlice[]): DisplaySlice[] {
   return [...input]
     .filter((s) => s.value > 0)
-    .sort((a, b) => b.value - a.value)
     .map((s) => ({
       name: s.name,
       cls: NAME_TO_CLASS[s.name] ?? "other",
@@ -90,7 +95,14 @@ function toDisplaySlices(input: AllocationSlice[]): DisplaySlice[] {
       targetPct: s.target_pct ?? null,
       driftPct: s.drift_pct ?? null,
       driftBand: s.drift_band ?? null,
-    }));
+    }))
+    .sort((a, b) => {
+      const ai = CANONICAL_ORDER.indexOf(a.cls);
+      const bi = CANONICAL_ORDER.indexOf(b.cls);
+      // Unknown classes go last; within same class sort by value desc
+      if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      return b.value - a.value;
+    });
 }
 
 // Per-slice outer radius in px. Linear growth from DRIFT_FLOOR_PP (flush) to
@@ -240,7 +252,7 @@ function DonutBody({
                         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                           {labelText}
                         </span>
-                        <span className="font-mono text-xl font-medium text-foreground">
+                        <span className="font-mono text-xl font-medium text-accent">
                           <Provenance source={STUB_PROVENANCE.source}>
                             {valueText}
                           </Provenance>
@@ -288,7 +300,7 @@ function DonutBody({
                     </Provenance>
                   </span>
                   <span className="w-12 text-right text-mono-sm tabular-nums text-muted-foreground">
-                    {s.targetPct != null ? formatPct(s.targetPct / 100) : "—"}
+                    {s.targetPct != null ? formatPct(s.targetPct / 100, { digits: 0 }) : "—"}
                   </span>
                   <span className={`w-14 text-right text-mono-sm tabular-nums ${driftColor(s.driftBand)}`}>
                     {s.driftPct != null ? formatPp(s.driftPct) : "—"}

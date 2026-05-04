@@ -235,7 +235,7 @@ export const mockInvestable = {
 
 
 // NOTE: us-equity and intl-equity share --viz-equity (v0.1.6 dashboard donut redesign
-// will collapse these to the single backend 'equity' class). alts→commodity, other→muted.
+// collapsed these to the single backend 'equity' class). alts → --viz-alts alias.
 export const ASSET_CLASS_COLOR: Record<AssetClass, string> = {
   cash: "var(--viz-cash)",
   "us-equity": "var(--viz-equity)",
@@ -243,8 +243,8 @@ export const ASSET_CLASS_COLOR: Record<AssetClass, string> = {
   "fixed-income": "var(--viz-fixed-income)",
   "real-estate": "var(--viz-real-estate)",
   crypto: "var(--viz-crypto)",
-  alts: "var(--viz-commodity)",
-  other: "var(--muted-foreground)",
+  alts: "var(--viz-alts)",
+  other: "var(--viz-other)",
 };
 
 export function formatUsd(value: number, opts: { compact?: boolean; signed?: boolean } = {}) {
