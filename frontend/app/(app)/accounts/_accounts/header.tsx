@@ -190,11 +190,19 @@ export function Header({ accounts, institutions, addOpen, onAddOpenChange }: Hea
         setStage("closed");
         resetForm();
       } else {
-        const created = await api.createAccount({
+        // If a locally-created institution (negative id), persist it first
+      let resolvedInstitutionId: number | null =
+        institutionId != null && institutionId > 0 ? institutionId : null;
+      if (institutionId != null && institutionId < 0 && institutionName) {
+        const newInst = await api.createInstitution(institutionName);
+        resolvedInstitutionId = newInst.id;
+        await mutate("/api/institutions");
+      }
+
+      const created = await api.createAccount({
           label: resolvedName,
           type: kind.accountType,
-          // institutionId > 0 = real DB row; 0/negative = synthetic placeholder not yet in DB
-          institution_id: institutionId != null && institutionId > 0 ? institutionId : null,
+          institution_id: resolvedInstitutionId,
           tax_treatment: kind.taxTreatment,
           staleness_threshold_days: staleAfterDays,
         });
