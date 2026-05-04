@@ -106,7 +106,7 @@ function UpdateSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="overflow-y-auto flex flex-col">
         <SheetHeader>
-          <SheetTitle>Update {account.label}</SheetTitle>
+          <SheetTitle>Import positions — {account.label}</SheetTitle>
         </SheetHeader>
 
         <div className="flex-1 px-6 py-4">
@@ -278,6 +278,8 @@ type EditSheetProps = {
 
 function EditSheet({ account, institutions }: EditSheetProps) {
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Resolve the current account's (type, tax, manual) tuple to the matching
   // template kind, or synthesize a "Custom" kind if no template matches.
@@ -293,14 +295,14 @@ function EditSheet({ account, institutions }: EditSheetProps) {
   const [name, setName] = useState<string>(account.label);
   const [staleAfterDays, setStaleAfterDays] = useState<number>(account.staleness_threshold_days);
 
-  // Reset all fields when the sheet opens, so a stale local state doesn't leak
-  // between opens (e.g. cancelled changes shouldn't persist).
+  // Reset all fields when the sheet opens.
   useEffect(() => {
     if (open) {
       setInstitutionId(account.institution_id);
       setKind(initialKind);
       setName(account.label);
       setStaleAfterDays(account.staleness_threshold_days);
+      setSaveError(null);
     }
     // initialKind is derived from `account` fields already in the deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -322,6 +324,27 @@ function EditSheet({ account, institutions }: EditSheetProps) {
     });
   }
 
+  async function handleSave() {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await api.patchAccount(account.id, {
+        label: name.trim() || account.label,
+        type: kind?.accountType ?? account.type,
+        institution_id: institutionId != null && institutionId > 0 ? institutionId : null,
+        tax_treatment: (kind?.taxTreatment ?? account.tax_treatment) as
+          'taxable' | 'tax_deferred' | 'tax_free' | 'hsa',
+        staleness_threshold_days: staleAfterDays,
+      });
+      await mutate("/api/accounts");
+      setOpen(false);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Failed to save changes.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
@@ -334,9 +357,11 @@ function EditSheet({ account, institutions }: EditSheetProps) {
         </SheetHeader>
 
         <div className="flex flex-col gap-4 px-4 py-4">
-          <div className="rounded-md bg-muted px-3 py-2 text-body-sm text-muted-foreground">
-            Design preview — not yet connected to data.
-          </div>
+          {saveError && (
+            <p className="rounded-md bg-destructive/10 px-3 py-2 text-body-sm text-destructive">
+              {saveError}
+            </p>
+          )}
 
           {/* Institution */}
           <div className="flex flex-col gap-1.5">
@@ -389,9 +414,11 @@ function EditSheet({ account, institutions }: EditSheetProps) {
 
         <SheetFooter className="px-4 pb-4">
           <SheetClose asChild>
-            <Button variant="outline" size="sm">Cancel</Button>
+            <Button variant="outline" size="sm" disabled={saving}>Cancel</Button>
           </SheetClose>
-          <Button size="sm">Save (preview)</Button>
+          <Button size="sm" disabled={saving} onClick={handleSave}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>
@@ -522,7 +549,7 @@ export function Row({
         type="button"
         onClick={(e) => { e.stopPropagation(); openUpdate(); }}
         className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label={`Update ${account.label} — ${relativeDate}`}
+        aria-label={`Import positions — ${account.label} (${relativeDate})`}
       >
         ● {relativeDate}
       </button>
@@ -531,7 +558,7 @@ export function Row({
         type="button"
         onClick={(e) => { e.stopPropagation(); openUpdate(); }}
         className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-warning/10 text-warning hover:bg-warning/20 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label={`Update ${account.label} — ${relativeDate}`}
+        aria-label={`Import positions — ${account.label} (${relativeDate})`}
       >
         ● {relativeDate}
       </button>
@@ -630,12 +657,12 @@ export function Row({
                   size="icon-sm"
                   className="shrink-0 text-muted-foreground hover:text-foreground"
                   onClick={(e) => { e.stopPropagation(); openUpdate(); }}
-                  aria-label={`Update ${account.label}`}
+                  aria-label={`Import positions — ${account.label}`}
                 >
                   <UploadIcon className="size-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Update {account.label}</TooltipContent>
+              <TooltipContent>Import positions — {account.label}</TooltipContent>
             </Tooltip>
           )}
 
@@ -761,7 +788,7 @@ export function Row({
                 <>
                   <EditSheet account={account} institutions={institutions} />
                   <Button size="sm" onClick={() => openUpdate()}>
-                    Update
+                    Import positions
                   </Button>
                 </>
               )}
