@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import useSWR, { mutate } from "swr";
 import { ChevronRightIcon, ChevronDownIcon, UploadIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -19,11 +20,10 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/app/components/ui/tooltip";
+import type { Account, Institution } from "@/app/lib/api";
+import { api } from "@/app/lib/api";
 import {
-  Account,
-  Institution,
-  Position,
-  AccountKind,
+  type AccountKind,
   ASSET_CLASS_ORDER,
   ASSET_CLASS_LABEL,
   ASSET_CLASS_COLOR,
@@ -37,17 +37,28 @@ import {
   AccountKindCombobox,
   findMatchingKind,
 } from "./comboboxes";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/app/components/ui/alert-dialog";
 
 // ── Labels ────────────────────────────────────────────────────────────────────
 
-const TAX_TREATMENT_LABEL: Record<Account["taxTreatment"], string> = {
+const TAX_TREATMENT_LABEL: Record<Account["tax_treatment"], string> = {
   taxable: "Taxable",
   tax_deferred: "Tax-deferred",
   tax_free: "Tax-free",
   hsa: "HSA",
 };
 
-const ACCOUNT_TYPE_LABEL: Record<Account["accountType"], string> = {
+const ACCOUNT_TYPE_LABEL: Record<string, string> = {
   brokerage: "Brokerage",
   bank: "Bank",
   crypto: "Crypto",
@@ -95,7 +106,7 @@ function UpdateSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="overflow-y-auto flex flex-col">
         <SheetHeader>
-          <SheetTitle>Update {account.name}</SheetTitle>
+          <SheetTitle>Update {account.label}</SheetTitle>
         </SheetHeader>
 
         <div className="flex-1 px-6 py-4">
@@ -128,6 +139,133 @@ function UpdateSheet({
   );
 }
 
+// ── DangerZone ────────────────────────────────────────────────────────────────
+// Rendered inside EditSheet. Provides Archive/Unarchive and Delete permanently.
+
+function DangerZone({
+  account,
+  onDone,
+}: {
+  account: Account;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleArchive() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.patchAccount(account.id, { is_archived: !account.is_archived });
+      await mutate("/api/accounts");
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Action failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteAccount(account.id);
+      await mutate("/api/accounts");
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border px-4 py-4 flex flex-col gap-4">
+      <p className="text-label uppercase tracking-wider text-muted-foreground">
+        Danger zone
+      </p>
+
+      {error && (
+        <p className="text-body-sm text-destructive">{error}</p>
+      )}
+
+      {/* Archive / Unarchive */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-body-sm font-medium">
+            {account.is_archived ? "Unarchive account" : "Archive account"}
+          </p>
+          <p className="text-body-sm text-muted-foreground">
+            {account.is_archived
+              ? "Show in the active list again."
+              : "Hide from the active list. Reversible."}
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={handleArchive}
+        >
+          {account.is_archived ? "Unarchive" : "Archive"}
+        </Button>
+      </div>
+
+      {/* Delete permanently */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-body-sm font-medium">Delete permanently</p>
+          <p className="text-body-sm text-muted-foreground">
+            Removes the account
+            {account.position_count > 0
+              ? ` and ${account.position_count} position${account.position_count === 1 ? "" : "s"}`
+              : ""}
+            . This cannot be undone.
+          </p>
+        </div>
+
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              Delete account
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {account.label}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {account.position_count > 0
+                  ? `This will also remove ${account.position_count} position${account.position_count === 1 ? "" : "s"}. `
+                  : ""}
+                This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={busy}
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleDelete();
+                }}
+              >
+                {busy ? "Deleting…" : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </div>
+  );
+}
+
+
 // ── EditSheet ─────────────────────────────────────────────────────────────────
 // Mirrors the Add form (Institution, Account kind, Account name, Mark as stale
 // after) so the same account looks the same whether you're creating or editing.
@@ -144,31 +282,31 @@ function EditSheet({ account, institutions }: EditSheetProps) {
   // Resolve the current account's (type, tax, manual) tuple to the matching
   // template kind, or synthesize a "Custom" kind if no template matches.
   const initialKind = findMatchingKind(
-    account.accountType,
-    account.taxTreatment,
-    account.isManual,
-    account.stalenessThresholdDays
+    account.type as Parameters<typeof findMatchingKind>[0],
+    account.tax_treatment as Parameters<typeof findMatchingKind>[1],
+    account.is_manual,
+    account.staleness_threshold_days
   );
 
-  const [institutionId, setInstitutionId] = useState<string | null>(account.institutionId);
+  const [institutionId, setInstitutionId] = useState<number | null>(account.institution_id);
   const [kind, setKind] = useState<AccountKind | null>(initialKind);
-  const [name, setName] = useState<string>(account.name);
-  const [staleAfterDays, setStaleAfterDays] = useState<number>(account.stalenessThresholdDays);
+  const [name, setName] = useState<string>(account.label);
+  const [staleAfterDays, setStaleAfterDays] = useState<number>(account.staleness_threshold_days);
 
   // Reset all fields when the sheet opens, so a stale local state doesn't leak
   // between opens (e.g. cancelled changes shouldn't persist).
   useEffect(() => {
     if (open) {
-      setInstitutionId(account.institutionId);
+      setInstitutionId(account.institution_id);
       setKind(initialKind);
-      setName(account.name);
-      setStaleAfterDays(account.stalenessThresholdDays);
+      setName(account.label);
+      setStaleAfterDays(account.staleness_threshold_days);
     }
     // initialKind is derived from `account` fields already in the deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, account]);
 
-  function handleInstitutionChange(id: string) {
+  function handleInstitutionChange(id: number, _name: string) {
     setInstitutionId(id);
   }
 
@@ -192,7 +330,7 @@ function EditSheet({ account, institutions }: EditSheetProps) {
 
       <SheetContent side="right" className="overflow-y-auto">
         <SheetHeader>
-          <SheetTitle>Edit {account.name}</SheetTitle>
+          <SheetTitle>Edit {account.label}</SheetTitle>
         </SheetHeader>
 
         <div className="flex flex-col gap-4 px-4 py-4">
@@ -218,11 +356,11 @@ function EditSheet({ account, institutions }: EditSheetProps) {
 
           {/* Account name */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-body-sm font-medium" htmlFor={`edit-name-${account.id}`}>
+            <label className="text-body-sm font-medium" htmlFor={`edit-label-${account.id}`}>
               Account name
             </label>
             <input
-              id={`edit-name-${account.id}`}
+              id={`edit-label-${account.id}`}
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -247,6 +385,8 @@ function EditSheet({ account, institutions }: EditSheetProps) {
           </div>
         </div>
 
+        <DangerZone account={account} onDone={() => setOpen(false)} />
+
         <SheetFooter className="px-4 pb-4">
           <SheetClose asChild>
             <Button variant="outline" size="sm">Cancel</Button>
@@ -264,9 +404,8 @@ export type RowProps = {
   account: Account;
   institution: Institution;
   institutions: Institution[];
-  positions: Position[];
   isExpanded: boolean;
-  onToggle: (id: string) => void;
+  onToggle: (id: number) => void;
   isFileDragging: boolean;
   onFileDragEnd: () => void;
   isFirstInGroup: boolean;
@@ -277,7 +416,6 @@ export function Row({
   account,
   institution,
   institutions,
-  positions,
   isExpanded,
   onToggle,
   isFileDragging,
@@ -286,6 +424,13 @@ export function Row({
   isLastInGroup,
 }: RowProps) {
   const staleness = stalenessState(account);
+
+  // ── Lazy-fetch positions on first expand ──────────────────────────────────
+  const { data: positions = [] } = useSWR(
+    isExpanded ? `/api/positions?account_id=${account.id}` : null,
+    () => api.positions(account.id),
+    { revalidateOnFocus: false }
+  );
 
   // ── UpdateSheet state ──────────────────────────────────────────────────────
   const [updateOpen, setUpdateOpen] = useState(false);
@@ -312,13 +457,13 @@ export function Row({
   // isFileDragging detection works. Only `drop` stops propagation so the list's
   // drop fallback doesn't also fire.
   function handleRowDragEnter(e: React.DragEvent) {
-    if (account.isArchived || !isFileTransfer(e)) return;
+    if (account.is_archived || !isFileTransfer(e)) return;
     e.preventDefault();
     setIsDropTarget(true);
   }
 
   function handleRowDragLeave(e: React.DragEvent) {
-    if (account.isArchived || !isFileTransfer(e)) return;
+    if (account.is_archived || !isFileTransfer(e)) return;
     // Only clear when leaving the actual row element, not a child.
     const related = e.relatedTarget as Node | null;
     if (related && (e.currentTarget as HTMLElement).contains(related)) return;
@@ -326,13 +471,13 @@ export function Row({
   }
 
   function handleRowDragOver(e: React.DragEvent) {
-    if (account.isArchived || !isFileTransfer(e)) return;
+    if (account.is_archived || !isFileTransfer(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
   }
 
   function handleRowDrop(e: React.DragEvent) {
-    if (account.isArchived) return;
+    if (account.is_archived) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDropTarget(false);
@@ -341,28 +486,33 @@ export function Row({
     openUpdate("pdf", true, file);
   }
 
-  // ── Asset breakdown segments ────────────────────────────────────────────────
-  const segmentMap = new Map<string, number>();
-  for (const pos of positions) {
-    segmentMap.set(pos.assetClass, (segmentMap.get(pos.assetClass) ?? 0) + pos.value);
-  }
-  const totalValue = Array.from(segmentMap.values()).reduce((s, v) => s + v, 0);
+  // ── Asset breakdown segments from server-computed class_breakdown ────────────
+  const breakdownMap = new Map(
+    account.class_breakdown.map((b) => [b.asset_class, b.value])
+  );
+  const totalBreakdownValue = Array.from(breakdownMap.values()).reduce((s, v) => s + v, 0);
   const segments = ASSET_CLASS_ORDER
-    .filter((cls) => segmentMap.has(cls))
-    .map((cls) => ({ cls, value: segmentMap.get(cls)! }));
+    .filter((cls) => breakdownMap.has(cls))
+    .map((cls) => ({ cls, value: breakdownMap.get(cls)! }));
+  const unclassifiedCount = account.position_count - account.classified_position_count;
 
   // ── Metadata line ───────────────────────────────────────────────────────────
   const metaParts = [
     institution.name,
-    ACCOUNT_TYPE_LABEL[account.accountType],
-    TAX_TREATMENT_LABEL[account.taxTreatment],
+    ACCOUNT_TYPE_LABEL[account.type] ?? account.type,
+    TAX_TREATMENT_LABEL[account.tax_treatment],
   ];
-  if (account.isManual) metaParts.push("Manual");
+  if (account.is_manual) metaParts.push("Manual");
   const metaLine = metaParts.join(" · ");
 
   // ── Staleness pill ──────────────────────────────────────────────────────────
-  const relativeDate = formatRelativeDate(account.lastUpdatedAt);
-  const provenance = formatProvenance(account.lastUpdatedAt, account.lastUpdateSource);
+  const relativeDate = account.last_updated_at
+    ? formatRelativeDate(account.last_updated_at)
+    : "Never updated";
+  const provenance =
+    account.last_updated_at && account.last_update_source
+      ? formatProvenance(account.last_updated_at, account.last_update_source)
+      : "Never updated";
 
   // Stale and aging pills are interactive buttons — clicking opens the Update sheet.
   // Fresh state is plain text; no urgency, no click affordance.
@@ -372,7 +522,7 @@ export function Row({
         type="button"
         onClick={(e) => { e.stopPropagation(); openUpdate(); }}
         className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label={`Update ${account.name} — ${relativeDate}`}
+        aria-label={`Update ${account.label} — ${relativeDate}`}
       >
         ● {relativeDate}
       </button>
@@ -381,7 +531,7 @@ export function Row({
         type="button"
         onClick={(e) => { e.stopPropagation(); openUpdate(); }}
         className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-warning/10 text-warning hover:bg-warning/20 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label={`Update ${account.name} — ${relativeDate}`}
+        aria-label={`Update ${account.label} — ${relativeDate}`}
       >
         ● {relativeDate}
       </button>
@@ -395,7 +545,7 @@ export function Row({
   // "drop here" affordance. `-outline-offset-2` insets it 2px so it sits inside
   // the row rather than overlapping siblings, and modern browsers respect the
   // outer wrapper's border-radius so the outline follows rounded corners.
-  const dropClass = !account.isArchived && isFileDragging
+  const dropClass = !account.is_archived && isFileDragging
     ? isDropTarget
       ? "bg-accent/10 outline outline-2 outline-dashed outline-accent -outline-offset-2"
       : "bg-accent/5"
@@ -420,7 +570,7 @@ export function Row({
 
       <div
         className={[
-          account.isArchived ? "opacity-60" : "",
+          account.is_archived ? "opacity-60" : "",
           cornerClass,
           dropClass,
           "transition-colors",
@@ -434,11 +584,11 @@ export function Row({
         <div
           role="button"
           tabIndex={0}
-          onClick={() => onToggle(account.id)}
+          onClick={() => onToggle(account.id as number)}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              onToggle(account.id);
+              onToggle(account.id as number);
             }
           }}
           className={[
@@ -449,7 +599,7 @@ export function Row({
         >
           {/* Name + metadata */}
           <div className="flex-1 min-w-0">
-            <p className="font-medium text-foreground text-body-sm truncate">{account.name}</p>
+            <p className="font-medium text-foreground text-body-sm truncate">{account.label}</p>
             <p className="text-body-sm text-muted-foreground truncate">{metaLine}</p>
           </div>
 
@@ -472,7 +622,7 @@ export function Row({
           </Tooltip>
 
           {/* Update icon button — opens source picker without expanding the row */}
-          {!account.isArchived && (
+          {!account.is_archived && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -480,12 +630,12 @@ export function Row({
                   size="icon-sm"
                   className="shrink-0 text-muted-foreground hover:text-foreground"
                   onClick={(e) => { e.stopPropagation(); openUpdate(); }}
-                  aria-label={`Update ${account.name}`}
+                  aria-label={`Update ${account.label}`}
                 >
                   <UploadIcon className="size-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Update {account.name}</TooltipContent>
+              <TooltipContent>Update {account.label}</TooltipContent>
             </Tooltip>
           )}
 
@@ -500,15 +650,15 @@ export function Row({
         {/* Expanded panel */}
         {isExpanded && (
           <div className="px-4 pb-4 pt-0">
-            {positions.length > 0 ? (
+            {segments.length > 0 ? (
               <>
-                {/* Asset breakdown bar */}
+                {/* Asset breakdown bar — from server-computed class_breakdown */}
                 <div className="h-2 w-full flex rounded-full overflow-hidden bg-muted">
                   {segments.map((seg) => (
                     <div
                       key={seg.cls}
                       style={{
-                        width: `${(seg.value / totalValue) * 100}%`,
+                        width: `${(seg.value / totalBreakdownValue) * 100}%`,
                         backgroundColor: ASSET_CLASS_COLOR[seg.cls],
                       }}
                       title={ASSET_CLASS_LABEL[seg.cls]}
@@ -528,73 +678,65 @@ export function Row({
                         style={{ backgroundColor: ASSET_CLASS_COLOR[seg.cls] }}
                       />
                       {ASSET_CLASS_LABEL[seg.cls]}{" "}
-                      {((seg.value / totalValue) * 100).toFixed(1)}%
+                      {((seg.value / totalBreakdownValue) * 100).toFixed(1)}%
                     </span>
                   ))}
+                  {unclassifiedCount > 0 && (
+                    <span className="text-body-sm text-muted-foreground">
+                      {unclassifiedCount} position{unclassifiedCount !== 1 ? "s" : ""} unclassified
+                    </span>
+                  )}
                 </div>
 
-                {/* Positions table — desktop */}
-                <table className="w-full mt-3 text-body-sm hidden sm:table">
-                  <thead>
-                    <tr className="text-muted-foreground text-left border-b border-border">
-                      <th className="pb-1 font-medium">Ticker</th>
-                      <th className="pb-1 font-medium text-right">Qty</th>
-                      <th className="pb-1 font-medium text-right">Value</th>
-                      <th className="pb-1 font-medium pl-3">Asset class</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {positions.map((pos) => (
-                      <tr key={pos.id} className="border-b border-border/50 last:border-0">
-                        <td className="py-1.5 font-mono text-xs">{pos.ticker}</td>
-                        <td className="py-1.5 font-mono text-xs text-right tabular-nums">
-                          {pos.quantity.toLocaleString()}
-                        </td>
-                        <td className="py-1.5 font-mono text-xs text-right tabular-nums">
-                          {formatUsd(pos.value)}
-                        </td>
-                        <td className="py-1.5 text-xs pl-3">
-                          <span className="flex items-center gap-1.5">
-                            <span
-                              className="size-2 rounded-full"
-                              style={{ backgroundColor: ASSET_CLASS_COLOR[pos.assetClass] }}
-                            />
-                            {ASSET_CLASS_LABEL[pos.assetClass]}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                {/* Positions cards — mobile */}
-                <div className="sm:hidden mt-3 flex flex-col">
-                  {positions.map((pos) => (
-                    <div
-                      key={pos.id}
-                      className="flex justify-between items-center py-2 border-b border-border/50 last:border-0"
-                    >
-                      <div>
-                        <p className="font-mono text-xs text-foreground">{pos.ticker}</p>
-                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          <span
-                            className="size-2 rounded-full"
-                            style={{ backgroundColor: ASSET_CLASS_COLOR[pos.assetClass] }}
-                          />
-                          {ASSET_CLASS_LABEL[pos.assetClass]}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-mono text-xs tabular-nums text-foreground">
-                          {formatUsd(pos.value)}
-                        </p>
-                        <p className="font-mono text-xs tabular-nums text-muted-foreground">
-                          {pos.quantity.toLocaleString()}
-                        </p>
-                      </div>
+                {/* Positions table — lazy-loaded from /api/positions?account_id */}
+                {positions.length > 0 ? (
+                  <>
+                    {/* Desktop */}
+                    <table className="w-full mt-3 text-body-sm hidden sm:table">
+                      <thead>
+                        <tr className="text-muted-foreground text-left border-b border-border">
+                          <th className="pb-1 font-medium">Ticker</th>
+                          <th className="pb-1 font-medium text-right">Qty</th>
+                          <th className="pb-1 font-medium text-right">Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {positions.map((pos) => (
+                          <tr key={pos.id} className="border-b border-border/50 last:border-0">
+                            <td className="py-1.5 font-mono text-xs">{pos.ticker}</td>
+                            <td className="py-1.5 font-mono text-xs text-right tabular-nums">
+                              {pos.shares.toLocaleString()}
+                            </td>
+                            <td className="py-1.5 font-mono text-xs text-right tabular-nums">
+                              {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {/* Mobile */}
+                    <div className="sm:hidden mt-3 flex flex-col">
+                      {positions.map((pos) => (
+                        <div
+                          key={pos.id}
+                          className="flex justify-between items-center py-2 border-b border-border/50 last:border-0"
+                        >
+                          <p className="font-mono text-xs text-foreground">{pos.ticker}</p>
+                          <div className="text-right">
+                            <p className="font-mono text-xs tabular-nums text-foreground">
+                              {pos.market_value != null ? formatUsd(pos.market_value) : "—"}
+                            </p>
+                            <p className="font-mono text-xs tabular-nums text-muted-foreground">
+                              {pos.shares.toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </>
+                ) : (
+                  <p className="text-body-sm text-muted-foreground py-2">Loading…</p>
+                )}
               </>
             ) : (
               <p className="text-body-sm text-muted-foreground py-2">
@@ -604,8 +746,17 @@ export function Row({
 
             {/* Action buttons */}
             <div className="flex items-center gap-2 mt-4">
-              {account.isArchived ? (
-                <Button variant="outline" size="sm">Unarchive</Button>
+              {account.is_archived ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    await api.patchAccount(account.id, { is_archived: false });
+                    await mutate("/api/accounts");
+                  }}
+                >
+                  Unarchive
+                </Button>
               ) : (
                 <>
                   <EditSheet account={account} institutions={institutions} />

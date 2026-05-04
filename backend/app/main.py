@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import Float as SAFloat
 from sqlalchemy import delete, func, inspect, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  -- register models with Base before create_all
@@ -27,9 +28,14 @@ from .llm import classify_ticker, extract_positions
 from .pdf_text import PdfNoTextError, PdfTextTooLargeError, pdf_bytes_to_text
 from .scrub_digits import scrub_digit_runs
 from .lookthrough import Breakdown, get_yaml_breakdowns
-from .models import Account, Classification, Position, Provenance, Snapshot, Target
+from .models import Account, Classification, Institution, Position, Provenance, Snapshot, Target
 from .schemas import (
     ASSET_CLASS_OPTIONS,
+    MANUAL_ACCOUNT_TYPES,
+    STALENESS_THRESHOLD_BY_TYPE,
+    TAX_TREATMENTS_BROKERAGE_ONLY,
+    VALID_TAX_TREATMENTS,
+    AccountClassBreakdown,
     AccountCreate,
     AccountPatch,
     AccountRead,
@@ -46,6 +52,8 @@ from .schemas import (
     ExtractionResult,
     ExtractRequest,
     FundBreakdown,
+    InstitutionCreate,
+    InstitutionRead,
     PositionCommit,
     PositionPatch,
     PositionRead,
@@ -202,20 +210,29 @@ def _targets_get_payload(db: Session) -> dict[str, object]:
 
 
 def _migrate_sqlite_schema() -> None:
-    """Additive column migrations for the v0.1 → v0.1.5 transition.
+    """Thin wrapper: delegates to _migrate_schema with the module-level engine.
 
-    ``create_all`` only creates missing tables; it does not add columns
-    to existing ones. For a maintainer whose SQLite file predates
-    v0.1.5 we add the new ``provenance.entity_key`` column in place.
-    Idempotent -- the inspector check means repeated startups are a
-    no-op. Drops out of the way once the codebase moves to a real
-    migration tool.
+    Tests can call _migrate_schema(their_engine) directly to avoid touching
+    the production schema (decision #17).
     """
-    inspector = inspect(engine)
-    if "provenance" in inspector.get_table_names():
+    _migrate_schema(engine)
+
+
+def _migrate_schema(eng: Engine) -> None:
+    """Additive column/table migrations. All steps are idempotent.
+
+    Called on startup via _migrate_sqlite_schema(). Tests call this
+    directly with a per-test engine to inspect migration behaviour
+    without affecting the production database.
+    """
+    inspector = inspect(eng)
+    tables = inspector.get_table_names()
+
+    # ── v0.1.5: provenance.entity_key ────────────────────────────────────────
+    if "provenance" in tables:
         cols = {c["name"] for c in inspector.get_columns("provenance")}
         if "entity_key" not in cols:
-            with engine.begin() as conn:
+            with eng.begin() as conn:
                 conn.execute(
                     text("ALTER TABLE provenance ADD COLUMN entity_key VARCHAR(64)")
                 )
@@ -225,20 +242,125 @@ def _migrate_sqlite_schema() -> None:
                         "ON provenance(entity_key)"
                     )
                 )
-    if "positions" in inspector.get_table_names():
+
+    # ── v0.1.5: positions.investable ─────────────────────────────────────────
+    if "positions" in tables:
         cols = {c["name"] for c in inspector.get_columns("positions")}
         if "investable" not in cols:
-            with engine.begin() as conn:
+            with eng.begin() as conn:
                 conn.execute(
                     text(
                         "ALTER TABLE positions ADD COLUMN investable BOOLEAN "
                         "NOT NULL DEFAULT 1"
                     )
                 )
-    _migrate_targets_pct_to_int()
+
+    # ── v0.2: targets.pct Float → Integer ───────────────────────────────────
+    _migrate_targets_pct_to_int(eng)
+
+    # ── accounts: institution_id + tax_treatment + staleness_threshold_days ───
+    if "accounts" in tables:
+        cols = {c["name"] for c in inspector.get_columns("accounts")}
+        with eng.begin() as conn:
+            if "institution_id" not in cols:
+                conn.execute(
+                    text("ALTER TABLE accounts ADD COLUMN institution_id INTEGER")
+                )
+            if "tax_treatment" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE accounts ADD COLUMN tax_treatment VARCHAR(20) "
+                        "NOT NULL DEFAULT 'taxable'"
+                    )
+                )
+            if "staleness_threshold_days" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE accounts ADD COLUMN staleness_threshold_days INTEGER "
+                        "NOT NULL DEFAULT 30"
+                    )
+                )
+            if "is_archived" not in cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE accounts ADD COLUMN is_archived BOOLEAN "
+                        "NOT NULL DEFAULT 0"
+                    )
+                )
+        # One-shot: migrate legacy type='hsa' rows to type='brokerage' + tax_treatment='hsa'.
+        # Idempotent: WHERE type='hsa' matches nothing after first run.
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE accounts SET type='brokerage', tax_treatment='hsa' "
+                    "WHERE type='hsa'"
+                )
+            )
+        # Backfill type-default thresholds for rows still at the schema default (30).
+        # Rows the user has already customised are untouched because their value != 30.
+        with eng.begin() as conn:
+            for acc_type, days in STALENESS_THRESHOLD_BY_TYPE.items():
+                if days == 30:
+                    continue  # schema default already correct
+                conn.execute(
+                    text(
+                        "UPDATE accounts SET staleness_threshold_days = :days "
+                        "WHERE type = :acc_type AND staleness_threshold_days = 30"
+                    ),
+                    {"days": days, "acc_type": acc_type},
+                )
+
+    # ── institutions: case-insensitive unique index ───────────────────────────
+    # create_all handles table creation on fresh installs; this ensures the
+    # unique index exists on DBs that predate the model declaration.
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_institutions_name_lower "
+                "ON institutions(lower(name))"
+            )
+        )
+
+    # ── institutions: seed well-known US institutions ─────────────────────────
+    # Idempotent: INSERT OR IGNORE skips any row whose lower(name) already
+    # matches the unique index. Safe to run every startup.
+    _seed_institutions(eng)
 
 
-def _migrate_targets_pct_to_int() -> None:
+_WELL_KNOWN_INSTITUTIONS = [
+    "Ally Bank",
+    "Bank of America",
+    "Capital One",
+    "Charles Schwab",
+    "Chase",
+    "Coinbase",
+    "E*TRADE",
+    "Empower Retirement",
+    "Fidelity",
+    "Kraken",
+    "Merrill Edge",
+    "Robinhood",
+    "SoFi",
+    "TD Ameritrade",
+    "Vanguard",
+    "Wealthfront",
+    "Wells Fargo",
+]
+
+
+def _seed_institutions(eng: Engine) -> None:
+    """Insert well-known US institutions on first boot. Idempotent."""
+    with eng.begin() as conn:
+        for name in _WELL_KNOWN_INSTITUTIONS:
+            conn.execute(
+                text(
+                    "INSERT OR IGNORE INTO institutions (name) VALUES (:name)"
+                ),
+                {"name": name},
+            )
+
+
+def _migrate_targets_pct_to_int(eng: Engine) -> None:
     """v0.2 fix: Target.pct flipped from Float to Integer.
 
     SQLite can't change a column's type in place, so when we find a
@@ -247,7 +369,7 @@ def _migrate_targets_pct_to_int() -> None:
     the rows back with rounded integer pct. Idempotent: an already-
     Integer column is a no-op.
     """
-    inspector = inspect(engine)
+    inspector = inspect(eng)
     if "targets" not in inspector.get_table_names():
         return
     pct_col = next(
@@ -256,15 +378,15 @@ def _migrate_targets_pct_to_int() -> None:
     )
     if pct_col is None or not isinstance(pct_col["type"], SAFloat):
         return
-    with engine.begin() as conn:
+    with eng.begin() as conn:
         legacy = conn.execute(
             text("SELECT path, pct, updated_at FROM targets")
         ).all()
         conn.execute(text("DROP TABLE targets"))
-    Target.__table__.create(bind=engine)
+    Target.__table__.create(bind=eng)
     if not legacy:
         return
-    with engine.begin() as conn:
+    with eng.begin() as conn:
         for path, pct, updated_at in legacy:
             conn.execute(
                 text(
@@ -338,9 +460,107 @@ def extract_pdf(
 # ----- accounts -----------------------------------------------------------
 
 
+def _validate_tax_treatment(account_type: str, tax_treatment: str) -> None:
+    """Enforce the tax_treatment × type cross-validation matrix.
+
+    tax_deferred / tax_free / hsa are only valid for brokerage accounts.
+    taxable is valid for any type.
+    """
+    if tax_treatment not in VALID_TAX_TREATMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"tax_treatment must be one of {sorted(VALID_TAX_TREATMENTS)}; "
+                f"got {tax_treatment!r}"
+            ),
+        )
+    if tax_treatment in TAX_TREATMENTS_BROKERAGE_ONLY and account_type != "brokerage":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"tax_treatment {tax_treatment!r} is only valid for type='brokerage'; "
+                f"got type={account_type!r}"
+            ),
+        )
+
+
+def _enrich_account(
+    account: Account,
+    classifications: dict,
+    db: Session,
+) -> AccountRead:
+    """Build the enriched AccountRead from a raw Account ORM row."""
+    positions = account.positions
+
+    # Balance: sum of market_value, fallback to cost_basis, then 0
+    balance = round(
+        sum(
+            p.market_value if p.market_value is not None
+            else (p.cost_basis if p.cost_basis is not None else 0.0)
+            for p in positions
+        ),
+        2,
+    )
+
+    # Last updated: max as_of, then source of that position (ORDER BY as_of DESC, id DESC)
+    last_updated_at: str | None = None
+    last_update_source: str | None = None
+    if positions:
+        latest = max(positions, key=lambda p: (p.as_of, p.id))
+        last_updated_at = latest.as_of.isoformat()
+        last_update_source = latest.source
+
+    position_count = len(positions)
+
+    # Classified position count: ticker present in the merged classification dict
+    classified_position_count = sum(
+        1 for p in positions if p.ticker in classifications
+    )
+
+    # class_breakdown via allocator (decision #4)
+    class_breakdown: list[AccountClassBreakdown] = []
+    if positions:
+        result = aggregate(positions, classifications, db=db)
+        class_breakdown = [
+            AccountClassBreakdown(asset_class=s.name, value=round(s.value, 2))
+            for s in result.by_asset_class
+            if s.value > 0
+        ]
+
+    # Derived fields
+    institution_name: str | None = None
+    if account.institution_id is not None:
+        inst = db.get(Institution, account.institution_id)
+        institution_name = inst.name if inst else None
+
+    is_manual = account.type in MANUAL_ACCOUNT_TYPES
+    staleness_threshold_days = account.staleness_threshold_days
+
+    return AccountRead(
+        id=account.id,
+        label=account.label,
+        type=account.type,
+        currency=account.currency,
+        institution_id=account.institution_id,
+        institution_name=institution_name,
+        tax_treatment=account.tax_treatment,
+        balance=balance,
+        last_updated_at=last_updated_at,
+        last_update_source=last_update_source,
+        position_count=position_count,
+        classified_position_count=classified_position_count,
+        class_breakdown=class_breakdown,
+        is_manual=is_manual,
+        is_archived=account.is_archived,
+        staleness_threshold_days=staleness_threshold_days,
+    )
+
+
 @app.get("/api/accounts", dependencies=[Depends(require_admin_token)])
 def list_accounts(db: Session = Depends(get_db)) -> list[AccountRead]:
-    return [AccountRead.model_validate(a) for a in db.query(Account).order_by(Account.id).all()]
+    accounts = db.query(Account).order_by(Account.id).all()
+    classifications = {**load_classifications(), **load_user_classifications(db)}
+    return [_enrich_account(a, classifications, db) for a in accounts]
 
 
 @app.post(
@@ -349,11 +569,19 @@ def list_accounts(db: Session = Depends(get_db)) -> list[AccountRead]:
     dependencies=[Depends(require_admin_token)],
 )
 def create_account(body: AccountCreate, db: Session = Depends(get_db)) -> AccountRead:
-    account = Account(label=body.label, type=body.type)
+    _validate_tax_treatment(body.type, body.tax_treatment)
+    account = Account(
+        label=body.label,
+        type=body.type,
+        institution_id=body.institution_id,
+        tax_treatment=body.tax_treatment,
+        staleness_threshold_days=body.staleness_threshold_days,
+    )
     db.add(account)
     db.commit()
     db.refresh(account)
-    return AccountRead.model_validate(account)
+    classifications = {**load_classifications(), **load_user_classifications(db)}
+    return _enrich_account(account, classifications, db)
 
 
 @app.patch("/api/accounts/{account_id}", dependencies=[Depends(require_admin_token)])
@@ -366,9 +594,12 @@ def patch_account(
     patch_fields = body.model_dump(exclude_unset=True)
     for field, value in patch_fields.items():
         setattr(account, field, value)
+    # Cross-validate after applying all patch fields
+    _validate_tax_treatment(account.type, account.tax_treatment)
     db.commit()
     db.refresh(account)
-    return AccountRead.model_validate(account)
+    classifications = {**load_classifications(), **load_user_classifications(db)}
+    return _enrich_account(account, classifications, db)
 
 
 @app.delete(
@@ -386,6 +617,41 @@ def delete_account(account_id: int, db: Session = Depends(get_db)) -> None:
     # matching the delete_position behavior (v0.1 decision).
     db.delete(account)
     db.commit()
+
+
+# ----- institutions -------------------------------------------------------
+
+
+@app.get("/api/institutions", dependencies=[Depends(require_admin_token)])
+def list_institutions(db: Session = Depends(get_db)) -> list[InstitutionRead]:
+    rows = db.query(Institution).order_by(func.lower(Institution.name)).all()
+    return [InstitutionRead.model_validate(r) for r in rows]
+
+
+@app.post("/api/institutions", dependencies=[Depends(require_admin_token)])
+def create_institution(
+    body: InstitutionCreate, db: Session = Depends(get_db)
+) -> InstitutionRead:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="name must not be empty")
+    try:
+        inst = Institution(name=name)
+        db.add(inst)
+        db.commit()
+        db.refresh(inst)
+        return InstitutionRead.model_validate(inst)
+    except Exception:
+        db.rollback()
+        # Dedupe: return the existing row on case-insensitive collision
+        existing = (
+            db.query(Institution)
+            .filter(func.lower(Institution.name) == name.lower())
+            .first()
+        )
+        if existing:
+            return InstitutionRead.model_validate(existing)
+        raise
 
 
 # ----- position commit ----------------------------------------------------

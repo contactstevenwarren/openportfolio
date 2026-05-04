@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { mutate } from "swr";
 import { PlusIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -11,12 +12,11 @@ import {
   SheetFooter,
   SheetClose,
 } from "@/app/components/ui/sheet";
+import type { Account, Institution } from "@/app/lib/api";
+import { api } from "@/app/lib/api";
 import {
-  type Account,
-  type Institution,
   type AccountKind,
   formatUsd,
-  oldestUpdatedDays,
   stalenessState,
   daysSince,
 } from "./mocks";
@@ -32,10 +32,13 @@ type Stage = "closed" | "add" | "update";
 type HeaderProps = {
   accounts: Account[];
   institutions: Institution[];
+  /** When true, force-open the Add sheet (e.g. triggered from the empty-state button). */
+  addOpen?: boolean;
+  onAddOpenChange?: (open: boolean) => void;
 };
 
 const FORM_DEFAULTS = {
-  institutionId: null as string | null,
+  institutionId: null as number | null,
   institutionName: "",
   kind: null as AccountKind | null,
   name: "",
@@ -43,14 +46,19 @@ const FORM_DEFAULTS = {
   staleAfterDays: 30,
 };
 
-export function Header({ accounts, institutions }: HeaderProps) {
-  const activeAccounts = accounts.filter((a) => !a.isArchived);
+export function Header({ accounts, institutions, addOpen, onAddOpenChange }: HeaderProps) {
+  const activeAccounts = accounts.filter((a) => !a.is_archived);
   const totalNW = activeAccounts.reduce((s, a) => s + a.balance, 0);
   const activeCount = activeAccounts.length;
   const totalCount = accounts.length;
 
-  const maxDays = oldestUpdatedDays(accounts);
-  const oldestAccount = activeAccounts.find((a) => daysSince(a.lastUpdatedAt) === maxDays);
+  const maxDays = activeAccounts.reduce((m, a) => {
+    if (!a.last_updated_at) return m;
+    return Math.max(m, daysSince(a.last_updated_at));
+  }, 0);
+  const oldestAccount = activeAccounts.find(
+    (a) => a.last_updated_at != null && daysSince(a.last_updated_at) === maxDays
+  );
   const oldestStaleness = oldestAccount ? stalenessState(oldestAccount) : "fresh";
 
   // ── State machine ─────────────────────────────────────────────────────────
@@ -69,8 +77,12 @@ export function Header({ accounts, institutions }: HeaderProps) {
     setUpdateSubmitted(true);
   }, []);
 
+  // ── Save state ────────────────────────────────────────────────────────────
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   // ── Form fields ───────────────────────────────────────────────────────────
-  const [institutionId, setInstitutionId] = useState<string | null>(FORM_DEFAULTS.institutionId);
+  const [institutionId, setInstitutionId] = useState<number | null>(FORM_DEFAULTS.institutionId);
   const [institutionName, setInstitutionName] = useState(FORM_DEFAULTS.institutionName);
   const [kind, setKind] = useState<AccountKind | null>(FORM_DEFAULTS.kind);
   const [name, setName] = useState(FORM_DEFAULTS.name);
@@ -82,7 +94,7 @@ export function Header({ accounts, institutions }: HeaderProps) {
     institutionName && kind?.label ? `${institutionName} ${kind.label}` : "";
   const displayedName = nameWasEdited ? name : derivedName;
 
-  function handleInstitutionChange(id: string, iName: string) {
+  function handleInstitutionChange(id: number, iName: string) {
     setInstitutionId(id);
     setInstitutionName(iName);
   }
@@ -105,6 +117,7 @@ export function Header({ accounts, institutions }: HeaderProps) {
     setNameWasEdited(FORM_DEFAULTS.nameWasEdited);
     setStaleAfterDays(FORM_DEFAULTS.staleAfterDays);
     setPendingName("");
+    setSaveError(null);
   }
 
   function handleAddOpenChange(open: boolean) {
@@ -114,6 +127,7 @@ export function Header({ accounts, institutions }: HeaderProps) {
       setStage("closed");
       resetForm();
     }
+    onAddOpenChange?.(open);
   }
 
   function handleUpdateOpenChange(open: boolean) {
@@ -124,10 +138,31 @@ export function Header({ accounts, institutions }: HeaderProps) {
     }
   }
 
-  function handleSave() {
-    const resolvedName = displayedName || kind?.label || "New account";
-    setPendingName(resolvedName);
-    setStage("update");
+  async function handleSave() {
+    if (!kind) {
+      setSaveError("Pick an account kind before saving.");
+      return;
+    }
+    const resolvedName = displayedName || kind.label || "New account";
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await api.createAccount({
+        label: resolvedName,
+        type: kind.accountType,
+        // institutionId > 0 = real DB row; 0/negative = synthetic placeholder not yet in DB
+        institution_id: institutionId != null && institutionId > 0 ? institutionId : null,
+        tax_treatment: kind.taxTreatment,
+        staleness_threshold_days: staleAfterDays,
+      });
+      await mutate("/api/accounts");
+      setPendingName(resolvedName);
+      setStage("update");
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Failed to create account.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -159,7 +194,7 @@ export function Header({ accounts, institutions }: HeaderProps) {
       </div>
 
       {/* ── Add account button + Add Sheet ───────────────────────────────── */}
-      <Sheet open={stage === "add"} onOpenChange={handleAddOpenChange}>
+      <Sheet open={stage === "add" || addOpen === true} onOpenChange={handleAddOpenChange}>
         <Button size="sm" onClick={() => setStage("add")}>
           <PlusIcon className="size-4" />
           Add account
@@ -171,9 +206,11 @@ export function Header({ accounts, institutions }: HeaderProps) {
           </SheetHeader>
 
           <div className="flex flex-col gap-4 px-4 py-4">
-            <div className="rounded-md bg-muted px-3 py-2 text-body-sm text-muted-foreground">
-              Design preview — not yet connected to data.
-            </div>
+            {saveError && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-body-sm text-destructive">
+                {saveError}
+              </p>
+            )}
 
             {/* Institution */}
             <div className="flex flex-col gap-1.5">
@@ -232,8 +269,8 @@ export function Header({ accounts, institutions }: HeaderProps) {
                 Cancel
               </Button>
             </SheetClose>
-            <Button size="sm" onClick={handleSave}>
-              Save (preview)
+            <Button size="sm" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
             </Button>
           </SheetFooter>
         </SheetContent>

@@ -3,9 +3,11 @@
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.models import Account, Position
+from app.main import _migrate_schema
+from app.models import Account, Classification, Institution, Position
 
 
 def test_list_requires_admin_token(client: TestClient) -> None:
@@ -62,13 +64,14 @@ def test_patch_updates_label_and_type(
 
     r = client.patch(
         f"/api/accounts/{created['id']}",
-        json={"label": "New", "type": "hsa"},
+        json={"label": "New", "type": "brokerage", "tax_treatment": "hsa"},
         headers=auth_headers,
     )
     assert r.status_code == 200
     body = r.json()
     assert body["label"] == "New"
-    assert body["type"] == "hsa"
+    assert body["type"] == "brokerage"
+    assert body["tax_treatment"] == "hsa"
 
 
 def test_patch_partial_keeps_unset_fields(
@@ -136,3 +139,195 @@ def test_delete_404_on_missing(
 def test_patch_and_delete_require_admin_token(client: TestClient) -> None:
     assert client.patch("/api/accounts/1", json={"label": "X"}).status_code == 401
     assert client.delete("/api/accounts/1").status_code == 401
+
+
+# --- enriched AccountRead shape -------------------------------------------
+
+
+def test_list_returns_enriched_shape(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """GET /api/accounts returns the enriched shape including balance, class_breakdown, etc."""
+    inst = Institution(name="Test Bank")
+    test_db.add(inst)
+    test_db.commit()
+
+    account = Account(
+        label="My Brokerage",
+        type="brokerage",
+        institution_id=inst.id,
+        tax_treatment="taxable",
+    )
+    test_db.add(account)
+    test_db.commit()
+
+    now = datetime.now(UTC)
+    # Two classified positions + one unclassified
+    test_db.add(Classification(ticker="VTI", asset_class="equity", source="user"))
+    test_db.add(Classification(ticker="BND", asset_class="fixed_income", source="user"))
+    test_db.commit()
+
+    test_db.add(Position(account_id=account.id, ticker="VTI", shares=10, market_value=2000.0, as_of=now, source="paste"))
+    test_db.add(Position(account_id=account.id, ticker="BND", shares=5, market_value=500.0, as_of=now, source="paste"))
+    test_db.add(Position(account_id=account.id, ticker="UNKNOWN", shares=1, market_value=100.0, as_of=now, source="manual"))
+    test_db.commit()
+
+    r = client.get("/api/accounts", headers=auth_headers)
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 1
+    row = rows[0]
+
+    assert row["balance"] == 2600.0
+    assert row["last_updated_at"] is not None
+    assert row["last_update_source"] in ("paste", "manual")
+    assert row["position_count"] == 3
+    assert row["classified_position_count"] == 2
+    assert row["institution_name"] == "Test Bank"
+    assert row["institution_id"] == inst.id
+    assert row["tax_treatment"] == "taxable"
+    assert row["is_manual"] is False
+    assert row["is_archived"] is False
+    assert row["staleness_threshold_days"] == 30
+
+    # class_breakdown: only non-zero asset classes
+    breakdown_classes = {b["asset_class"] for b in row["class_breakdown"]}
+    assert "equity" in breakdown_classes
+    assert "fixed_income" in breakdown_classes
+    # All values positive
+    for b in row["class_breakdown"]:
+        assert b["value"] > 0
+
+
+def test_enriched_real_estate_is_manual(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    # Create via the API so staleness_threshold_days defaults correctly for the type.
+    r = client.post(
+        "/api/accounts",
+        json={"label": "House", "type": "real_estate", "tax_treatment": "taxable",
+              "staleness_threshold_days": 90},
+        headers=auth_headers,
+    )
+    assert r.status_code == 201
+
+    r = client.get("/api/accounts", headers=auth_headers)
+    row = r.json()[0]
+    assert row["is_manual"] is True
+    assert row["staleness_threshold_days"] == 90
+
+
+# --- cross-validation -----------------------------------------------------
+
+
+def test_invalid_tax_type_combo_rejected_on_create(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    r = client.post(
+        "/api/accounts",
+        json={"label": "Bad", "type": "real_estate", "tax_treatment": "hsa"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 422
+
+
+def test_invalid_tax_type_combo_rejected_on_patch(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    created = client.post(
+        "/api/accounts",
+        json={"label": "RE", "type": "real_estate"},
+        headers=auth_headers,
+    ).json()
+
+    r = client.patch(
+        f"/api/accounts/{created['id']}",
+        json={"tax_treatment": "tax_deferred"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 422
+
+
+def test_valid_tax_treatments_on_brokerage(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    for treatment in ("taxable", "tax_deferred", "tax_free", "hsa"):
+        r = client.post(
+            "/api/accounts",
+            json={"label": f"Acct-{treatment}", "type": "brokerage", "tax_treatment": treatment},
+            headers=auth_headers,
+        )
+        assert r.status_code == 201, f"Expected 201 for tax_treatment={treatment!r}"
+        assert r.json()["tax_treatment"] == treatment
+
+
+# --- HSA migration ---------------------------------------------------------
+
+
+def test_hsa_migration_converts_type(test_db: Session) -> None:
+    """_migrate_schema converts type='hsa' rows to type='brokerage'+tax_treatment='hsa'."""
+    # Insert a legacy HSA row directly bypassing ORM validation
+    test_db.execute(
+        text("INSERT INTO accounts (label, type, currency) VALUES ('Old HSA', 'hsa', 'USD')")
+    )
+    test_db.commit()
+
+    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
+
+    test_db.expire_all()
+    account = test_db.query(Account).filter_by(label="Old HSA").one()
+    assert account.type == "brokerage"
+    assert account.tax_treatment == "hsa"
+
+
+def test_archive_round_trip(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """PATCH is_archived=true hides the account; PATCH is_archived=false restores it."""
+    created = client.post(
+        "/api/accounts",
+        json={"label": "Old Account", "type": "brokerage"},
+        headers=auth_headers,
+    ).json()
+    account_id = created["id"]
+    assert created["is_archived"] is False
+
+    # Archive
+    r = client.patch(
+        f"/api/accounts/{account_id}",
+        json={"is_archived": True},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["is_archived"] is True
+
+    # Confirm GET reflects it
+    rows = client.get("/api/accounts", headers=auth_headers).json()
+    match = next((a for a in rows if a["id"] == account_id), None)
+    assert match is not None
+    assert match["is_archived"] is True
+
+    # Unarchive
+    r2 = client.patch(
+        f"/api/accounts/{account_id}",
+        json={"is_archived": False},
+        headers=auth_headers,
+    )
+    assert r2.status_code == 200
+    assert r2.json()["is_archived"] is False
+
+
+def test_hsa_migration_is_idempotent(test_db: Session) -> None:
+    """Running _migrate_schema twice leaves the row unchanged on the second run."""
+    test_db.execute(
+        text("INSERT INTO accounts (label, type, currency) VALUES ('HSA Again', 'hsa', 'USD')")
+    )
+    test_db.commit()
+
+    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
+    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
+
+    test_db.expire_all()
+    account = test_db.query(Account).filter_by(label="HSA Again").one()
+    assert account.type == "brokerage"
+    assert account.tax_treatment == "hsa"

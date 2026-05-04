@@ -20,8 +20,7 @@ type Story = StoryObj<typeof meta>;
 
 const chartData = [
   { category: "cash", label: "Cash", value: 67791, fill: "var(--color-cash)" },
-  { category: "us-equity", label: "US equity", value: 398274, fill: "var(--color-us-equity)" },
-  { category: "intl-equity", label: "Intl equity", value: 118635, fill: "var(--color-intl-equity)" },
+  { category: "equity", label: "Equity", value: 516909, fill: "var(--color-equity)" },
   { category: "fixed-income", label: "Fixed income", value: 152531, fill: "var(--color-fixed-income)" },
   { category: "real-estate", label: "Real estate", value: 110161, fill: "var(--color-real-estate)" },
 ];
@@ -29,8 +28,7 @@ const chartData = [
 const config = {
   value: { label: "Allocation" },
   cash: { label: "Cash", color: "var(--viz-cash)" },
-  "us-equity": { label: "US equity", color: "var(--viz-us-equity)" },
-  "intl-equity": { label: "Intl equity", color: "var(--viz-intl-equity)" },
+  equity: { label: "Equity", color: "var(--viz-equity)" },
   "fixed-income": { label: "Fixed income", color: "var(--viz-fixed-income)" },
   "real-estate": { label: "Real estate", color: "var(--viz-real-estate)" },
 } satisfies ChartConfig;

@@ -246,15 +246,17 @@ export const mockHealth: HealthCounts = {
   lastSnapshotAge: "1 day ago",
 };
 
+// NOTE: us-equity and intl-equity share --viz-equity (v0.1.6 dashboard donut redesign
+// will collapse these to the single backend 'equity' class). alts→commodity, other→muted.
 export const ASSET_CLASS_COLOR: Record<AssetClass, string> = {
   cash: "var(--viz-cash)",
-  "us-equity": "var(--viz-us-equity)",
-  "intl-equity": "var(--viz-intl-equity)",
+  "us-equity": "var(--viz-equity)",
+  "intl-equity": "var(--viz-equity)",
   "fixed-income": "var(--viz-fixed-income)",
   "real-estate": "var(--viz-real-estate)",
   crypto: "var(--viz-crypto)",
-  alts: "var(--viz-alts)",
-  other: "var(--viz-other)",
+  alts: "var(--viz-commodity)",
+  other: "var(--muted-foreground)",
 };
 
 export function formatUsd(value: number, opts: { compact?: boolean; signed?: boolean } = {}) {

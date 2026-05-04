@@ -3,14 +3,10 @@
 import { useRef, useState } from "react";
 import { UploadIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
+import type { Account, Institution } from "@/app/lib/api";
 import type { ChipFilter, SortKey } from "./filters";
 import {
-  type Account,
-  type Institution,
-  type Position,
-  type Snapshot,
   daysSince,
-  getPositionsForAccount,
   groupByInstitution,
   stalenessState,
 } from "./mocks";
@@ -21,14 +17,12 @@ import { Row } from "./row";
 type ListProps = {
   accounts: Account[];
   institutions: Institution[];
-  snapshots: Snapshot[];
-  positions: Position[];
   activeChips: Set<ChipFilter>;
   search: string;
   sort: SortKey;
   showArchived: boolean;
-  expandedIds: Set<string>;
-  onToggle: (id: string) => void;
+  expandedIds: Set<number>;
+  onToggle: (id: number) => void;
   onAddAccount: () => void;
 };
 
@@ -37,19 +31,23 @@ type ListProps = {
 function matchesChips(account: Account, chips: Set<ChipFilter>): boolean {
   if (chips.size === 0) return true;
   for (const chip of chips) {
-    if (chip === "stale"           && stalenessState(account) !== "stale")   return false;
-    if (chip === "aging"           && stalenessState(account) !== "aging")   return false;
-    if (chip === "tax-advantaged"  && account.taxTreatment === "taxable")    return false;
-    if (chip === "manual"          && !account.isManual)                      return false;
+    if (chip === "stale"           && stalenessState(account) !== "stale")       return false;
+    if (chip === "aging"           && stalenessState(account) !== "aging")       return false;
+    if (chip === "tax-advantaged"  && account.tax_treatment === "taxable")       return false;
+    if (chip === "manual"          && !account.is_manual)                        return false;
   }
   return true;
 }
 
-function matchesSearch(account: Account, institution: Institution | undefined, q: string): boolean {
+function matchesSearch(
+  account: Account,
+  institution: Institution | undefined,
+  q: string
+): boolean {
   if (!q) return true;
   const lower = q.toLowerCase();
   return (
-    account.name.toLowerCase().includes(lower) ||
+    account.label.toLowerCase().includes(lower) ||
     (institution?.name.toLowerCase().includes(lower) ?? false)
   );
 }
@@ -60,25 +58,29 @@ function sortAccounts(accounts: Account[], sort: SortKey): Account[] {
   return [...accounts].sort((a, b) => {
     switch (sort) {
       case "name":
-        return a.name.localeCompare(b.name);
+        return a.label.localeCompare(b.label);
       case "balance":
         return b.balance - a.balance;
       case "lastUpdated":
-        // "oldest first" = last-updated longest ago = highest daysSince first
-        return daysSince(b.lastUpdatedAt) - daysSince(a.lastUpdatedAt);
+        return (
+          daysSince(b.last_updated_at ?? new Date(0).toISOString()) -
+          daysSince(a.last_updated_at ?? new Date(0).toISOString())
+        );
       case "staleness":
       default: {
         const staleOrder = { stale: 0, aging: 1, fresh: 2 } as const;
         const ao = staleOrder[stalenessState(a)];
         const bo = staleOrder[stalenessState(b)];
         if (ao !== bo) return ao - bo;
-        return daysSince(b.lastUpdatedAt) - daysSince(a.lastUpdatedAt);
+        return (
+          daysSince(b.last_updated_at ?? new Date(0).toISOString()) -
+          daysSince(a.last_updated_at ?? new Date(0).toISOString())
+        );
       }
     }
   });
 }
 
-// Within a group, stale rows are always pinned first regardless of sort.
 function sortWithStalePinned(accounts: Account[], sort: SortKey): Account[] {
   const stale = sortAccounts(
     accounts.filter((a) => stalenessState(a) === "stale"),
@@ -106,8 +108,6 @@ function emptyChipMessage(chips: Set<ChipFilter>): string {
 export function List({
   accounts,
   institutions,
-  snapshots,
-  positions,
   activeChips,
   search,
   sort,
@@ -119,10 +119,10 @@ export function List({
   const instMap = new Map(institutions.map((i) => [i.id, i]));
 
   // 1. Archive filter
-  const visible = accounts.filter((a) => showArchived || !a.isArchived);
+  const visible = accounts.filter((a) => showArchived || !a.is_archived);
 
   // 2. No accounts at all (not even archived)
-  if (accounts.filter((a) => !a.isArchived).length === 0) {
+  if (accounts.filter((a) => !a.is_archived).length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
         <p className="text-body text-muted-foreground">
@@ -137,7 +137,7 @@ export function List({
 
   // 3. Chip + search filter
   const filtered = visible.filter((a) => {
-    const inst = instMap.get(a.institutionId);
+    const inst = a.institution_id != null ? instMap.get(a.institution_id) : undefined;
     return matchesChips(a, activeChips) && matchesSearch(a, inst, search);
   });
 
@@ -156,8 +156,6 @@ export function List({
   // 5. Group and sort
   const groups = groupByInstitution(filtered, institutions);
 
-  // Sort groups by whether they have any stale accounts (groups with stale first),
-  // then alphabetically.
   const sortedGroups = [...groups].sort((a, b) => {
     const aHasStale = a.accounts.some((acc) => stalenessState(acc) === "stale");
     const bHasStale = b.accounts.some((acc) => stalenessState(acc) === "stale");
@@ -166,9 +164,6 @@ export function List({
   });
 
   // ── File drag detection ───────────────────────────────────────────────────
-  // dragCounter tracks how many nested drag-enter events have fired without a
-  // corresponding drag-leave. This prevents the "flickering" that happens when
-  // the cursor moves between child elements (each child fires leave+enter).
   const [isFileDragging, setIsFileDragging] = useState(false);
   const dragCounter = useRef(0);
 
@@ -194,9 +189,6 @@ export function List({
   }
 
   function handleDrop(e: React.DragEvent) {
-    // Individual Row components handle their own drops.
-    // This outer handler just resets the drag state when the user drops
-    // somewhere that isn't a specific row (e.g. between rows).
     e.preventDefault();
     dragCounter.current = 0;
     setIsFileDragging(false);
@@ -210,8 +202,6 @@ export function List({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      {/* Discoverability hint — hidden while a drag is in progress so it doesn't
-          compete with the active drop visuals. */}
       {!isFileDragging && (
         <p className="-mb-3 px-4 text-body-sm text-muted-foreground inline-flex items-center gap-1.5">
           <UploadIcon className="size-3.5" aria-hidden="true" />
@@ -227,28 +217,24 @@ export function List({
               {institution.name}
             </h2>
             <div className="rounded-lg border border-border overflow-hidden">
-              {sorted.map((account, i, arr) => {
-                const acctPositions = getPositionsForAccount(account.id, snapshots, positions);
-                return (
-                  <div key={account.id} className="border-b border-border last:border-0">
-                    <Row
-                      account={account}
-                      institution={institution}
-                      institutions={institutions}
-                      positions={acctPositions}
-                      isExpanded={expandedIds.has(account.id)}
-                      onToggle={onToggle}
-                      isFileDragging={isFileDragging}
-                      onFileDragEnd={() => {
-                        dragCounter.current = 0;
-                        setIsFileDragging(false);
-                      }}
-                      isFirstInGroup={i === 0}
-                      isLastInGroup={i === arr.length - 1}
-                    />
-                  </div>
-                );
-              })}
+              {sorted.map((account, i, arr) => (
+                <div key={account.id} className="border-b border-border last:border-0">
+                  <Row
+                    account={account}
+                    institution={institution}
+                    institutions={institutions}
+                    isExpanded={expandedIds.has(account.id)}
+                    onToggle={onToggle}
+                    isFileDragging={isFileDragging}
+                    onFileDragEnd={() => {
+                      dragCounter.current = 0;
+                      setIsFileDragging(false);
+                    }}
+                    isFirstInGroup={i === 0}
+                    isLastInGroup={i === arr.length - 1}
+                  />
+                </div>
+              ))}
             </div>
           </section>
         );

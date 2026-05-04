@@ -13,16 +13,10 @@ import {
 const chartData = [
   { category: "cash", label: "Cash", value: 67791, fill: "var(--color-cash)" },
   {
-    category: "us-equity",
-    label: "US equity",
-    value: 398274,
-    fill: "var(--color-us-equity)",
-  },
-  {
-    category: "intl-equity",
-    label: "Intl equity",
-    value: 118635,
-    fill: "var(--color-intl-equity)",
+    category: "equity",
+    label: "Equity",
+    value: 516909,
+    fill: "var(--color-equity)",
   },
   {
     category: "fixed-income",
@@ -41,8 +35,7 @@ const chartData = [
 const chartConfig = {
   value: { label: "Allocation" },
   cash: { label: "Cash", color: "var(--viz-cash)" },
-  "us-equity": { label: "US equity", color: "var(--viz-us-equity)" },
-  "intl-equity": { label: "Intl equity", color: "var(--viz-intl-equity)" },
+  equity: { label: "Equity", color: "var(--viz-equity)" },
   "fixed-income": { label: "Fixed income", color: "var(--viz-fixed-income)" },
   "real-estate": { label: "Real estate", color: "var(--viz-real-estate)" },
 } satisfies ChartConfig;

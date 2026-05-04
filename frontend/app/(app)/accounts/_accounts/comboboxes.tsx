@@ -25,40 +25,39 @@ import {
   CommandSeparator,
 } from "@/app/components/ui/command";
 import { cn } from "@/app/lib/utils";
+import type { Institution } from "@/app/lib/api";
 import {
-  type Institution,
   type AccountKind,
   ACCOUNT_KINDS,
   CUSTOM_KIND_DEFAULTS,
-  MANUAL_INST_ID,
 } from "./mocks";
+
+// Synthetic "Manual / Other" placeholder — id -1 signals null institution_id on the wire.
+const MANUAL_INST: Institution = { id: -1, name: "Manual / Other" };
 
 // ── InstitutionCombobox ───────────────────────────────────────────────────────
 
 type InstComboboxProps = {
   institutions: Institution[];
-  value: string | null;
-  onChange: (id: string, name: string) => void;
+  value: number | null;
+  onChange: (id: number, name: string) => void;
 };
 
 export function InstitutionCombobox({ institutions, value, onChange }: InstComboboxProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  // Local institutions created via the "Create" action (preview only — not yet wired to API).
   const [localCreated, setLocalCreated] = useState<Institution[]>([]);
 
-  const manualInst = institutions.find((i) => i.id === MANUAL_INST_ID);
-  const mainList = [
-    ...institutions.filter((i) => i.id !== MANUAL_INST_ID),
-    ...localCreated,
-  ];
+  const mainList = [...institutions, ...localCreated];
 
   const q = search.trim().toLowerCase();
   const filtered = q ? mainList.filter((i) => i.name.toLowerCase().includes(q)) : mainList;
   const hasExactMatch = mainList.some((i) => i.name.toLowerCase() === q);
   const showCreate = q.length > 0 && !hasExactMatch;
 
-  const allInsts = [...institutions, ...localCreated];
-  const selectedName = value ? (allInsts.find((i) => i.id === value)?.name ?? null) : null;
+  const allInsts = [...mainList, MANUAL_INST];
+  const selectedName = value != null ? (allInsts.find((i) => i.id === value)?.name ?? null) : null;
 
   function handleSelect(inst: Institution) {
     onChange(inst.id, inst.name);
@@ -68,7 +67,8 @@ export function InstitutionCombobox({ institutions, value, onChange }: InstCombo
 
   function handleCreate() {
     const name = search.trim();
-    const id = `inst-local-${Date.now()}`;
+    // Use a negative local id so it doesn't collide with real numeric IDs.
+    const id = -(Date.now());
     const inst: Institution = { id, name };
     setLocalCreated((prev) => [...prev, inst]);
     onChange(id, name);
@@ -101,7 +101,7 @@ export function InstitutionCombobox({ institutions, value, onChange }: InstCombo
             {filtered.length > 0 && (
               <CommandGroup>
                 {filtered.map((inst) => (
-                  <CommandItem key={inst.id} value={inst.id} onSelect={() => handleSelect(inst)}>
+                  <CommandItem key={inst.id} value={String(inst.id)} onSelect={() => handleSelect(inst)}>
                     <CheckIcon className={cn("mr-2 size-4", value === inst.id ? "opacity-100" : "opacity-0")} />
                     {inst.name}
                   </CommandItem>
@@ -119,17 +119,17 @@ export function InstitutionCombobox({ institutions, value, onChange }: InstCombo
                 </CommandGroup>
               </>
             )}
-            {!q && manualInst && (
+            {!q && (
               <>
                 <CommandSeparator />
                 <CommandGroup>
                   <CommandItem
-                    key={manualInst.id}
-                    value={manualInst.id}
-                    onSelect={() => handleSelect(manualInst)}
+                    key={MANUAL_INST.id}
+                    value={String(MANUAL_INST.id)}
+                    onSelect={() => handleSelect(MANUAL_INST)}
                   >
-                    <CheckIcon className={cn("mr-2 size-4", value === manualInst.id ? "opacity-100" : "opacity-0")} />
-                    {manualInst.name}
+                    <CheckIcon className={cn("mr-2 size-4", value === MANUAL_INST.id ? "opacity-100" : "opacity-0")} />
+                    {MANUAL_INST.name}
                   </CommandItem>
                 </CommandGroup>
               </>

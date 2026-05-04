@@ -7,10 +7,24 @@ tooltips can show source + confidence (roadmap Principles).
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
+
+
+class Institution(Base):
+    """Financial institution (Fidelity, Vanguard, etc.). Name is unique case-insensitively."""
+
+    __tablename__ = "institutions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ux_institutions_name_lower", func.lower(name), unique=True),
+    )
 
 
 class Account(Base):
@@ -18,10 +32,28 @@ class Account(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     label: Mapped[str] = mapped_column(String(100))
-    # type = "brokerage" | "hsa" | "real_estate" | "crypto" | "private" | ...
+    # type = "brokerage" | "real_estate" | "crypto" | "private" | "bank" | ...
+    # Note: "hsa" type migrated to type="brokerage" + tax_treatment="hsa" on startup.
     type: Mapped[str] = mapped_column(String(50))
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    institution_id: Mapped[int | None] = mapped_column(
+        ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # tax_treatment = "taxable" | "tax_deferred" | "tax_free" | "hsa"
+    # tax_deferred / tax_free / hsa only valid when type="brokerage"
+    tax_treatment: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'taxable'"), default="taxable"
+    )
+    # User-configurable staleness threshold (days). Defaults to the type-default
+    # on create; can be overridden by the user via the Edit sheet.
+    staleness_threshold_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("30"), default=30
+    )
+    # Archived accounts are hidden from the active list by default.
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0"), default=False
+    )
 
     positions: Mapped[list["Position"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"

@@ -1,56 +1,44 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { Row } from "./row";
-import {
-  mockAccounts,
-  mockInstitutions,
-  mockSnapshots,
-  mockPositions,
-  getPositionsForAccount,
-} from "./mocks";
+import { seedAccounts, seedInstitutions } from "./seed";
 
 const meta: Meta<typeof Row> = {
   title: "Accounts/Row",
   component: Row,
   parameters: { layout: "padded" },
   args: {
-    // Default these new props for all stories so existing stories don't break.
     isFileDragging: false,
     onFileDragEnd: () => {},
     isFirstInGroup: true,
     isLastInGroup: true,
-    institutions: mockInstitutions,
+    institutions: seedInstitutions,
   },
 };
 export default meta;
 type Story = StoryObj<typeof Row>;
 
-function posFor(accountId: string) {
-  return getPositionsForAccount(accountId, mockSnapshots, mockPositions);
+function acct(id: number) {
+  return seedAccounts.find((a) => a.id === id)!;
 }
 
-function account(id: string) {
-  return mockAccounts.find((a) => a.id === id)!;
-}
-
-function institution(institutionId: string) {
-  return mockInstitutions.find((i) => i.id === institutionId)!;
+function inst(institutionId: number) {
+  return seedInstitutions.find((i) => i.id === institutionId)!;
 }
 
 // ── Stories ───────────────────────────────────────────────────────────────────
 
-const vanguardBrokerage = account("acct-vanguard-brokerage");
-const vanguard401k = account("acct-vanguard-401k");
-const vanguardPrivate = account("acct-vanguard-private");
-const fidelityChecking = account("acct-fidelity-checking");
-const fidelityRoth = account("acct-fidelity-roth");
-const coinbaseCrypto = account("acct-coinbase-crypto");
-const vanguardLegacy = account("acct-vanguard-legacy");
+const vanguardBrokerage = acct(1);
+const vanguard401k      = acct(2);
+const vanguardPrivate   = acct(3);
+const fidelityChecking  = acct(4);
+const fidelityRoth      = acct(6);
+const coinbaseCrypto    = acct(7);
+const vanguardLegacy    = acct(8);
 
 export const Default: Story = {
   args: {
     account: vanguardBrokerage,
-    institution: institution(vanguardBrokerage.institutionId),
-    positions: posFor("acct-vanguard-brokerage"),
+    institution: inst(vanguardBrokerage.institution_id!),
     isExpanded: false,
     onToggle: () => {},
   },
@@ -59,8 +47,7 @@ export const Default: Story = {
 export const Collapsed: Story = {
   args: {
     account: vanguardBrokerage,
-    institution: institution(vanguardBrokerage.institutionId),
-    positions: posFor("acct-vanguard-brokerage"),
+    institution: inst(vanguardBrokerage.institution_id!),
     isExpanded: false,
     onToggle: () => {},
   },
@@ -69,8 +56,7 @@ export const Collapsed: Story = {
 export const Expanded: Story = {
   args: {
     account: vanguardBrokerage,
-    institution: institution(vanguardBrokerage.institutionId),
-    positions: posFor("acct-vanguard-brokerage"),
+    institution: inst(vanguardBrokerage.institution_id!),
     isExpanded: true,
     onToggle: () => {},
   },
@@ -79,8 +65,7 @@ export const Expanded: Story = {
 export const Stale: Story = {
   args: {
     account: coinbaseCrypto,
-    institution: institution(coinbaseCrypto.institutionId),
-    positions: posFor("acct-coinbase-crypto"),
+    institution: inst(coinbaseCrypto.institution_id!),
     isExpanded: false,
     onToggle: () => {},
   },
@@ -89,8 +74,7 @@ export const Stale: Story = {
 export const Aging: Story = {
   args: {
     account: fidelityChecking,
-    institution: institution(fidelityChecking.institutionId),
-    positions: posFor("acct-fidelity-checking"),
+    institution: inst(fidelityChecking.institution_id!),
     isExpanded: false,
     onToggle: () => {},
   },
@@ -99,8 +83,7 @@ export const Aging: Story = {
 export const Fresh: Story = {
   args: {
     account: vanguard401k,
-    institution: institution(vanguard401k.institutionId),
-    positions: posFor("acct-vanguard-401k"),
+    institution: inst(vanguard401k.institution_id!),
     isExpanded: false,
     onToggle: () => {},
   },
@@ -109,8 +92,7 @@ export const Fresh: Story = {
 export const Manual: Story = {
   args: {
     account: vanguardPrivate,
-    institution: institution(vanguardPrivate.institutionId),
-    positions: posFor("acct-vanguard-private"),
+    institution: inst(vanguardPrivate.institution_id!),
     isExpanded: false,
     onToggle: () => {},
   },
@@ -119,8 +101,7 @@ export const Manual: Story = {
 export const Archived: Story = {
   args: {
     account: vanguardLegacy,
-    institution: institution(vanguardLegacy.institutionId),
-    positions: posFor("acct-vanguard-legacy"),
+    institution: inst(vanguardLegacy.institution_id!),
     isExpanded: true,
     onToggle: () => {},
   },
@@ -129,8 +110,7 @@ export const Archived: Story = {
 export const ZeroPositions: Story = {
   args: {
     account: fidelityRoth,
-    institution: institution(fidelityRoth.institutionId),
-    positions: posFor("acct-fidelity-roth"),
+    institution: inst(fidelityRoth.institution_id!),
     isExpanded: true,
     onToggle: () => {},
   },
