@@ -58,7 +58,7 @@ const PRICE_FRESH: Freshness = {
 };
 const SNAPSHOT_FRESH: Freshness = { source: "snapshot", capturedAt: SNAPSHOT_AT };
 const USER_FRESH: Freshness = { source: "user", capturedAt: "2026-04-25T12:00:00Z" };
-const USER_STALE_45D: Freshness = { source: "user", capturedAt: "2026-03-12T12:00:00Z" };
+const USER_STALE_100D: Freshness = { source: "user", capturedAt: "2026-01-16T12:00:00Z" };
 const USER_STALE_32D: Freshness = { source: "user", capturedAt: "2026-03-25T12:00:00Z" };
 
 export const STALE_THRESHOLD_DAYS = 30;
@@ -196,7 +196,7 @@ export const mockAccounts: Account[] = [
     type: "Real estate",
     value: 75000,
     pctOfNw: 0.089,
-    freshness: USER_STALE_45D,
+    freshness: USER_STALE_100D,
   },
   {
     id: "acct-hsa",
