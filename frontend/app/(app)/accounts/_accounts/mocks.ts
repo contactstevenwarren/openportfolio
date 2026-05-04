@@ -92,7 +92,7 @@ export function stalenessState(
   const days = daysSince(account.last_updated_at, now);
   const t = account.staleness_threshold_days;
   if (days >= t) return "stale";
-  if (days >= Math.max(0, t - 7)) return "aging";
+  if (days >= Math.max(1, Math.floor(t * 0.8))) return "aging";
   return "fresh";
 }
 
