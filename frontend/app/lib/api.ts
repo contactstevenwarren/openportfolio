@@ -346,6 +346,11 @@ export const api = {
     }),
   accounts: () => fetchJson<Account[]>('/api/accounts'),
   institutions: () => fetchJson<Institution[]>('/api/institutions'),
+  createInstitution: (name: string) =>
+    fetchJson<Institution>('/api/institutions', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
   createAccount: (body: {
     label: string;
     type?: string;
