@@ -270,6 +270,14 @@ class SnapshotRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SnapshotEarliest(BaseModel):
+    """Minimal shape returned by GET /api/snapshots/earliest."""
+
+    taken_at: datetime
+    net_worth_usd: float
+    total_usd: float | None = None
+
+
 class ExportResult(BaseModel):
     """Full JSON dump of user-owned state (architecture Privacy).
 

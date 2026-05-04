@@ -151,6 +151,12 @@ export type AllocationResult = {
   drift_thresholds?: DriftThresholds;
 };
 
+export type SnapshotEarliest = {
+  taken_at: string;
+  net_worth_usd: number;
+  total_usd: number | null;
+};
+
 export type BreakdownBucket = {
   bucket: string;
   weight: number;
@@ -351,6 +357,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name }),
     }),
+  snapshotsEarliest: () => fetchJson<SnapshotEarliest | null>('/api/snapshots/earliest'),
   createAccount: (body: {
     label: string;
     type?: string;
