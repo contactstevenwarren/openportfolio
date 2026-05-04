@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ChevronRightIcon, ChevronDownIcon, UploadIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
   SheetTitle,
   SheetFooter,
 } from "@/app/components/ui/sheet";
+import { UpdateForm, type UpdateMode } from "./update-form";
 import {
   TooltipProvider,
   Tooltip,
@@ -54,77 +55,74 @@ const ACCOUNT_TYPE_LABEL: Record<Account["accountType"], string> = {
   private: "Private",
 };
 
-// ── UpdateSheet (controlled) ──────────────────────────────────────────────────
+// ── UpdateSheet ───────────────────────────────────────────────────────────────
 
-type UpdateSource = "pdf" | "paste" | "manual" | null;
-
-const UPDATE_SOURCES: Array<{ id: NonNullable<UpdateSource>; title: string; description: string }> = [
-  { id: "pdf",    title: "Drop PDF",       description: "Upload a brokerage statement" },
-  { id: "paste",  title: "Paste text",     description: "Copy positions from a webpage" },
-  { id: "manual", title: "Enter manually", description: "Type each position by hand" },
-];
+type UpdateTrigger = {
+  mode: UpdateMode;
+  autoSubmit: boolean;
+  file: File | null;
+};
 
 function UpdateSheet({
   account,
   open,
   onOpenChange,
-  initialSource,
+  trigger,
 }: {
   account: Account;
   open: boolean;
   onOpenChange: (next: boolean) => void;
-  initialSource: UpdateSource;
+  trigger: UpdateTrigger;
 }) {
-  // Reset pickedSource each time the sheet opens, seeded from initialSource.
-  const [pickedSource, setPickedSource] = useState<UpdateSource>(initialSource);
+  const [continueDisabled, setContinueDisabled] = useState(true);
+  // Track whether the form has been submitted so footer shows Cancel-only.
+  const [submitted, setSubmitted] = useState(false);
+
+  // Reset submitted state when sheet opens.
   useEffect(() => {
-    if (open) setPickedSource(initialSource);
-  }, [open, initialSource]);
+    if (open) setSubmitted(false);
+  }, [open]);
+
+  const handleContinueDisabledChange = useCallback((disabled: boolean) => {
+    setContinueDisabled(disabled);
+  }, []);
+
+  const handleContinue = useCallback(() => {
+    setSubmitted(true);
+  }, []);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right">
+      <SheetContent side="right" className="overflow-y-auto flex flex-col">
         <SheetHeader>
           <SheetTitle>Update {account.name}</SheetTitle>
         </SheetHeader>
-        <p className="text-body-sm text-muted-foreground px-6 py-2 bg-muted/50 border-b border-border">
-          Design preview — not yet connected to data.
-        </p>
-        <div className="px-6 py-4 flex flex-col gap-4">
-          {pickedSource === null ? (
-            <>
-              <p className="text-body-sm text-foreground">
-                How do you want to update this account?
-              </p>
-              <div className="flex flex-col gap-2">
-                {UPDATE_SOURCES.map((src) => (
-                  <button
-                    key={src.id}
-                    className="rounded-md border border-border p-4 text-left hover:bg-muted transition-colors w-full"
-                    onClick={() => setPickedSource(src.id)}
-                  >
-                    <p className="text-body-sm font-medium text-foreground">{src.title}</p>
-                    <p className="text-body-sm text-muted-foreground">{src.description}</p>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="self-start -ml-2"
-                onClick={() => setPickedSource(null)}
-              >
-                ← Back
-              </Button>
-              <p className="text-body-sm text-muted-foreground">
-                Diff view coming soon — wiring in follow-up.
-              </p>
-            </>
-          )}
+
+        <div className="flex-1 px-6 py-4">
+          <UpdateForm
+            key={`${open}-${trigger.mode}-${trigger.autoSubmit}`}
+            initialMode={trigger.mode}
+            autoSubmit={trigger.autoSubmit}
+            initialFile={trigger.file}
+            onContinueDisabledChange={handleContinueDisabledChange}
+            onContinue={handleContinue}
+          />
         </div>
+
+        <SheetFooter className="px-6 pb-6 gap-2">
+          <SheetClose asChild>
+            <Button variant="outline" size="sm">Cancel</Button>
+          </SheetClose>
+          {!submitted && (
+            <Button
+              size="sm"
+              disabled={continueDisabled}
+              onClick={handleContinue}
+            >
+              Continue
+            </Button>
+          )}
+        </SheetFooter>
       </SheetContent>
     </Sheet>
   );
@@ -291,10 +289,14 @@ export function Row({
 
   // ── UpdateSheet state ──────────────────────────────────────────────────────
   const [updateOpen, setUpdateOpen] = useState(false);
-  const [updateSource, setUpdateSource] = useState<UpdateSource>(null);
+  const [updateTrigger, setUpdateTrigger] = useState<UpdateTrigger>({
+    mode: "pdf",
+    autoSubmit: false,
+    file: null,
+  });
 
-  function openUpdate(source: UpdateSource = null) {
-    setUpdateSource(source);
+  function openUpdate(mode: UpdateMode = "pdf", autoSubmit = false, file: File | null = null) {
+    setUpdateTrigger({ mode, autoSubmit, file });
     setUpdateOpen(true);
   }
 
@@ -335,7 +337,8 @@ export function Row({
     e.stopPropagation();
     setIsDropTarget(false);
     onFileDragEnd();
-    openUpdate("pdf");
+    const file = e.dataTransfer.files[0] ?? null;
+    openUpdate("pdf", true, file);
   }
 
   // ── Asset breakdown segments ────────────────────────────────────────────────
@@ -367,7 +370,7 @@ export function Row({
     staleness === "stale" ? (
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); openUpdate(null); }}
+        onClick={(e) => { e.stopPropagation(); openUpdate(); }}
         className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={`Update ${account.name} — ${relativeDate}`}
       >
@@ -376,7 +379,7 @@ export function Row({
     ) : staleness === "aging" ? (
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); openUpdate(null); }}
+        onClick={(e) => { e.stopPropagation(); openUpdate(); }}
         className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-warning/10 text-warning hover:bg-warning/20 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={`Update ${account.name} — ${relativeDate}`}
       >
@@ -412,7 +415,7 @@ export function Row({
         account={account}
         open={updateOpen}
         onOpenChange={setUpdateOpen}
-        initialSource={updateSource}
+        trigger={updateTrigger}
       />
 
       <div
@@ -476,7 +479,7 @@ export function Row({
                   variant="ghost"
                   size="icon-sm"
                   className="shrink-0 text-muted-foreground hover:text-foreground"
-                  onClick={(e) => { e.stopPropagation(); openUpdate(null); }}
+                  onClick={(e) => { e.stopPropagation(); openUpdate(); }}
                   aria-label={`Update ${account.name}`}
                 >
                   <UploadIcon className="size-3.5" />
@@ -606,7 +609,7 @@ export function Row({
               ) : (
                 <>
                   <EditSheet account={account} institutions={institutions} />
-                  <Button size="sm" onClick={() => openUpdate(null)}>
+                  <Button size="sm" onClick={() => openUpdate()}>
                     Update
                   </Button>
                 </>

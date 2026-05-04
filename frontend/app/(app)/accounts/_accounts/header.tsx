@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { PlusIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -21,58 +21,11 @@ import {
   daysSince,
 } from "./mocks";
 import { InstitutionCombobox, AccountKindCombobox } from "./comboboxes";
+import { UpdateForm } from "./update-form";
 
 // ── Stage type ─────────────────────────────────────────────────────────────────
 
 type Stage = "closed" | "add" | "update";
-
-// ── UpdateSourcePicker ─────────────────────────────────────────────────────────
-
-const UPDATE_SOURCES = [
-  { id: "pdf",    title: "Drop PDF",       description: "Upload a brokerage statement" },
-  { id: "paste",  title: "Paste text",     description: "Copy positions from a webpage" },
-  { id: "manual", title: "Enter manually", description: "Type each position by hand" },
-] as const;
-
-type UpdateSourceId = (typeof UPDATE_SOURCES)[number]["id"];
-
-function UpdateSourcePicker() {
-  const [picked, setPicked] = useState<UpdateSourceId | null>(null);
-
-  if (picked) {
-    return (
-      <div className="flex flex-col gap-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="self-start -ml-2"
-          onClick={() => setPicked(null)}
-        >
-          ← Back
-        </Button>
-        <p className="text-body-sm text-muted-foreground">
-          Diff view coming soon — wiring in follow-up.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-body-sm text-foreground">How do you want to update this account?</p>
-      {UPDATE_SOURCES.map((src) => (
-        <button
-          key={src.id}
-          className="rounded-md border border-border p-4 text-left hover:bg-muted transition-colors w-full"
-          onClick={() => setPicked(src.id)}
-        >
-          <p className="text-body-sm font-medium text-foreground">{src.title}</p>
-          <p className="text-body-sm text-muted-foreground">{src.description}</p>
-        </button>
-      ))}
-    </div>
-  );
-}
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
@@ -103,6 +56,18 @@ export function Header({ accounts, institutions }: HeaderProps) {
   // ── State machine ─────────────────────────────────────────────────────────
   const [stage, setStage] = useState<Stage>("closed");
   const [pendingName, setPendingName] = useState("");
+
+  // ── UpdateForm footer state ───────────────────────────────────────────────
+  const [updateContinueDisabled, setUpdateContinueDisabled] = useState(true);
+  const [updateSubmitted, setUpdateSubmitted] = useState(false);
+
+  const handleUpdateContinueDisabledChange = useCallback((disabled: boolean) => {
+    setUpdateContinueDisabled(disabled);
+  }, []);
+
+  const handleUpdateContinue = useCallback(() => {
+    setUpdateSubmitted(true);
+  }, []);
 
   // ── Form fields ───────────────────────────────────────────────────────────
   const [institutionId, setInstitutionId] = useState<string | null>(FORM_DEFAULTS.institutionId);
@@ -155,6 +120,7 @@ export function Header({ accounts, institutions }: HeaderProps) {
     if (!open) {
       setStage("closed");
       resetForm();
+      setUpdateSubmitted(false);
     }
   }
 
@@ -275,24 +241,35 @@ export function Header({ accounts, institutions }: HeaderProps) {
 
       {/* ── Update Sheet (auto-opened after Save) ────────────────────────── */}
       <Sheet open={stage === "update"} onOpenChange={handleUpdateOpenChange}>
-        <SheetContent side="right" className="overflow-y-auto">
+        <SheetContent side="right" className="overflow-y-auto flex flex-col">
           <SheetHeader>
             <SheetTitle>Update {pendingName}</SheetTitle>
           </SheetHeader>
 
-          <div className="flex flex-col gap-4 px-4 py-4">
-            <div className="rounded-md bg-muted px-3 py-2 text-body-sm text-muted-foreground">
-              Design preview — not yet connected to data.
-            </div>
-            <UpdateSourcePicker />
+          <div className="flex-1 px-4 py-4">
+            <UpdateForm
+              key={stage === "update" ? "update-open" : "update-closed"}
+              initialMode="pdf"
+              onContinueDisabledChange={handleUpdateContinueDisabledChange}
+              onContinue={handleUpdateContinue}
+            />
           </div>
 
-          <SheetFooter className="px-4 pb-4">
+          <SheetFooter className="px-4 pb-4 gap-2">
             <SheetClose asChild>
               <Button variant="outline" size="sm">
                 Cancel
               </Button>
             </SheetClose>
+            {!updateSubmitted && (
+              <Button
+                size="sm"
+                disabled={updateContinueDisabled}
+                onClick={handleUpdateContinue}
+              >
+                Continue
+              </Button>
+            )}
           </SheetFooter>
         </SheetContent>
       </Sheet>
