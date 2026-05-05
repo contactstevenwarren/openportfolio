@@ -176,7 +176,7 @@ function getWhyText(
 }
 
 function SandboxCardInner() {
-  const { rebalanceError, isStale: positionsStale, lastAsOf, setNewCash, setExcessCashRedeploy } = useSandbox();
+  const { rebalanceError, isStale: positionsStale, lastAsOf, setNewCash, setExcessCashRedeploy, setRebalanceDeltas } = useSandbox();
   const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>(() =>
     searchParams.get("tab") === "rebalance" ? "rebalance" : "deploy"
@@ -220,6 +220,32 @@ function SandboxCardInner() {
       pct: s.pct,
       targetPct: s.target_pct ?? 0,
     }));
+
+  // Keep the donut in sync: push full-rebalance deltas to context when in rebalance
+  // mode (cleared when switching to deploy). Depends on allocationData (stable SWR
+  // reference) rather than the derived holdings array to avoid re-firing every render.
+  useEffect(() => {
+    if (mode !== "rebalance") {
+      setRebalanceDeltas(null);
+      return;
+    }
+    const slices = allocationData?.by_asset_class ?? [];
+    if (slices.length === 0) return;
+    const total = allocationData?.total ?? 0;
+    const h: AssetHolding[] = slices
+      .filter((s) => s.value > 0)
+      .map((s) => ({
+        name: s.name,
+        label: humanize(s.name),
+        value: s.value,
+        pct: s.pct,
+        targetPct: s.target_pct ?? 0,
+      }));
+    const plan = computePlan(h, total, "rebalance", 0, 0);
+    const deltaMap: Record<string, number> = {};
+    plan.assets.forEach((a) => { deltaMap[a.name] = a.action; });
+    setRebalanceDeltas(deltaMap);
+  }, [mode, allocationData, setRebalanceDeltas]);
 
   const cashName =
     holdings.find((h) => h.name.toLowerCase() === "cash")?.name ?? null;
@@ -266,6 +292,7 @@ function SandboxCardInner() {
     setCommittedExcess(0);
     setNewCash(0);
     setExcessCashRedeploy(0);
+    if (m !== "rebalance") setRebalanceDeltas(null);
   }
 
   function handleNewCashChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -300,7 +327,7 @@ function SandboxCardInner() {
   const showCta = !isPlanBuilt || isPlanStale || inEmptyState;
 
   return (
-    <Card id="rebalance" className="h-full">
+    <Card id="rebalance" className={`h-full ${mode === "rebalance" ? "gap-3" : "gap-6"}`}>
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -451,7 +478,7 @@ function SandboxCardInner() {
               </div>
 
               {holdings.length > 0 && (
-                <div className="overflow-x-auto">
+                <div className="mt-4 overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-border">
@@ -538,7 +565,7 @@ function SandboxCardInner() {
               )}
             </div>
 
-            <div className="mt-auto flex items-center justify-between gap-4 border-t border-border pt-4">
+            <div className="mt-auto border-t border-border pt-4">
               <button
                 type="button"
                 onClick={() => setWhyOpen((v) => !v)}
@@ -546,9 +573,9 @@ function SandboxCardInner() {
               >
                 {whyOpen ? "Hide explanation" : "Why these amounts?"}
               </button>
-              <span className="text-right text-label text-muted-foreground">
+              <p className="mt-1.5 text-label text-muted-foreground">
                 Execute at your broker, then re-upload your statement
-              </span>
+              </p>
             </div>
 
             {whyOpen && (
