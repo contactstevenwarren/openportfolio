@@ -302,7 +302,7 @@ function SandboxCardInner() {
   return (
     <Card id="rebalance" className="h-full">
       <CardHeader>
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <CardTitle className="text-h3">
               {mode === "deploy" ? "Deploy cash" : "Full rebalance"}
@@ -352,7 +352,7 @@ function SandboxCardInner() {
         )}
 
         {mode === "deploy" && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* New cash to deploy */}
             <div>
               <label
