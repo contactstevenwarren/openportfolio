@@ -27,15 +27,26 @@ import {
 } from "@/app/components/ui/command";
 import { cn } from "@/app/lib/utils";
 
+export type FreeformOption = {
+  /** Value stored/sent to the API (e.g. "auto_loan"). */
+  value: string;
+  /** Human-readable label shown in the UI (e.g. "Auto loan"). */
+  label: string;
+};
+
 export type FreeformComboboxProps = {
-  /** Current value (empty string = nothing selected). */
+  /** Current value — the API/storage value, not the label. */
   value: string;
   onChange: (value: string) => void;
-  /** Preset suggestions shown before the user types. */
-  suggestions: string[];
+  /** Preset suggestions. Accepts plain strings or {value, label} pairs. */
+  suggestions: (string | FreeformOption)[];
   placeholder?: string;
   createLabel?: string;
 };
+
+function toOption(s: string | FreeformOption): FreeformOption {
+  return typeof s === "string" ? { value: s, label: s } : s;
+}
 
 export function FreeformCombobox({
   value,
@@ -47,17 +58,26 @@ export function FreeformCombobox({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
+  const baseOptions = suggestions.map(toOption);
+
   // Include current value if it isn't already a suggestion, so it appears
   // in the list when the popover opens after a custom value was set.
-  const allOptions = value && !suggestions.includes(value)
-    ? [...suggestions, value]
-    : suggestions;
+  const alreadyListed = baseOptions.some((o) => o.value === value);
+  const allOptions = value && !alreadyListed
+    ? [...baseOptions, { value, label: value }]
+    : baseOptions;
+
+  const selectedLabel = allOptions.find((o) => o.value === value)?.label ?? value;
 
   const q = search.trim().toLowerCase();
   const filtered = q
-    ? allOptions.filter((s) => s.toLowerCase().includes(q))
+    ? allOptions.filter(
+        (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
+      )
     : allOptions;
-  const hasExactMatch = allOptions.some((s) => s.toLowerCase() === q);
+  const hasExactMatch = allOptions.some(
+    (o) => o.label.toLowerCase() === q || o.value.toLowerCase() === q,
+  );
   const showCreate = q.length > 0 && !hasExactMatch;
 
   function handleSelect(v: string) {
@@ -67,8 +87,7 @@ export function FreeformCombobox({
   }
 
   function handleCreate() {
-    const v = search.trim();
-    onChange(v);
+    onChange(search.trim());
     setOpen(false);
     setSearch("");
   }
@@ -83,7 +102,7 @@ export function FreeformCombobox({
           className="w-full justify-between font-normal"
         >
           <span className={cn(!value && "text-muted-foreground")}>
-            {value || placeholder}
+            {value ? selectedLabel : placeholder}
           </span>
           <ChevronsUpDownIcon className="ml-2 size-4 shrink-0 opacity-50" />
         </Button>
@@ -103,17 +122,17 @@ export function FreeformCombobox({
               <CommandGroup>
                 {filtered.map((option) => (
                   <CommandItem
-                    key={option}
-                    value={option}
-                    onSelect={() => handleSelect(option)}
+                    key={option.value}
+                    value={option.value}
+                    onSelect={() => handleSelect(option.value)}
                   >
                     <CheckIcon
                       className={cn(
                         "mr-2 size-4",
-                        value === option ? "opacity-100" : "opacity-0",
+                        value === option.value ? "opacity-100" : "opacity-0",
                       )}
                     />
-                    {option}
+                    {option.label}
                   </CommandItem>
                 ))}
               </CommandGroup>

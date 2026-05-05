@@ -28,13 +28,13 @@ import {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const KIND_SUGGESTIONS = [
-  "mortgage",
-  "credit_card",
-  "student_loan",
-  "auto_loan",
-  "heloc",
-  "medical",
-  "other",
+  { value: "mortgage",      label: "Mortgage" },
+  { value: "credit_card",   label: "Credit card" },
+  { value: "student_loan",  label: "Student loan" },
+  { value: "auto_loan",     label: "Auto loan" },
+  { value: "heloc",         label: "HELOC" },
+  { value: "medical",       label: "Medical" },
+  { value: "other",         label: "Other" },
 ];
 
 function todayIso(): string {
