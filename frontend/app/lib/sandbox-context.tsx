@@ -24,6 +24,8 @@ type SandboxCtx = {
   setNewCash: (v: number) => void;
   excessCashRedeploy: number;
   setExcessCashRedeploy: (v: number) => void;
+  rebalanceDeltas: Record<string, number> | null;
+  setRebalanceDeltas: (v: Record<string, number> | null) => void;
   simulatedSlices: AllocationSlice[] | undefined;
   moves: RebalanceMove[];
   rebalanceError: boolean;
@@ -36,6 +38,8 @@ const Context = createContext<SandboxCtx>({
   setNewCash: () => {},
   excessCashRedeploy: 0,
   setExcessCashRedeploy: () => {},
+  rebalanceDeltas: null,
+  setRebalanceDeltas: () => {},
   simulatedSlices: undefined,
   moves: [],
   rebalanceError: false,
@@ -50,6 +54,7 @@ export function useSandbox(): SandboxCtx {
 export function SandboxProvider({ children }: { children: ReactNode }) {
   const [newCash, setNewCash] = useState(0);
   const [excessCashRedeploy, setExcessCashRedeploy] = useState(0);
+  const [rebalanceDeltas, setRebalanceDeltas] = useState<Record<string, number> | null>(null);
 
   const { data: allocation } = useSWR<AllocationResult>(
     "/api/allocation",
@@ -155,9 +160,14 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
       return applyDeltas(combined, allocation.total + newCash);
     }
 
+    // No new cash, no excess — full rebalance simulation (net-zero: total unchanged)
+    if (excessCashRedeploy === 0 && rebalanceDeltas !== null) {
+      return applyDeltas(rebalanceDeltas, allocation.total);
+    }
+
     // No new cash — excess-cash only
     return excessDeltas ? applyDeltas(excessDeltas, allocation.total) : undefined;
-  }, [allocation, rebalance, newCash, excessCashRedeploy]);
+  }, [allocation, rebalance, newCash, excessCashRedeploy, rebalanceDeltas]);
 
   const moves: RebalanceMove[] = useMemo(
     () =>
@@ -176,6 +186,8 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
         setNewCash,
         excessCashRedeploy,
         setExcessCashRedeploy,
+        rebalanceDeltas,
+        setRebalanceDeltas,
         simulatedSlices,
         moves,
         rebalanceError: !!rebalanceErr,
