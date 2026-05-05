@@ -37,6 +37,18 @@ const KIND_SUGGESTIONS = [
   { value: "other",         label: "Other" },
 ];
 
+// Contextual label suggestions per kind — richer than the bare kind name
+// so auto-filled labels are useful starting points, not just repeats.
+const KIND_DEFAULT_LABELS: Record<string, string> = {
+  mortgage:     "Primary mortgage",
+  credit_card:  "Credit card",
+  student_loan: "Student loan",
+  auto_loan:    "Auto loan",
+  heloc:        "HELOC",
+  medical:      "Medical debt",
+  other:        "Other debt",
+};
+
 function todayIso(): string {
   return new Date().toISOString();
 }
@@ -55,8 +67,14 @@ type AddFormProps = {
   onSaved: () => void;
 };
 
-function kindLabel(value: string): string {
+/** Human-readable display name for the kind combobox (e.g. "Mortgage"). */
+function kindDisplayLabel(value: string): string {
   return KIND_SUGGESTIONS.find((s) => s.value === value)?.label ?? value;
+}
+
+/** Contextual default for the label field when kind is chosen (e.g. "Primary mortgage"). */
+function kindDefaultLabel(value: string): string {
+  return KIND_DEFAULT_LABELS[value] ?? kindDisplayLabel(value);
 }
 
 function AddForm({ onSaved }: AddFormProps) {
@@ -75,7 +93,7 @@ function AddForm({ onSaved }: AddFormProps) {
     setKind(v);
     // Auto-fill label when it's blank or was previously auto-filled.
     if (!label || labelAutoFilled) {
-      setLabel(kindLabel(v));
+      setLabel(kindDefaultLabel(v));
       setLabelAutoFilled(true);
     }
   }
@@ -111,7 +129,7 @@ function AddForm({ onSaved }: AddFormProps) {
     setError(null);
     try {
       const body: LiabilityCreate = {
-        label: (label.trim() || kindLabel(kind)).trim(),
+        label: (label.trim() || kindDefaultLabel(kind)).trim(),
         kind: kind.trim(),
         balance: bal,
         as_of: new Date(asOf).toISOString(),
@@ -175,7 +193,7 @@ function AddForm({ onSaved }: AddFormProps) {
           <Input
             value={label}
             onChange={(e) => handleLabelChange(e.target.value)}
-            placeholder={kind ? kindLabel(kind) : "e.g. Primary mortgage"}
+            placeholder={kind ? kindDefaultLabel(kind) : "e.g. Primary mortgage"}
           />
         </div>
         <div className="flex flex-col gap-1">
