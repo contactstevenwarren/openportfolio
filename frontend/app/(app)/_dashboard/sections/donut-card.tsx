@@ -8,11 +8,7 @@ import type { PieSectorShapeProps } from "recharts/types/polar/Pie";
 
 import {
   Card,
-  CardAction,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/app/components/ui/card";
 import {
   ChartContainer,
@@ -32,7 +28,6 @@ import { ASSET_CLASS_COLOR, formatPct, formatUsd, type AssetClass } from "../moc
 
 // API doesn't yet carry per-slice freshness; stub a static source so the
 // dotted-underline + hover tooltip show up everywhere a number is rendered.
-// Replace with real freshness once the backend plumbs it through.
 const STUB_PROVENANCE = { source: "computed" } as const;
 
 // Drift radius bounds in pixels. R_BASE matches the dashed baseline circle.
@@ -40,20 +35,12 @@ const R_BASE = 100;
 const R_MIN = 90;
 const R_MAX = 110;
 const INNER_RADIUS = 70;
-// Selection cue: dim non-selected wedges. Radius stays untouched so it
-// keeps representing drift only.
-const DIM_OPACITY = 0.35;
 
-// Radial drift encoding: presentation constants, NOT band thresholds. Below
-// DRIFT_FLOOR_PP the wedge sits flush; at DRIFT_CEILING_PP it reaches the
-// full bump. Linear in-between, saturated past the ceiling. Decoupled from
-// the band thresholds so the chart stays a quiet drift signal.
+// Radial drift encoding: presentation constants, NOT band thresholds.
 const DRIFT_FLOOR_PP = 1;
 const DRIFT_CEILING_PP = 10;
 
 // API L1 names → AssetClass slug used by ASSET_CLASS_COLOR.
-// L1 "equity" lumps US + intl; the donut shows the lump, so we route it
-// through the US-equity blue. Anything not listed falls back to "other".
 export const NAME_TO_CLASS: Record<string, AssetClass> = {
   cash: "cash",
   equity: "us-equity",
@@ -66,6 +53,12 @@ export const NAME_TO_CLASS: Record<string, AssetClass> = {
   other: "other",
 };
 
+// Canonical brand order for the legend (brand.md §Charts).
+const CANONICAL_ORDER: AssetClass[] = [
+  "cash", "us-equity", "intl-equity", "fixed-income",
+  "real-estate", "crypto", "alts", "other",
+];
+
 type DisplaySlice = {
   name: string;
   cls: AssetClass;
@@ -75,39 +68,66 @@ type DisplaySlice = {
   targetPct: number | null;
   driftPct: number | null;
   driftBand: DriftBand | null;
+  fill: string;
 };
 
-// Canonical brand order for the legend (brand.md §Charts).
-const CANONICAL_ORDER: AssetClass[] = [
-  "cash", "us-equity", "intl-equity", "fixed-income",
-  "real-estate", "crypto", "alts", "other",
-];
+// Walk down through single-child layers so drilling Cash (which has only
+// one region "other") goes straight to its sub_classes. The 3-level data
+// tree (asset_class → region → sub_class) is preserved on the wire — this
+// is purely a presentation transform.
+function meaningfulChildren(slice: AllocationSlice): AllocationSlice[] {
+  if (slice.children.length === 1) return meaningfulChildren(slice.children[0]);
+  return slice.children;
+}
 
-function toDisplaySlices(input: AllocationSlice[]): DisplaySlice[] {
-  return [...input]
-    .filter((s) => s.value > 0)
-    .map((s) => ({
+// Generate a fill color for an L2 slice by mixing the parent's brand color
+// with white in oklab space. index=0 is the darkest (parent color);
+// higher index → progressively lighter. Capped at 60% mix so all slices
+// remain visually readable against the card background.
+function l2Fill(parentCssColor: string, index: number, total: number): string {
+  const mix = total <= 1 ? 0 : Math.min(60, (index * 55) / (total - 1));
+  return `color-mix(in oklab, ${parentCssColor}, white ${mix}%)`;
+}
+
+function toDisplaySlices(
+  input: AllocationSlice[],
+  opts: { sortByValueDesc?: boolean; parentCls?: AssetClass } = {},
+): DisplaySlice[] {
+  const visible = input.filter((s) => s.value > 0);
+  const sorted = opts.sortByValueDesc
+    ? [...visible].sort((a, b) => b.value - a.value)
+    : [...visible].sort((a, b) => {
+        const ac = NAME_TO_CLASS[a.name] ?? "other";
+        const bc = NAME_TO_CLASS[b.name] ?? "other";
+        const ai = CANONICAL_ORDER.indexOf(ac);
+        const bi = CANONICAL_ORDER.indexOf(bc);
+        if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+        return b.value - a.value;
+      });
+
+  const parentColor = opts.parentCls ? ASSET_CLASS_COLOR[opts.parentCls] : null;
+
+  return sorted.map((s, i) => {
+    const cls = NAME_TO_CLASS[s.name] ?? "other";
+    const fill = parentColor
+      ? l2Fill(parentColor, i, sorted.length)
+      : ASSET_CLASS_COLOR[cls];
+    return {
       name: s.name,
-      cls: NAME_TO_CLASS[s.name] ?? "other",
+      cls,
       label: humanize(s.name),
       value: s.value,
       pct: s.pct,
       targetPct: s.target_pct ?? null,
       driftPct: s.drift_pct ?? null,
       driftBand: s.drift_band ?? null,
-    }))
-    .sort((a, b) => {
-      const ai = CANONICAL_ORDER.indexOf(a.cls);
-      const bi = CANONICAL_ORDER.indexOf(b.cls);
-      // Unknown classes go last; within same class sort by value desc
-      if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-      return b.value - a.value;
-    });
+      fill,
+    };
+  });
 }
 
 // Per-slice outer radius in px. Linear growth from DRIFT_FLOOR_PP (flush) to
-// DRIFT_CEILING_PP (full bump), saturated above. Endpoints are presentation
-// constants, deliberately decoupled from the band thresholds.
+// DRIFT_CEILING_PP (full bump), saturated above.
 function computeRings(slices: DisplaySlice[]): number[] {
   const span = DRIFT_CEILING_PP - DRIFT_FLOOR_PP;
   return slices.map((s) => {
@@ -127,24 +147,9 @@ export function DonutCard() {
     api.allocation,
   );
   const { simulatedSlices } = useSandbox();
-  const isSimulating = simulatedSlices != null;
 
   return (
     <Card className="h-full">
-      <CardHeader>
-        <CardTitle className="text-h3">
-          Allocation
-        </CardTitle>
-        <CardDescription>By asset class</CardDescription>
-        <CardAction>
-          <Link
-            href="/targets"
-            className="text-body-sm text-muted-foreground hover:text-foreground"
-          >
-            Edit targets →
-          </Link>
-        </CardAction>
-      </CardHeader>
       <CardContent>
         <DonutBody
           data={data}
@@ -168,149 +173,263 @@ function DonutBody({
   isLoading: boolean;
   simulatedSlices: AllocationSlice[] | undefined;
 }) {
-  const [selected, setSelected] = React.useState<number | null>(null);
+  const [zoomInto, setZoomInto] = React.useState<string | null>(null);
+  const isSimulating = simulatedSlices != null;
 
-  const slices = toDisplaySlices(simulatedSlices ?? data?.by_asset_class ?? []);
+  // Q5=C: simulating clears zoom and locks L1-only.
+  React.useEffect(() => {
+    if (isSimulating && zoomInto !== null) setZoomInto(null);
+  }, [isSimulating, zoomInto]);
+
+  const l1 = simulatedSlices ?? data?.by_asset_class ?? [];
+  const zoomedParent = zoomInto ? (l1.find((s) => s.name === zoomInto) ?? null) : null;
+
+  // Guard stale zoomInto: if the zoomed class disappears (e.g. position deleted
+  // and SWR revalidates), snap back to L1 silently.
+  React.useEffect(() => {
+    if (zoomInto !== null && !l1.find((s) => s.name === zoomInto)) {
+      setZoomInto(null);
+    }
+  }, [l1, zoomInto]);
+
+  // Esc exits zoom.
+  React.useEffect(() => {
+    if (!zoomedParent) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setZoomInto(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomedParent]);
+
+  const parentCls = zoomedParent ? (NAME_TO_CLASS[zoomedParent.name] ?? "other") : undefined;
+  const sourceSlices = zoomedParent ? meaningfulChildren(zoomedParent) : l1;
+  const slices = toDisplaySlices(sourceSlices, {
+    sortByValueDesc: zoomedParent != null,
+    parentCls,
+  });
   const rings = computeRings(slices);
 
+  // Header description and title reflect zoom level.
+  const description = zoomedParent
+    ? `Inside ${humanize(zoomedParent.name)}`
+    : "By asset class";
+
+  function handleSliceClick(name: string) {
+    if (isSimulating) return;
+    if (zoomedParent) {
+      // Clicking a slice inside the drill does nothing further (L3 deferred).
+      return;
+    }
+    // At L1: drill if meaningful children exist, un-zoom if already zoomed.
+    if (name === zoomInto) {
+      setZoomInto(null);
+      return;
+    }
+    const l1Slice = l1.find((s) => s.name === name);
+    if (l1Slice && meaningfulChildren(l1Slice).length > 1) {
+      setZoomInto(name);
+    }
+  }
+
   if (isLoading || (!data && !error)) {
-    return <DonutPlaceholder kind="loading" />;
+    return (
+      <>
+        <DonutHeader description="By asset class" />
+        <DonutPlaceholder kind="loading" />
+      </>
+    );
   }
   if (error) {
-    return <DonutPlaceholder kind="error" message={(error as Error).message} />;
+    return (
+      <>
+        <DonutHeader description="By asset class" />
+        <DonutPlaceholder kind="error" message={(error as Error).message} />
+      </>
+    );
   }
-  if (slices.length === 0) {
-    return <DonutPlaceholder kind="empty" />;
+  if (slices.length === 0 && !zoomedParent) {
+    return (
+      <>
+        <DonutHeader description="By asset class" />
+        <DonutPlaceholder kind="empty" />
+      </>
+    );
   }
 
   const total = slices.reduce((a, s) => a + s.value, 0);
-  const activeIndex = selected ?? 0;
-  const activeSlice = slices[activeIndex];
-  const isSelected = selected !== null;
-  const toggle = (i: number) => setSelected((prev) => (prev === i ? null : i));
-
-  const chartData = slices.map((s) => ({
-    cls: s.cls,
-    label: s.label,
-    value: s.value,
-    pct: s.pct,
-    targetPct: s.targetPct,
-    driftPct: s.driftPct,
-    fill: `var(--color-${s.cls})`,
-  }));
 
   const chartConfig: ChartConfig = {
     value: { label: "Allocation" },
     ...Object.fromEntries(
-      slices.map((s) => [s.cls, { label: s.label, color: ASSET_CLASS_COLOR[s.cls] }]),
+      slices.map((s) => [s.name, { label: s.label }]),
     ),
   };
 
   return (
-    <div className="@container/donut-card">
-      <div className="flex flex-col gap-6 @md/donut-card:flex-row @md/donut-card:items-center">
-        <ChartContainer
-          config={chartConfig}
-          className="mx-auto aspect-square w-full max-w-[260px] shrink-0 @md/donut-card:mx-0"
-        >
-          <PieChart>
-            <ChartTooltip cursor={false} content={<DonutTooltip />} />
-            <Pie
-              data={chartData}
-              dataKey="value"
-              nameKey="cls"
-              innerRadius={INNER_RADIUS}
-              outerRadius={R_BASE}
-              strokeWidth={3}
-              stroke="var(--background)"
-              shape={(rawProps: PieSectorShapeProps) => {
-                const { index = 0, ...props } = rawProps;
-                const dim = isSelected && index !== activeIndex;
-                return (
-                  <Sector
-                    {...props}
-                    outerRadius={rings[index] ?? R_BASE}
-                    opacity={dim ? DIM_OPACITY : 1}
-                  />
-                );
-              }}
-              onClick={(_, i) => toggle(i)}
-              className="cursor-pointer"
-            >
-              <Label
-                content={({ viewBox }) => {
-                  if (!viewBox || !("cx" in viewBox) || !("cy" in viewBox)) return null;
-                  const cx = viewBox.cx ?? 0;
-                  const cy = viewBox.cy ?? 0;
-                  const labelText = isSelected ? activeSlice.label : "Total";
-                  const valueText = isSelected
-                    ? formatUsd(activeSlice.value, { compact: true })
-                    : formatUsd(total, { compact: true });
+    <>
+      <DonutHeader description={description} />
+      <div className="@container/donut-card">
+        <div className="flex flex-col gap-6 @md/donut-card:flex-row @md/donut-card:items-center">
+          <ChartContainer
+            config={chartConfig}
+            className="mx-auto aspect-square w-full max-w-[260px] shrink-0 @md/donut-card:mx-0"
+          >
+            <PieChart>
+              <ChartTooltip cursor={false} content={<DonutTooltip />} />
+              <Pie
+                data={slices.map((s) => ({ ...s, fill: s.fill }))}
+                dataKey="value"
+                nameKey="name"
+                innerRadius={INNER_RADIUS}
+                outerRadius={R_BASE}
+                strokeWidth={3}
+                stroke="var(--background)"
+                shape={(rawProps: PieSectorShapeProps) => {
+                  const { index = 0, ...props } = rawProps;
+                  const sliceName = slices[index]?.name ?? "";
+                  const l1Slice = !zoomedParent ? l1.find((s) => s.name === sliceName) : null;
+                  const drillable = !isSimulating && !zoomedParent && l1Slice != null &&
+                    meaningfulChildren(l1Slice).length > 1;
                   return (
-                    <foreignObject x={cx - 70} y={cy - 26} width={140} height={56}>
-                      <div className="flex h-full w-full flex-col items-center justify-center text-center">
-                        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                          {labelText}
-                        </span>
-                        <span className="font-mono text-xl font-medium text-accent">
-                          <Provenance source={STUB_PROVENANCE.source}>
-                            {valueText}
-                          </Provenance>
-                        </span>
-                      </div>
-                    </foreignObject>
+                    <Sector
+                      {...props}
+                      outerRadius={rings[index] ?? R_BASE}
+                      style={{ cursor: drillable ? "pointer" : "default" }}
+                    />
                   );
                 }}
-              />
-            </Pie>
-          </PieChart>
-        </ChartContainer>
+                onClick={(entry) => handleSliceClick((entry as { name: string }).name)}
+                className="cursor-pointer"
+              >
+                <Label
+                  content={({ viewBox }) => {
+                    if (!viewBox || !("cx" in viewBox) || !("cy" in viewBox)) return null;
+                    const cx = viewBox.cx ?? 0;
+                    const cy = viewBox.cy ?? 0;
+                    if (zoomedParent) {
+                      return (
+                        <foreignObject x={cx - 70} y={cy - 32} width={140} height={64}>
+                          <button
+                            type="button"
+                            onClick={() => setZoomInto(null)}
+                            aria-label={`Back to all asset classes (currently inside ${humanize(zoomedParent.name)})`}
+                            className="flex h-full w-full flex-col items-center justify-center text-center hover:opacity-80 transition-opacity"
+                          >
+                            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                              ← {humanize(zoomedParent.name)}
+                            </span>
+                            <span className="font-mono text-xl font-medium text-accent">
+                              <Provenance source={STUB_PROVENANCE.source}>
+                                {formatUsd(zoomedParent.value, { compact: true })}
+                              </Provenance>
+                            </span>
+                          </button>
+                        </foreignObject>
+                      );
+                    }
+                    return (
+                      <foreignObject x={cx - 70} y={cy - 26} width={140} height={56}>
+                        <div className="flex h-full w-full flex-col items-center justify-center text-center">
+                          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                            Total
+                          </span>
+                          <span className="font-mono text-xl font-medium text-accent">
+                            <Provenance source={STUB_PROVENANCE.source}>
+                              {formatUsd(total, { compact: true })}
+                            </Provenance>
+                          </span>
+                        </div>
+                      </foreignObject>
+                    );
+                  }}
+                />
+              </Pie>
+            </PieChart>
+          </ChartContainer>
 
-        <div className="flex flex-1 flex-col gap-0.5">
-          <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 px-2 pb-1.5">
-            <span className="text-label text-muted-foreground">Asset type</span>
-            <span className="w-14 text-right text-label text-muted-foreground">Amount</span>
-            <span className="w-12 text-right text-label text-muted-foreground">Target</span>
-            <span className="w-14 text-right text-label text-muted-foreground">Drift</span>
+          <div className="flex flex-1 flex-col gap-0.5">
+            <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 px-2 pb-1.5">
+              <span className="text-label text-muted-foreground">Asset type</span>
+              <span className="w-14 text-right text-label text-muted-foreground">Amount</span>
+              <span className="w-12 text-right text-label text-muted-foreground">Target</span>
+              <span className="w-14 text-right text-label text-muted-foreground">Drift</span>
+            </div>
+            {slices.map((s) => {
+              // At L1: clicking drills if there are meaningful children, or
+              // un-zooms if this slice is currently the zoomed parent.
+              // At L2: clicking the parent name in a breadcrumb would un-zoom
+              // but we don't render the parent row here — no-op.
+              const l1Slice = !zoomedParent ? l1.find((ls) => ls.name === s.name) : undefined;
+              const isDrillable = !isSimulating && l1Slice != null &&
+                meaningfulChildren(l1Slice).length > 1;
+              return (
+                <div key={s.name}>
+                  <button
+                    type="button"
+                    onClick={() => handleSliceClick(s.name)}
+                    aria-label={`${s.label}: ${formatUsd(s.value, { compact: true })}`}
+                    className={
+                      "grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
+                      (isDrillable ? "cursor-pointer" : "cursor-default")
+                    }
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span
+                        aria-hidden
+                        className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                        style={{ backgroundColor: s.fill }}
+                      />
+                      <span className="truncate text-body-sm text-foreground">{s.label}</span>
+                      {isDrillable && (
+                        <span aria-hidden className="text-[10px] text-muted-foreground/50">›</span>
+                      )}
+                    </span>
+                    <span className="w-14 text-right text-mono-sm tabular-nums text-muted-foreground">
+                      <Provenance source={STUB_PROVENANCE.source}>
+                        {formatUsd(s.value, { compact: true })}
+                      </Provenance>
+                    </span>
+                    <span className="w-12 text-right text-mono-sm tabular-nums text-muted-foreground">
+                      {s.targetPct != null ? formatPct(s.targetPct / 100, { digits: 0 }) : "—"}
+                    </span>
+                    <span className={`w-14 text-right text-mono-sm tabular-nums ${driftColor(s.driftBand)}`}>
+                      {s.driftPct != null ? formatPp(s.driftPct) : "—"}
+                    </span>
+                  </button>
+                </div>
+              );
+            })}
+            {zoomedParent && (
+              <button
+                type="button"
+                onClick={() => setZoomInto(null)}
+                className="mt-1 px-2 py-1 text-left text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                ← Back to all asset classes
+              </button>
+            )}
           </div>
-          {slices.map((s, i) => {
-            const isActive = i === activeIndex;
-            return (
-              <div key={s.name}>
-                <button
-                  type="button"
-                  onClick={() => toggle(i)}
-                  aria-pressed={isSelected && isActive}
-                  className={
-                    "grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
-                    (isSelected && isActive ? "bg-muted/40" : "")
-                  }
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span
-                      aria-hidden
-                      className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                      style={{ backgroundColor: ASSET_CLASS_COLOR[s.cls] }}
-                    />
-                    <span className="truncate text-body-sm text-foreground">{s.label}</span>
-                  </span>
-                  <span className="w-14 text-right text-mono-sm tabular-nums text-muted-foreground">
-                    <Provenance source={STUB_PROVENANCE.source}>
-                      {formatUsd(s.value, { compact: true })}
-                    </Provenance>
-                  </span>
-                  <span className="w-12 text-right text-mono-sm tabular-nums text-muted-foreground">
-                    {s.targetPct != null ? formatPct(s.targetPct / 100, { digits: 0 }) : "—"}
-                  </span>
-                  <span className={`w-14 text-right text-mono-sm tabular-nums ${driftColor(s.driftBand)}`}>
-                    {s.driftPct != null ? formatPp(s.driftPct) : "—"}
-                  </span>
-                </button>
-              </div>
-            );
-          })}
         </div>
       </div>
+    </>
+  );
+}
+
+// Header is rendered inside DonutBody so it can reflect zoom state.
+function DonutHeader({ description }: { description: string }) {
+  return (
+    <div className="flex items-start justify-between pb-4">
+      <div>
+        <p className="text-h3 font-semibold leading-none tracking-tight">Allocation</p>
+        <p className="text-sm text-muted-foreground mt-1">{description}</p>
+      </div>
+      <Link
+        href="/targets"
+        className="text-body-sm text-muted-foreground hover:text-foreground"
+      >
+        Edit targets →
+      </Link>
     </div>
   );
 }
@@ -383,4 +502,3 @@ function DonutPlaceholder({
     </div>
   );
 }
-
