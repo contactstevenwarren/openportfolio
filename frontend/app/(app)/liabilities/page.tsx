@@ -11,6 +11,7 @@ import { Pencil, Trash2, Plus, Check, X } from "lucide-react";
 import { api, type Liability, type LiabilityCreate, type LiabilityPatch } from "@/app/lib/api";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
+import { FreeformCombobox } from "@/app/components/ui/freeform-combobox";
 import { formatUsd } from "@/app/(app)/_dashboard/mocks";
 import {
   AlertDialog,
@@ -76,6 +77,10 @@ function AddForm({ onSaved }: AddFormProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!kind.trim()) {
+      setError("Kind is required");
+      return;
+    }
     const bal = parseFloat(balance);
     if (isNaN(bal) || bal < 0) {
       setError("Balance must be a number ≥ 0");
@@ -140,18 +145,13 @@ function AddForm({ onSaved }: AddFormProps) {
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-body-sm font-medium">Kind</label>
-          <Input
-            list="liability-kind-list"
+          <FreeformCombobox
             value={kind}
-            onChange={(e) => setKind(e.target.value)}
+            onChange={setKind}
+            suggestions={KIND_SUGGESTIONS}
             placeholder="mortgage, credit_card, …"
-            required
+            createLabel="kind"
           />
-          <datalist id="liability-kind-list">
-            {KIND_SUGGESTIONS.map((k) => (
-              <option key={k} value={k} />
-            ))}
-          </datalist>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-body-sm font-medium">Balance (USD)</label>
@@ -346,18 +346,13 @@ function EditRow({ row, onSaved, onDeleted }: EditRowProps) {
         />
       </td>
       <td className="py-2 pr-2">
-        <Input
-          list="liability-kind-list-edit"
+        <FreeformCombobox
           value={kind}
-          onChange={(e) => setKind(e.target.value)}
-          className="h-8 text-body-sm"
+          onChange={setKind}
+          suggestions={KIND_SUGGESTIONS}
           placeholder="Kind"
+          createLabel="kind"
         />
-        <datalist id="liability-kind-list-edit">
-          {KIND_SUGGESTIONS.map((k) => (
-            <option key={k} value={k} />
-          ))}
-        </datalist>
       </td>
       <td className="py-2 pr-2">
         <Input
