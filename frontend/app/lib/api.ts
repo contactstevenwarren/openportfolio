@@ -134,11 +134,47 @@ export type DriftThresholds = {
   urgent_pct: number;
 };
 
+export type Liability = {
+  id: number;
+  label: string;
+  /** Free-form string. Common values: mortgage, credit_card, student_loan, auto_loan, heloc, medical, other */
+  kind: string;
+  /** USD balance >= 0 */
+  balance: number;
+  as_of: string;
+  institution_id: number | null;
+  notes: string | null;
+  source: string;
+  created_at: string;
+};
+
+export type LiabilityCreate = {
+  label: string;
+  kind: string;
+  balance: number;
+  as_of: string;
+  institution_id?: number | null;
+  notes?: string | null;
+};
+
+export type LiabilityPatch = {
+  label?: string;
+  kind?: string;
+  balance?: number;
+  as_of?: string;
+  institution_id?: number | null;
+  notes?: string | null;
+};
+
 export type AllocationResult = {
   total: number;
-  /** Sum of every classified position regardless of the investable flag.
-   *  ``total`` is the Investment Portfolio (drives every percentage and
-   *  rebalance suggestion); ``net_worth`` is shown alongside it on the hero. */
+  /** Raw sum of every classified position regardless of the investable flag.
+   *  Excludes liabilities. ``total`` is the Investment Portfolio (drives every
+   *  percentage and rebalance suggestion). */
+  assets_total: number;
+  /** Sum of all liability balances. */
+  liabilities_total: number;
+  /** True net worth: assets_total - liabilities_total. Shown on the hero. */
   net_worth: number;
   by_asset_class: AllocationSlice[];
   unclassified_tickers: string[];
@@ -475,4 +511,17 @@ export const api = {
       method: 'DELETE',
     }),
   reset: () => fetchJson<void>('/api/reset', { method: 'POST' }),
+  liabilities: () => fetchJson<Liability[]>('/api/liabilities'),
+  createLiability: (body: LiabilityCreate) =>
+    fetchJson<Liability>('/api/liabilities', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  patchLiability: (id: number, patch: LiabilityPatch) =>
+    fetchJson<Liability>(`/api/liabilities/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteLiability: (id: number) =>
+    fetchJson<void>(`/api/liabilities/${id}`, { method: 'DELETE' }),
 };

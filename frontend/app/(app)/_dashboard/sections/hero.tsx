@@ -141,9 +141,11 @@ export function HeroSection() {
 
   const loading = allocLoading || accountsLoading;
 
-  // Derived: investable / net worth
+  // Derived: investable / net worth / liabilities
   const investable = allocation?.total ?? 0;
   const netWorth = allocation?.net_worth ?? 0;
+  const assetsTotal = allocation?.assets_total ?? netWorth;
+  const liabilitiesTotal = allocation?.liabilities_total ?? 0;
   const investablePct = netWorth > 0 ? investable / netWorth : null;
 
   // Derived: delta vs earliest snapshot
@@ -206,7 +208,16 @@ export function HeroSection() {
           {loading ? (
             <span className="text-muted-foreground">—</span>
           ) : capturedAt ? (
-            <Provenance {...provProps}>{formatUsd(netWorth)}</Provenance>
+            <Provenance
+              {...provProps}
+              footnote={
+                liabilitiesTotal > 0
+                  ? `${formatUsd(assetsTotal)} assets − ${formatUsd(liabilitiesTotal)} liabilities`
+                  : undefined
+              }
+            >
+              {formatUsd(netWorth)}
+            </Provenance>
           ) : (
             formatUsd(netWorth)
           )}

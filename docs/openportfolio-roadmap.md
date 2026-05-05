@@ -50,6 +50,7 @@ One theme per phase. **Done when** is the acceptance bar.
 | 0.1 | Foundation (Shipped) | Instantly visualize your true asset allocation by pasting raw portfolio data. |
 | 0.1.5 | Entity Management (Shipped) | Track custom non-brokerage assets and save manual snapshots of your portfolio. |
 | 0.1.6 | Portfolio donut view redesign (Shipped) | Replace the current sunburst + breakdown table with a simpler donut chart that supports one-level drill-down. |
+| 0.1.7 | Liabilities & true net worth | Track debts (mortgage, credit card, loans) so the hero "Net worth" is assets minus liabilities. |
 | 0.2 | Targets & drift | Keep your portfolio on track with target allocations and visible drift against them. |
 | 0.3 | Design & Polish | Access and understand your portfolio seamlessly across both desktop and mobile devices. |
 | 0.4 | PDF Import (Shipped) | Eliminate manual data entry by dragging and dropping brokerage statements to extract positions. |
@@ -79,6 +80,7 @@ Revisit after v1.0 unless a phase explicitly pulls an item in.
 - **v0.1 Foundation:** [v0.1/execution_plan.md](v0.1/execution_plan.md)
 - **v0.1.5 Entity management:** [v0.1.5/execution_plan.md](v0.1.5/execution_plan.md)
 - **v0.1.6 Portfolio donut view redesign:** [v0.1.6/execution_plan.md](v0.1.6/execution_plan.md)
+- **v0.1.7 Liabilities & true net worth:** [v0.1.7/execution_plan.md](v0.1.7/execution_plan.md)
 - **v0.2 Targets & drift:** [v0.2/execution_plan.md](v0.2/execution_plan.md)
 - **v0.5 Rebalance recommendations:** [v0.5/execution_plan.md](v0.5/execution_plan.md)
 - **v0.4 PDF import:** [v0.4/execution_plan_prd.md](v0.4/execution_plan_prd.md)

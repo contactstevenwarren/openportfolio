@@ -53,6 +53,7 @@ def test_export_empty_shape(
     assert body["positions"] == []
     assert body["provenance"] == []
     assert body["snapshots"] == []
+    assert body["liabilities"] == []
     assert body["app_version"] == "0.1"
     assert "exported_at" in body
 
@@ -84,6 +85,7 @@ def test_export_excludes_fund_holdings_cache(
 ) -> None:
     # Schema shape check: the exported keys don't leak the internal
     # fund_holdings table (it's a rebuildable cache, not user data).
+    # v0.1.7: liabilities[] added to the export.
     r = client.get("/api/export", headers=auth_headers)
     keys = set(r.json().keys())
     assert "fund_holdings" not in keys
@@ -94,4 +96,5 @@ def test_export_excludes_fund_holdings_cache(
         "positions",
         "provenance",
         "snapshots",
+        "liabilities",
     }

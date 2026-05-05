@@ -163,6 +163,34 @@ class FundHolding(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class Liability(Base):
+    """User-entered debt item (v0.1.7).
+
+    Liabilities are subtracted from total assets to compute true net worth.
+    They are intentionally separate from positions and accounts — debts are
+    not allocations and must not appear in the donut, drift, or rebalance views.
+
+    ``kind`` is free-form (mortgage, credit_card, student_loan, auto_loan,
+    heloc, medical, other …) matching the v0.1.5 account.type pattern.
+    ``balance`` is validated >= 0 by the Pydantic schema before writes.
+    ``source`` is always "manual" for v0.1.7; reserved for future extraction.
+    """
+
+    __tablename__ = "liabilities"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    label: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(40))
+    balance: Mapped[float] = mapped_column(Float)
+    as_of: Mapped[datetime] = mapped_column(DateTime)
+    institution_id: Mapped[int | None] = mapped_column(
+        ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(50), default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Target(Base):
     """User-defined allocation targets (v0.2).
 

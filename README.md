@@ -27,6 +27,7 @@ Not a returns tracker, not a benchmark comparison, not a trading tool. Visibilit
 | `/paste` | Paste a broker statement; LLM extracts rows; review and commit. |
 | `/manual` | Enter a non-brokerage asset (real estate, gold, checking, crypto, …) with its own classification. |
 | `/accounts` | Create, edit, delete accounts (brokerage / HSA / crypto / real-estate buckets). |
+| `/liabilities` | Track debts (mortgage, credit card, student loan, …) so the hero "Net worth" = assets − liabilities. |
 | `/positions` | Every committed row, filterable by account / source / date, inline edit and batch delete. |
 | `/classifications` | Edit how any ticker is classified. YAML baseline + your overrides in one table. |
 
