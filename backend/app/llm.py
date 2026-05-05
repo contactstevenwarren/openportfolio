@@ -56,9 +56,8 @@ Rules for positions:
   balance but no symbol in the Symbol column, use ticker **CASH** with shares = 1.0, market_value = the
   balance shown, cost_basis = null unless the statement gives it.
 - **US Treasury bills/notes/bonds:** Include each listed line (US T-Bill, Treasury Note, etc.). Prefer a
-  printed trade symbol when it already matches a normal ticker. When the line shows **only a CUSIP**
-  (9-character ID, often starting with a digit), output ticker as **U** plus the **last 8 characters** of
-  that CUSIP (uppercase), e.g. CUSIP 912TEST99 → **U12TEST99** (so the ticker matches broker-style rules).
+  printed trade symbol when it already matches a normal ticker (e.g. "T 4.25 05/15/28"). When the line
+  shows **only a CUSIP** (9-character alphanumeric ID, e.g. "912828ZT0"), use the CUSIP as-is for ticker.
 - Return positions in the order they appear in the statement.
 """
 
