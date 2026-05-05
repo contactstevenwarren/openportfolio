@@ -347,9 +347,13 @@ def test_paste_commit_skips_classification_when_matches_yaml(
     assert test_db.query(Classification).count() == 0
 
 
-def test_paste_commit_skips_when_user_classification_row_exists(
+def test_paste_commit_updates_user_classification_row(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
+    # When a paste commit includes a classification suggestion (auto_suffix=False)
+    # and an existing user-owned row is present, the commit updates the row
+    # to the suggested class. This prevents stale classifications after re-import
+    # (see fix: prevent duplicate positions and stale classifications on import).
     test_db.add(
         Classification(
             ticker="VTI",
@@ -383,7 +387,8 @@ def test_paste_commit_skips_when_user_classification_row_exists(
     assert r.status_code == 201
     row = test_db.get(Classification, "VTI")
     assert row is not None
-    assert row.asset_class == "fixed_income"
+    # Row is updated to the suggested class, not skipped.
+    assert row.asset_class == "equity"
 
 
 # --- v0.1.5 M6: snapshot-on-commit ---------------------------------------

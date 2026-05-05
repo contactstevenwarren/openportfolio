@@ -28,7 +28,7 @@ from .llm import classify_ticker, extract_positions
 from .pdf_text import PdfNoTextError, PdfTextTooLargeError, pdf_bytes_to_text
 from .scrub_digits import scrub_digit_runs
 from .lookthrough import Breakdown, get_yaml_breakdowns
-from .models import Account, Classification, FundHolding, Institution, Position, Provenance, Snapshot, Target
+from .models import Account, Classification, FundHolding, Institution, Liability, Position, Provenance, Snapshot, Target
 from .schemas import (
     ASSET_CLASS_OPTIONS,
     MANUAL_ACCOUNT_TYPES,
@@ -54,6 +54,9 @@ from .schemas import (
     FundBreakdown,
     InstitutionCreate,
     InstitutionRead,
+    LiabilityCreate,
+    LiabilityPatch,
+    LiabilityRead,
     PositionCommit,
     PositionPatch,
     PositionRead,
@@ -1142,8 +1145,21 @@ def _non_investable_account_ids(db: Session) -> frozenset[int]:
     )
 
 
+def _liabilities_total(db: Session) -> float:
+    """Return the sum of all liability balances (0.0 when no rows exist)."""
+    from sqlalchemy import func as sqlfunc
+
+    result = db.query(sqlfunc.sum(Liability.balance)).scalar()
+    return float(result) if result is not None else 0.0
+
+
 def _write_snapshot(db: Session) -> None:
-    """Persist one Snapshot row summarising current portfolio state."""
+    """Persist one Snapshot row summarising current portfolio state.
+
+    net_worth_usd = assets_total - liabilities_total (true net worth).
+    payload_json includes liabilities_total so the v0.7 timeline can plot
+    the components separately.
+    """
     import json
 
     positions = db.query(Position).all()
@@ -1152,10 +1168,14 @@ def _write_snapshot(db: Session) -> None:
         positions, classifications, db=db,
         non_investable_account_ids=_non_investable_account_ids(db),
     )
+    liabilities_total = _liabilities_total(db)
+    net_worth = result.assets_total - liabilities_total
 
     payload = {
         "total_usd": result.total,
-        "net_worth_usd": result.net_worth,
+        "assets_total_usd": result.assets_total,
+        "liabilities_total_usd": liabilities_total,
+        "net_worth_usd": net_worth,
         "by_asset_class": {
             s.name: {"value": s.value, "pct": s.pct} for s in result.by_asset_class
         },
@@ -1167,7 +1187,7 @@ def _write_snapshot(db: Session) -> None:
     db.add(
         Snapshot(
             taken_at=datetime.now(UTC),
-            net_worth_usd=result.net_worth,
+            net_worth_usd=net_worth,
             payload_json=json.dumps(payload, sort_keys=True),
         )
     )
@@ -1266,6 +1286,18 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
         positions, classifications, db=db,
         non_investable_account_ids=_non_investable_account_ids(db),
     )
+    # Subtract liabilities to produce true net_worth. aggregate() returns
+    # assets numbers only; the subtraction lives here so the donut / drift /
+    # rebalance code paths remain unaware of liabilities (they are not
+    # allocations and must not affect percentages).
+    liabilities_total = _liabilities_total(db)
+    result = result.model_copy(
+        update={
+            "liabilities_total": liabilities_total,
+            "net_worth": result.assets_total - liabilities_total,
+        },
+        deep=False,
+    )
     targets = {t.path: float(t.pct) for t in db.query(Target).all()}
     result = apply_drift(
         result,
@@ -1307,6 +1339,116 @@ def get_earliest_snapshot(db: Session = Depends(get_db)) -> SnapshotEarliest | N
         net_worth_usd=snap.net_worth_usd,
         total_usd=total,
     )
+
+
+# ----- liabilities (v0.1.7) ------------------------------------------------
+
+
+@app.get("/api/liabilities", dependencies=[Depends(require_admin_token)])
+def list_liabilities(db: Session = Depends(get_db)) -> list[LiabilityRead]:
+    """Return all liabilities sorted by as_of descending."""
+    rows = db.query(Liability).order_by(Liability.as_of.desc()).all()
+    return [LiabilityRead.model_validate(r) for r in rows]
+
+
+@app.post(
+    "/api/liabilities",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin_token)],
+)
+def create_liability(
+    body: LiabilityCreate, db: Session = Depends(get_db)
+) -> LiabilityRead:
+    """Create a liability. Writes one provenance row for balance and a snapshot."""
+    now = datetime.now(UTC)
+    row = Liability(
+        label=body.label,
+        kind=body.kind,
+        balance=body.balance,
+        as_of=body.as_of,
+        institution_id=body.institution_id,
+        notes=body.notes,
+        source="manual",
+    )
+    db.add(row)
+    db.flush()  # populate row.id for provenance FK
+    db.add(
+        Provenance(
+            entity_type="liability",
+            entity_id=row.id,
+            field="balance",
+            source="manual",
+            confidence=1.0,
+            llm_span=None,
+            captured_at=now,
+        )
+    )
+    db.commit()
+    _write_snapshot(db)
+    db.refresh(row)
+    return LiabilityRead.model_validate(row)
+
+
+@app.patch(
+    "/api/liabilities/{liability_id}",
+    dependencies=[Depends(require_admin_token)],
+)
+def patch_liability(
+    liability_id: int, body: LiabilityPatch, db: Session = Depends(get_db)
+) -> LiabilityRead:
+    """Update a liability. Writes provenance when balance changes; writes a
+    snapshot when balance or as_of changes (both affect the net-worth timeline).
+    """
+    row = db.get(Liability, liability_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    now = datetime.now(UTC)
+    patch_fields = body.model_dump(exclude_unset=True)
+    balance_changed = "balance" in patch_fields and patch_fields["balance"] != row.balance
+    timeline_changed = balance_changed or (
+        "as_of" in patch_fields and patch_fields["as_of"] != row.as_of
+    )
+
+    for field, value in patch_fields.items():
+        setattr(row, field, value)
+
+    if balance_changed:
+        db.add(
+            Provenance(
+                entity_type="liability",
+                entity_id=liability_id,
+                field="balance",
+                source="override",
+                confidence=1.0,
+                llm_span=None,
+                captured_at=now,
+            )
+        )
+
+    db.commit()
+    if timeline_changed:
+        _write_snapshot(db)
+    db.refresh(row)
+    return LiabilityRead.model_validate(row)
+
+
+@app.delete(
+    "/api/liabilities/{liability_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin_token)],
+)
+def delete_liability(liability_id: int, db: Session = Depends(get_db)) -> None:
+    """Delete a liability and write a snapshot so the timeline records the drop."""
+    row = db.get(Liability, liability_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    db.delete(row)
+    db.commit()
+    _write_snapshot(db)
+
+
+# ----- targets (v0.2) -------------------------------------------------------
 
 
 @app.get("/api/targets", dependencies=[Depends(require_admin_token)])
@@ -1692,6 +1834,10 @@ def export_all(db: Session = Depends(get_db)) -> ExportResult:
             SnapshotRead.model_validate(s)
             for s in db.query(Snapshot).order_by(Snapshot.id).all()
         ],
+        liabilities=[
+            LiabilityRead.model_validate(r)
+            for r in db.query(Liability).order_by(Liability.id).all()
+        ],
     )
 
 
@@ -1714,4 +1860,5 @@ def reset_all(db: Session = Depends(get_db)) -> None:
     db.execute(delete(Snapshot))
     db.execute(delete(Provenance))
     db.execute(delete(FundHolding))
+    db.execute(delete(Liability))
     db.commit()

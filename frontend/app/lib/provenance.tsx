@@ -11,13 +11,16 @@ export type ProvenanceProps = {
   source: string;
   confidence?: number | null;
   capturedAt?: string | null;
+  /** Extra line appended to the tooltip (e.g. "assets − liabilities" breakdown). */
+  footnote?: string;
   children: ReactNode;
 };
 
-export function Provenance({ source, confidence, capturedAt, children }: ProvenanceProps) {
+export function Provenance({ source, confidence, capturedAt, footnote, children }: ProvenanceProps) {
   const lines = [`source: ${source}`];
   if (confidence != null) lines.push(`confidence: ${(confidence * 100).toFixed(0)}%`);
   if (capturedAt) lines.push(`captured: ${capturedAt}`);
+  if (footnote) lines.push(footnote);
   return (
     <span
       title={lines.join('\n')}

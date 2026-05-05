@@ -280,6 +280,40 @@ class SnapshotEarliest(BaseModel):
     total_usd: float | None = None
 
 
+class LiabilityRead(BaseModel):
+    id: int
+    label: str
+    kind: str
+    balance: float
+    as_of: datetime
+    institution_id: int | None = None
+    notes: str | None = None
+    source: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LiabilityCreate(BaseModel):
+    label: str
+    kind: str
+    balance: float = Field(ge=0)
+    as_of: datetime
+    institution_id: int | None = None
+    notes: str | None = None
+
+
+class LiabilityPatch(BaseModel):
+    """All fields optional; only provided fields are applied."""
+
+    label: str | None = None
+    kind: str | None = None
+    balance: float | None = Field(default=None, ge=0)
+    as_of: datetime | None = None
+    institution_id: int | None = None
+    notes: str | None = None
+
+
 class ExportResult(BaseModel):
     """Full JSON dump of user-owned state (architecture Privacy).
 
@@ -294,6 +328,7 @@ class ExportResult(BaseModel):
     positions: list["PositionRead"]
     provenance: list[ProvenanceRead]
     snapshots: list[SnapshotRead]
+    liabilities: list[LiabilityRead] = Field(default_factory=list)
 
 
 # ----- allocation ---------------------------------------------------------
@@ -464,11 +499,14 @@ class DriftThresholds(BaseModel):
 
 class AllocationResult(BaseModel):
     total: float
-    # Sum of every classified position's value, regardless of the
-    # ``investable`` flag. ``total`` above is the Investment Portfolio
-    # (drives every percentage and rebalance suggestion); ``net_worth``
-    # is shown on the hero alongside it. Defaults to 0.0 for back-compat
-    # with serialized snapshots that pre-date the field.
+    # ``assets_total`` is the raw sum of every classified position's value
+    # regardless of the ``investable`` flag (what the portfolio owns).
+    # ``liabilities_total`` is the sum of all Liability.balance rows.
+    # ``net_worth`` = assets_total - liabilities_total (true net worth shown
+    # on the hero). All three default to 0.0 for back-compat with serialized
+    # snapshots that pre-date this field.
+    assets_total: float = 0.0
+    liabilities_total: float = 0.0
     net_worth: float = 0.0
     by_asset_class: list[AllocationSlice]
     # Tickers held but not present in data/classifications.yaml. UI flags

@@ -34,14 +34,19 @@ def _position(**overrides: object) -> ExtractedPosition:
 # --- ticker ---------------------------------------------------------------
 
 
-@pytest.mark.parametrize("ticker", ["VTI", "BRK.B", "BTC-USD", "X", "VOOG", "QQQM"])
+@pytest.mark.parametrize(
+    "ticker",
+    # 123VTI is valid: leading digits allowed to store CUSIPs as-is
+    # (see fix(validation): widen ticker regex to allow CUSIPs stored as-is)
+    ["VTI", "BRK.B", "BTC-USD", "X", "VOOG", "QQQM", "123VTI"],
+)
 def test_valid_tickers(ticker: str) -> None:
     assert validate_ticker(ticker) == []
 
 
 @pytest.mark.parametrize(
     "ticker",
-    ["vti", "123VTI", "TOOLONGTICKERXY", "", "VTI!", "VT I", "VTI@NYSE"],
+    ["vti", "TOOLONGTICKERXY", "", "VTI!", "VT I", "VTI@NYSE"],
 )
 def test_invalid_tickers(ticker: str) -> None:
     errors = validate_ticker(ticker)

@@ -111,11 +111,12 @@ def aggregate(
     # property of the ticker, not the position.
     classification_sources: dict[str, str] = {}
     # ``total`` is the Investment Portfolio (drives every percentage and
-    # rebalance suggestion); ``net_worth`` is the full sum across every
-    # classified position regardless of the investable flag, so the hero
-    # can show wealth alongside strategy-relevant totals.
+    # rebalance suggestion); ``assets_total`` is the full sum across every
+    # classified position regardless of the investable flag.
+    # The caller in get_allocation() subtracts liabilities to produce the
+    # true net_worth — aggregate() itself knows nothing about liabilities.
     total = 0.0
-    net_worth = 0.0
+    assets_total = 0.0
 
     for p in positions:
         entry = classify(p.ticker, classifications)
@@ -130,7 +131,7 @@ def aggregate(
             # attached yet (e.g. pre-market-value commit).
             tickers_by_asset[entry.asset_class].append(p.ticker)
             continue
-        net_worth += value
+        assets_total += value
         if non_investable_account_ids and p.account_id in non_investable_account_ids:
             # Account-level exclusion: counts toward Net Worth but not
             # Investment Portfolio. Same semantics as position-level flag.
@@ -283,7 +284,7 @@ def aggregate(
     alts_pct = pct_of(sum(totals_by_asset.get(c, 0.0) for c in ALTS_CLASSES))
 
     summary = FiveNumberSummary(
-        net_worth=net_worth,
+        net_worth=assets_total,
         cash_pct=cash_pct,
         us_equity_pct=us_equity_pct,
         intl_equity_pct=intl_equity_pct,
@@ -292,7 +293,12 @@ def aggregate(
 
     return AllocationResult(
         total=total,
-        net_worth=net_worth,
+        assets_total=assets_total,
+        # net_worth and liabilities_total are patched by the caller
+        # (get_allocation, _write_snapshot) after querying the liabilities
+        # table. aggregate() is intentionally unaware of liabilities.
+        net_worth=assets_total,
+        liabilities_total=0.0,
         by_asset_class=by_asset_class,
         unclassified_tickers=_dedup(unclassified),
         summary=summary,
