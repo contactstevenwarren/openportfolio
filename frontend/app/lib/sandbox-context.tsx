@@ -5,7 +5,6 @@ import {
   useContext,
   useMemo,
   useState,
-  useEffect,
   type ReactNode,
 } from "react";
 import useSWR from "swr";
@@ -19,13 +18,12 @@ import {
 import { bandFromAbs, driftThresholds } from "@/app/lib/allocationTargets";
 
 const STALE_DAYS = 30;
-const DEBOUNCE_MS = 400;
 
 type SandboxCtx = {
   newCash: number;
   setNewCash: (v: number) => void;
-  includeCashExcess: boolean;
-  setIncludeCashExcess: (v: boolean) => void;
+  excessCashRedeploy: number;
+  setExcessCashRedeploy: (v: number) => void;
   simulatedSlices: AllocationSlice[] | undefined;
   moves: RebalanceMove[];
   rebalanceError: boolean;
@@ -36,8 +34,8 @@ type SandboxCtx = {
 const Context = createContext<SandboxCtx>({
   newCash: 0,
   setNewCash: () => {},
-  includeCashExcess: false,
-  setIncludeCashExcess: () => {},
+  excessCashRedeploy: 0,
+  setExcessCashRedeploy: () => {},
   simulatedSlices: undefined,
   moves: [],
   rebalanceError: false,
@@ -51,13 +49,7 @@ export function useSandbox(): SandboxCtx {
 
 export function SandboxProvider({ children }: { children: ReactNode }) {
   const [newCash, setNewCash] = useState(0);
-  const [debouncedCash, setDebouncedCash] = useState(0);
-  const [includeCashExcess, setIncludeCashExcess] = useState(false);
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedCash(newCash), DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [newCash]);
+  const [excessCashRedeploy, setExcessCashRedeploy] = useState(0);
 
   const { data: allocation } = useSWR<AllocationResult>(
     "/api/allocation",
@@ -65,11 +57,11 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
   );
   const { data: positions } = useSWR("/api/positions", () => api.positions());
   const { data: rebalance, error: rebalanceErr } = useSWR(
-    debouncedCash > 0
-      ? `/api/rebalance?mode=new_money&amount=${debouncedCash}`
+    newCash > 0
+      ? `/api/rebalance?mode=new_money&amount=${newCash}`
       : null,
-    debouncedCash > 0
-      ? () => api.rebalance("new_money", debouncedCash)
+    newCash > 0
+      ? () => api.rebalance("new_money", newCash)
       : null,
   );
 
@@ -107,16 +99,18 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
         };
       });
 
-    // Compute excess-cash deltas upfront (undefined when toggle is off or no excess)
+    // Compute excess-cash deltas upfront (undefined when no excess is being redeployed)
     let excessDeltas: Record<string, number> | undefined;
-    if (includeCashExcess) {
+    if (excessCashRedeploy > 0) {
       const cashSlice = allocation.by_asset_class.find(
         (s) => s.name.toLowerCase() === "cash",
       );
       if (cashSlice?.target_pct != null) {
         const cashTarget = (cashSlice.target_pct / 100) * allocation.total;
         const cashExcess = Math.max(0, cashSlice.value - cashTarget);
-        if (cashExcess >= 1) {
+        // Defensive clamp: user may have typed more than is currently available
+        const toDeploy = Math.min(excessCashRedeploy, cashExcess);
+        if (toDeploy >= 1) {
           const nonCash = allocation.by_asset_class.filter((s) => s.name !== cashSlice.name);
           const deficits = nonCash.map((s) =>
             Math.max(0, ((s.target_pct ?? 0) / 100) * allocation.total - s.value),
@@ -124,11 +118,11 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
           const totalDeficit = deficits.reduce((a, b) => a + b, 0);
           if (totalDeficit > 0) {
             excessDeltas = {};
-            const deploy = Math.min(cashExcess, totalDeficit);
+            const deploy = Math.min(toDeploy, totalDeficit);
             nonCash.forEach((s, i) => {
               excessDeltas![s.name] = (deploy * deficits[i]) / totalDeficit;
             });
-            const leftover = cashExcess - totalDeficit;
+            const leftover = toDeploy - totalDeficit;
             if (leftover > 0) {
               const sumTargets = nonCash.reduce((s, h) => s + (h.target_pct ?? 0) / 100, 0);
               if (sumTargets > 0) {
@@ -139,13 +133,13 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
                 });
               }
             }
-            excessDeltas[cashSlice.name] = -cashExcess;
+            excessDeltas[cashSlice.name] = -toDeploy;
           }
         }
       }
     }
 
-    if (debouncedCash > 0) {
+    if (newCash > 0) {
       // API still loading — show excess-cash result if available, else blank
       if (!rebalance?.moves) {
         return excessDeltas ? applyDeltas(excessDeltas, allocation.total) : undefined;
@@ -158,12 +152,12 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
           combined[s.name] = (combined[s.name] ?? 0) + (excessDeltas![s.name] ?? 0);
         });
       }
-      return applyDeltas(combined, allocation.total + debouncedCash);
+      return applyDeltas(combined, allocation.total + newCash);
     }
 
     // No new cash — excess-cash only
     return excessDeltas ? applyDeltas(excessDeltas, allocation.total) : undefined;
-  }, [allocation, rebalance, debouncedCash, includeCashExcess]);
+  }, [allocation, rebalance, newCash, excessCashRedeploy]);
 
   const moves: RebalanceMove[] = useMemo(
     () =>
@@ -180,8 +174,8 @@ export function SandboxProvider({ children }: { children: ReactNode }) {
       value={{
         newCash,
         setNewCash,
-        includeCashExcess,
-        setIncludeCashExcess,
+        excessCashRedeploy,
+        setExcessCashRedeploy,
         simulatedSlices,
         moves,
         rebalanceError: !!rebalanceErr,

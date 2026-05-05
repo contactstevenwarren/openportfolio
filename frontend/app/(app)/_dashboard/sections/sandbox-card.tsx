@@ -43,7 +43,7 @@ function computePlan(
   currentTotal: number,
   mode: Mode,
   newCash: number,
-  includeCashExcess: boolean,
+  excessCashAmount: number,
 ): Plan {
   const newTotal = currentTotal + newCash;
 
@@ -69,7 +69,8 @@ function computePlan(
   const cashValue = cashHolding?.value ?? 0;
   const cashOverweight = cashValue > cashTarget;
   const cashExcess = Math.max(0, cashValue - cashTarget);
-  const cashDrawdown = includeCashExcess && cashOverweight ? cashExcess : 0;
+  // Use exactly what the user requested, clamped to available
+  const cashDrawdown = cashOverweight ? Math.min(excessCashAmount, cashExcess) : 0;
   const totalAvailable = newCash + cashDrawdown;
 
   const getDeficit = (h: AssetHolding) =>
@@ -116,8 +117,9 @@ function getHero(
   plan: Plan,
   newCash: number,
   cashName: string | null,
+  excessCashAmount: number,
 ): { headline: string; sub: string } {
-  const { buyTotal, sellTotal, assets, cashExcess } = plan;
+  const { buyTotal, sellTotal, assets } = plan;
   const cashAction = assets.find((a) => a.name === cashName)?.action ?? 0;
   const usedCash = -cashAction;
 
@@ -134,8 +136,7 @@ function getHero(
   }
 
   if (buyTotal < 1 && Math.abs(cashAction) < 1) {
-    const hint = cashExcess > 0 ? " or enable rebalancing of excess cash" : "";
-    return { headline: "Nothing to deploy", sub: `Add new cash above${hint} to begin.` };
+    return { headline: "Nothing to deploy", sub: "Add new cash or excess cash to begin." };
   }
   if (newCash > 0 && usedCash > 0.5)
     return {
@@ -157,69 +158,36 @@ function getHero(
   return { headline: `Buy ${formatUsd(buyTotal)}`, sub: "" };
 }
 
-function computeSuggestedCash(
-  holdings: AssetHolding[],
-  currentTotal: number,
-  cashName: string | null,
-  includeCashExcess: boolean,
-): number {
-  const cashHolding = holdings.find((h) => h.name === cashName);
-  const cashOverweight = cashHolding
-    ? cashHolding.value > (cashHolding.targetPct / 100) * currentTotal
-    : false;
-
-  function residual(x: number): number {
-    const newTotal = currentTotal + x;
-    const cashTarget = cashHolding ? (cashHolding.targetPct / 100) * newTotal : 0;
-    const cashExcess = cashHolding ? Math.max(0, cashHolding.value - cashTarget) : 0;
-    const cashDrawdown = includeCashExcess ? cashExcess : 0;
-    const totalAvailable = x + cashDrawdown;
-    const totalDeficit = holdings.reduce((s, h) => {
-      if (h.name === cashName && cashOverweight) return s;
-      return s + Math.max(0, (h.targetPct / 100) * newTotal - h.value);
-    }, 0);
-    return totalAvailable - totalDeficit;
-  }
-
-  if (residual(0) >= 0) return 0;
-
-  let lo = 0, hi = currentTotal * 2;
-  for (let i = 0; i < 60; i++) {
-    const mid = (lo + hi) / 2;
-    if (residual(mid) >= 0) hi = mid;
-    else lo = mid;
-  }
-  return Math.round(hi);
-}
-
 function getWhyText(
   mode: Mode,
   plan: Plan,
   newCash: number,
-  includeCashExcess: boolean,
+  excessCashAmount: number,
 ): string {
   if (mode === "rebalance")
     return "Full rebalance moves every asset class to its exact target percentage at the current portfolio total. Sells are allowed alongside buys.";
   const { cashExcess } = plan;
-  const usingCash = includeCashExcess && cashExcess > 0;
+  const usingCash = excessCashAmount > 0 && cashExcess > 0;
   if (newCash === 0 && !usingCash && cashExcess > 0)
     return "In buy-only mode, fixing a cash overweight requires diluting it with new buys. Without new cash and without permission to draw down existing cash, there is nothing to deploy.";
   if (usingCash && newCash === 0)
-    return `Cash above target (${formatUsd(cashExcess)}) is redirected to underweight assets. The portfolio total stays the same — only the mix changes.`;
+    return `Cash above target (${formatUsd(Math.min(excessCashAmount, cashExcess))}) is redirected to underweight assets. The portfolio total stays the same — only the mix changes.`;
   return "Available funds first close any underweight gaps. Any leftover is distributed by target weight so the portfolio remains balanced.";
 }
 
 function SandboxCardInner() {
-  const { rebalanceError, isStale, lastAsOf, setNewCash, includeCashExcess, setIncludeCashExcess } = useSandbox();
+  const { rebalanceError, isStale: positionsStale, lastAsOf, setNewCash, setExcessCashRedeploy } = useSandbox();
   const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>(() =>
     searchParams.get("tab") === "rebalance" ? "rebalance" : "deploy"
   );
-  const [inputValue, setInputValue] = useState("");
+  const [newCashInput, setNewCashInput] = useState("");
+  const [excessCashInput, setExcessCashInput] = useState("");
+  const [isPlanBuilt, setIsPlanBuilt] = useState(false);
+  const [isPlanStale, setIsPlanStale] = useState(false);
   const [whyOpen, setWhyOpen] = useState(false);
 
   // React to ?tab=rebalance being added/changed after initial mount
-  // (e.g. same-page navigation from hero CTA).
   useEffect(() => {
     if (searchParams.get("tab") === "rebalance") {
       setMode("rebalance");
@@ -232,10 +200,15 @@ function SandboxCardInner() {
     api.allocation,
   );
 
-  const newCash = Math.max(
+  const parsedNewCash = Math.max(
     0,
-    parseFloat(inputValue.replace(/[^0-9.]/g, "")) || 0,
+    parseFloat(newCashInput.replace(/[^0-9.]/g, "")) || 0,
   );
+  const parsedExcessCash = Math.max(
+    0,
+    parseFloat(excessCashInput.replace(/[^0-9.]/g, "")) || 0,
+  );
+
   const currentTotal = allocationData?.total ?? 0;
 
   const holdings: AssetHolding[] = (allocationData?.by_asset_class ?? [])
@@ -254,37 +227,77 @@ function SandboxCardInner() {
   const cashOverweight = cashHolding
     ? cashHolding.value > (cashHolding.targetPct / 100) * currentTotal
     : false;
+  const excessCap = cashHolding && cashOverweight
+    ? Math.max(0, cashHolding.value - (cashHolding.targetPct / 100) * currentTotal)
+    : 0;
 
-  const plan = computePlan(holdings, currentTotal, mode, newCash, includeCashExcess);
-  const suggestedNewCash = computeSuggestedCash(
-    holdings, currentTotal, cashName, includeCashExcess,
-  );
-  const suggestedCashDrawdown = (() => {
-    if (!includeCashExcess || !cashHolding) return 0;
-    const cashTarget = (cashHolding.targetPct / 100) * (currentTotal + suggestedNewCash);
-    return Math.max(0, cashHolding.value - cashTarget);
-  })();
-  const suggestedTotal = suggestedNewCash + suggestedCashDrawdown;
-  const isToggleOn = includeCashExcess && cashOverweight;
-  const showActivePlan = mode === "rebalance" || newCash > 0 || isToggleOn;
-  const hero = getHero(mode, plan, newCash, cashName);
+  // Plan computed from the last committed context values (via useSandbox newCash / excessCashRedeploy)
+  // For display we use parsedNewCash / parsedExcessCash only after Build is clicked — but
+  // we keep a committed copy for the plan display. The plan itself is kept in local state
+  // to freeze it until Rebuild is clicked.
+  const [committedNewCash, setCommittedNewCash] = useState(0);
+  const [committedExcess, setCommittedExcess] = useState(0);
+
+  const plan = computePlan(holdings, currentTotal, mode, committedNewCash, committedExcess);
+  const hero = getHero(mode, plan, committedNewCash, cashName, committedExcess);
+
+  const inEmptyState = parsedNewCash === 0 && parsedExcessCash === 0;
+  const showPlan = mode === "rebalance" || (isPlanBuilt && !inEmptyState);
+
+  // For rebalance mode, compute plan directly from current (no committed values needed)
+  const rebalancePlan = mode === "rebalance"
+    ? computePlan(holdings, currentTotal, "rebalance", 0, 0)
+    : null;
+  const rebalanceHero = rebalancePlan
+    ? getHero("rebalance", rebalancePlan, 0, cashName, 0)
+    : null;
+
+  const displayPlan = mode === "rebalance" ? (rebalancePlan ?? plan) : plan;
+  const displayHero = mode === "rebalance" ? (rebalanceHero ?? hero) : hero;
 
   function handleModeChange(m: Mode) {
     setMode(m);
     setWhyOpen(false);
-    setInputValue("");
+    setNewCashInput("");
+    setExcessCashInput("");
+    setIsPlanBuilt(false);
+    setIsPlanStale(false);
+    setCommittedNewCash(0);
+    setCommittedExcess(0);
     setNewCash(0);
-    setIncludeCashExcess(false);
+    setExcessCashRedeploy(0);
   }
 
-  function handleCashChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setInputValue(e.target.value);
-    const parsed = Math.max(
-      0,
-      parseFloat(e.target.value.replace(/[^0-9.]/g, "")) || 0,
-    );
-    setNewCash(parsed);
+  function handleNewCashChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setNewCashInput(e.target.value);
+    if (isPlanBuilt) setIsPlanStale(true);
   }
+
+  function handleExcessCashChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setExcessCashInput(e.target.value);
+    if (isPlanBuilt) setIsPlanStale(true);
+  }
+
+  function handleExcessCashBlur() {
+    if (parsedExcessCash > excessCap) {
+      setExcessCashInput(excessCap.toFixed(0));
+    }
+  }
+
+  function handleBuildPlan() {
+    const clampedExcess = Math.min(parsedExcessCash, excessCap);
+    setCommittedNewCash(parsedNewCash);
+    setCommittedExcess(clampedExcess);
+    setNewCash(parsedNewCash);
+    setExcessCashRedeploy(clampedExcess);
+    setIsPlanBuilt(true);
+    setIsPlanStale(false);
+    setWhyOpen(false);
+  }
+
+  const ctaDisabled = inEmptyState;
+  const ctaLabel = isPlanStale ? "Rebuild plan" : "Build plan";
+  const showCta = !isPlanBuilt || isPlanStale || inEmptyState;
 
   return (
     <Card id="rebalance" className="h-full">
@@ -319,7 +332,7 @@ function SandboxCardInner() {
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">
-        {isStale && (
+        {positionsStale && (
           <div className="rounded-md bg-warning-soft px-3 py-2 text-body-sm text-warning">
             ⚠ Positions last updated {lastAsOf} — older than 30 days. Guidance
             is approximate.
@@ -339,44 +352,16 @@ function SandboxCardInner() {
         )}
 
         {mode === "deploy" && (
-          <button
-            type="button"
-            disabled={!cashOverweight}
-            onClick={() => setIncludeCashExcess(!includeCashExcess)}
-            className="flex items-center justify-between gap-3 py-1.5 text-left text-body-sm disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <span>
-              Redeploy excess cash
-              {cashOverweight && (
-                <span className="ml-1.5 text-muted-foreground tabular-nums">
-                  ({formatUsd(plan.cashExcess)})
-                </span>
-              )}
-            </span>
-            <span
-              className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${
-                isToggleOn ? "bg-accent" : "bg-input"
-              }`}
-            >
-              <span
-                className={`absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-background shadow transition-transform ${
-                  isToggleOn ? "translate-x-3" : "translate-x-0"
-                }`}
-              />
-            </span>
-          </button>
-        )}
-
-        {mode === "deploy" && (
-          <div>
-            <label
-              htmlFor="sandbox-cash"
-              className="mb-1.5 block text-label text-muted-foreground"
-            >
-              New cash to deploy
-            </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
+          <div className="grid grid-cols-2 gap-3">
+            {/* New cash to deploy */}
+            <div>
+              <label
+                htmlFor="sandbox-cash"
+                className="mb-1.5 block text-label text-muted-foreground"
+              >
+                New cash to deploy
+              </label>
+              <div className="relative">
                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mono text-muted-foreground">
                   $
                 </span>
@@ -385,132 +370,173 @@ function SandboxCardInner() {
                   type="text"
                   inputMode="decimal"
                   placeholder="0"
-                  value={inputValue}
-                  onChange={handleCashChange}
+                  value={newCashInput}
+                  onChange={handleNewCashChange}
                   className="w-full rounded-md border border-input bg-transparent py-2 pl-7 pr-3 text-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
-              {suggestedTotal >= 1 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    const formatted = suggestedNewCash.toFixed(0);
-                    setInputValue(formatted);
-                    setNewCash(suggestedNewCash);
-                  }}
-                  className="tabular-nums"
-                >
-                  Use {formatUsd(suggestedTotal)}
-                </Button>
-              )}
             </div>
-            {suggestedTotal >= 1 && (
+
+            {/* Excess cash to redeploy */}
+            <div>
+              <label
+                htmlFor="sandbox-excess"
+                className="mb-1.5 block text-label text-muted-foreground"
+              >
+                Excess cash to redeploy
+              </label>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mono text-muted-foreground">
+                  $
+                </span>
+                <input
+                  id="sandbox-excess"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={excessCashInput}
+                  onChange={handleExcessCashChange}
+                  onBlur={handleExcessCashBlur}
+                  disabled={!cashOverweight}
+                  className="w-full rounded-md border border-input bg-transparent py-2 pl-7 pr-3 text-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              </div>
               <p className="mt-1.5 text-xs text-muted-foreground">
-                to close all allocation gaps
+                {cashOverweight
+                  ? `up to ${formatUsd(excessCap)} above target`
+                  : "No excess cash currently"}
               </p>
-            )}
+            </div>
           </div>
         )}
 
-        {showActivePlan && (
-          <>
-            <div className="rounded-lg bg-muted px-4 py-4">
-              <p className="mb-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">
-                Plan
-              </p>
-              <p className="text-xl font-medium leading-snug tracking-tight tabular-nums">
-                {hero.headline}
-              </p>
-              {hero.sub && (
-                <p className="mt-2 text-sm text-muted-foreground tabular-nums">
-                  {hero.sub}
-                </p>
-              )}
-            </div>
+        {mode === "deploy" && showCta && (
+          <Button
+            type="button"
+            disabled={ctaDisabled}
+            onClick={handleBuildPlan}
+            className="w-full"
+          >
+            {ctaLabel}
+          </Button>
+        )}
 
-            {holdings.length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="pb-2 text-label text-muted-foreground">
-                        Asset class
-                      </th>
-                      <th className="pb-2 text-right text-label text-muted-foreground">
-                        After
-                      </th>
-                      <th className="pb-2 text-right text-label text-muted-foreground">
-                        Target
-                      </th>
-                      <th className="pb-2 text-right text-label text-muted-foreground">
-                        Action
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {plan.assets.map((asset) => {
-                      const { action } = asset;
-                      const isCash = asset.name === cashName;
-                      let actionNode: React.ReactNode;
-                      if (Math.abs(action) < 1) {
-                        actionNode = (
-                          <span className="text-muted-foreground">—</span>
-                        );
-                      } else if (isCash) {
-                        if (action > 0)
+        {mode === "deploy" && !isPlanBuilt && (
+          <p className="text-center text-body-sm text-muted-foreground">
+            Enter an amount and click Build plan to see your action plan.
+          </p>
+        )}
+
+        {showPlan && (
+          <>
+            {mode === "deploy" && isPlanStale && !inEmptyState && (
+              <p className="text-body-sm text-muted-foreground">
+                Based on previous inputs — click Rebuild to refresh.
+              </p>
+            )}
+
+            <div className={mode === "deploy" && isPlanStale && !inEmptyState ? "opacity-50" : ""}>
+              <div className="rounded-lg bg-muted px-4 py-4">
+                <p className="mb-1.5 text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                  Plan
+                </p>
+                <p className="text-xl font-medium leading-snug tracking-tight tabular-nums">
+                  {displayHero.headline}
+                </p>
+                {displayHero.sub && (
+                  <p className="mt-2 text-sm text-muted-foreground tabular-nums">
+                    {displayHero.sub}
+                  </p>
+                )}
+              </div>
+
+              {holdings.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="pb-2 text-label text-muted-foreground">
+                          Asset class
+                        </th>
+                        <th className="pb-2 text-right text-label text-muted-foreground">
+                          After
+                        </th>
+                        <th className="pb-2 text-right text-label text-muted-foreground">
+                          Target
+                        </th>
+                        <th className="pb-2 text-right text-label text-muted-foreground">
+                          Action
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {displayPlan.assets.map((asset) => {
+                        const { action } = asset;
+                        const isCash = asset.name === cashName;
+                        let actionNode: React.ReactNode;
+                        if (Math.abs(action) < 1) {
                           actionNode = (
-                            <span className="font-medium text-muted-foreground">
-                              Add {formatUsd(action)}
+                            <span className="text-muted-foreground">—</span>
+                          );
+                        } else if (isCash) {
+                          if (action > 0)
+                            actionNode = (
+                              <span className="font-medium text-muted-foreground">
+                                Add {formatUsd(action)}
+                              </span>
+                            );
+                          else if (mode === "rebalance")
+                            actionNode = (
+                              <span className="font-medium text-destructive">
+                                Sell {formatUsd(-action)}
+                              </span>
+                            );
+                          else
+                            actionNode = (
+                              <span className="font-medium text-muted-foreground">
+                                Use {formatUsd(-action)}
+                              </span>
+                            );
+                        } else if (action > 0) {
+                          actionNode = (
+                            <span className="font-medium text-foreground">
+                              Buy {formatUsd(action)}
                             </span>
                           );
-                        else if (mode === "rebalance")
+                        } else {
                           actionNode = (
                             <span className="font-medium text-destructive">
                               Sell {formatUsd(-action)}
                             </span>
                           );
-                        else
-                          actionNode = (
-                            <span className="font-medium text-muted-foreground">
-                              Use {formatUsd(-action)}
-                            </span>
-                          );
-                      } else if (action > 0) {
-                        actionNode = (
-                          <span className="font-medium text-foreground">
-                            Buy {formatUsd(action)}
-                          </span>
-                        );
-                      } else {
-                        actionNode = (
-                          <span className="font-medium text-destructive">
-                            Sell {formatUsd(-action)}
-                          </span>
-                        );
-                      }
+                        }
 
-                      return (
-                        <tr key={asset.name}>
-                          <td className="py-3 text-body-sm text-foreground">
-                            {asset.label}
-                          </td>
-                          <td className="py-3 text-right text-mono-sm tabular-nums text-muted-foreground">
-                            {formatPct((asset.value + asset.action) / (currentTotal + newCash))}
-                          </td>
-                          <td className="py-3 text-right text-mono-sm tabular-nums text-muted-foreground">
-                            {formatPct(asset.targetPct / 100)}
-                          </td>
-                          <td className="py-3 text-right text-mono-sm tabular-nums">
-                            {actionNode}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                        const afterTotal = mode === "deploy"
+                          ? currentTotal + committedNewCash
+                          : currentTotal;
+
+                        return (
+                          <tr key={asset.name}>
+                            <td className="py-3 text-body-sm text-foreground">
+                              {asset.label}
+                            </td>
+                            <td className="py-3 text-right text-mono-sm tabular-nums text-muted-foreground">
+                              {formatPct(afterTotal > 0 ? (asset.value + asset.action) / afterTotal : 0)}
+                            </td>
+                            <td className="py-3 text-right text-mono-sm tabular-nums text-muted-foreground">
+                              {formatPct(asset.targetPct / 100)}
+                            </td>
+                            <td className="py-3 text-right text-mono-sm tabular-nums">
+                              {actionNode}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
 
             <div className="mt-auto flex items-center justify-between gap-4 border-t border-border pt-4">
               <button
@@ -527,7 +553,7 @@ function SandboxCardInner() {
 
             {whyOpen && (
               <p className="rounded-lg bg-muted px-4 py-3 text-body-sm text-muted-foreground">
-                {getWhyText(mode, plan, newCash, includeCashExcess)}
+                {getWhyText(mode, displayPlan, committedNewCash, committedExcess)}
               </p>
             )}
           </>
