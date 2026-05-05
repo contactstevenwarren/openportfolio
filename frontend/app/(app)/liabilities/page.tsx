@@ -12,6 +12,7 @@ import { api, type Liability, type LiabilityCreate, type LiabilityPatch } from "
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { FreeformCombobox } from "@/app/components/ui/freeform-combobox";
+import { Provenance } from "@/app/lib/provenance";
 import { formatUsd } from "@/app/(app)/_dashboard/mocks";
 import {
   AlertDialog,
@@ -139,7 +140,7 @@ function AddForm({ onSaved }: AddFormProps) {
       reset();
       onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
+      setError(e instanceof Error ? e.message : "Couldn't save \u2014 try again.");
     } finally {
       setBusy(false);
     }
@@ -187,7 +188,9 @@ function AddForm({ onSaved }: AddFormProps) {
           <label className="text-body-sm font-medium">
             Label{" "}
             {labelAutoFilled && (
-              <span className="text-muted-foreground font-normal text-xs">auto</span>
+              <span className="text-body-sm font-normal text-muted-foreground">
+                · auto-filled
+              </span>
             )}
           </label>
           <Input
@@ -299,7 +302,7 @@ function EditRow({ row, onSaved, onDeleted }: EditRowProps) {
       setEditing(false);
       onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
+      setError(e instanceof Error ? e.message : "Couldn't save \u2014 try again.");
     } finally {
       setBusy(false);
     }
@@ -311,7 +314,7 @@ function EditRow({ row, onSaved, onDeleted }: EditRowProps) {
       await api.deleteLiability(row.id);
       onDeleted();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Delete failed");
+      setError(e instanceof Error ? e.message : "Couldn't delete \u2014 try again.");
       setBusy(false);
     }
   }
@@ -320,15 +323,19 @@ function EditRow({ row, onSaved, onDeleted }: EditRowProps) {
     return (
       <tr className="border-b border-border last:border-0">
         <td className="py-3 pr-4 text-body-sm font-medium">{row.label}</td>
-        <td className="py-3 pr-4 text-body-sm text-muted-foreground">{row.kind}</td>
+        <td className="py-3 pr-4 text-body-sm text-muted-foreground">
+          {kindDisplayLabel(row.kind)}
+        </td>
         <td className="py-3 pr-4 text-body-sm font-mono tabular-nums text-right">
-          {formatUsd(row.balance)}
+          <Provenance source={row.source} capturedAt={row.as_of}>
+            {formatUsd(row.balance)}
+          </Provenance>
         </td>
         <td className="py-3 pr-4 text-body-sm text-muted-foreground whitespace-nowrap">
           {fmtDate(row.as_of)}
         </td>
         <td className="py-3 text-body-sm text-muted-foreground hidden md:table-cell">
-          {row.notes ?? "—"}
+          {row.notes ?? "\u2014"}
         </td>
         <td className="py-3 pl-4">
           <div className="flex items-center gap-1 justify-end">
@@ -436,7 +443,7 @@ function EditRow({ row, onSaved, onDeleted }: EditRowProps) {
             disabled={busy}
             aria-label="Save"
           >
-            <Check className="h-3.5 w-3.5 text-success" />
+            <Check className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant="ghost"
@@ -483,26 +490,26 @@ export default function LiabilitiesPage() {
         </p>
         <h1 className="text-h2">Liabilities</h1>
         <p className="text-body-sm text-muted-foreground">
-          Debts subtracted from your assets to compute true net worth. Does not
-          affect portfolio allocation, drift, or rebalance.
+          Debts subtracted from your assets to compute net worth. Excluded from
+          allocation, drift, and rebalance views.
         </p>
       </header>
 
       {liabilities.length > 0 && (
-        <div className="flex gap-6">
-          <div className="flex flex-col gap-0.5">
+        <div className="flex gap-12">
+          <div className="flex flex-col gap-1">
             <p className="text-label uppercase tracking-wide text-muted-foreground">
               Total liabilities
             </p>
-            <p className="text-display font-mono tabular-nums text-destructive">
+            <p className="text-h1 font-mono tabular-nums text-foreground">
               {formatUsd(total)}
             </p>
           </div>
-          <div className="flex flex-col gap-0.5">
+          <div className="flex flex-col gap-1">
             <p className="text-label uppercase tracking-wide text-muted-foreground">
               Count
             </p>
-            <p className="text-display font-mono tabular-nums">
+            <p className="text-h1 font-mono tabular-nums text-foreground">
               {liabilities.length}
             </p>
           </div>
@@ -513,7 +520,7 @@ export default function LiabilitiesPage() {
 
       {error && (
         <p className="text-body-sm text-destructive">
-          Could not load liabilities: {error.message}
+          Couldn&apos;t load liabilities. {error.message}
         </p>
       )}
 
@@ -571,7 +578,7 @@ export default function LiabilitiesPage() {
                 <td colSpan={2} className="py-2.5 pl-4 text-body-sm font-medium">
                   Total
                 </td>
-                <td className="py-2.5 pr-4 text-body-sm font-mono tabular-nums text-right font-medium text-destructive">
+                <td className="py-2.5 pr-4 text-body-sm font-mono tabular-nums text-right font-medium">
                   {formatUsd(total)}
                 </td>
                 <td colSpan={3} />
