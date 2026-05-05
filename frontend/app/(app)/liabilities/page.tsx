@@ -55,19 +55,40 @@ type AddFormProps = {
   onSaved: () => void;
 };
 
+function kindLabel(value: string): string {
+  return KIND_SUGGESTIONS.find((s) => s.value === value)?.label ?? value;
+}
+
 function AddForm({ onSaved }: AddFormProps) {
   const [open, setOpen] = React.useState(false);
-  const [label, setLabel] = React.useState("");
   const [kind, setKind] = React.useState("");
+  const [label, setLabel] = React.useState("");
+  // Track whether the label was auto-filled so we know when to clobber it.
+  const [labelAutoFilled, setLabelAutoFilled] = React.useState(false);
   const [balance, setBalance] = React.useState("");
   const [asOf, setAsOf] = React.useState(todayIso().slice(0, 10));
   const [notes, setNotes] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  function handleKindChange(v: string) {
+    setKind(v);
+    // Auto-fill label when it's blank or was previously auto-filled.
+    if (!label || labelAutoFilled) {
+      setLabel(kindLabel(v));
+      setLabelAutoFilled(true);
+    }
+  }
+
+  function handleLabelChange(v: string) {
+    setLabel(v);
+    setLabelAutoFilled(false); // user typed → stop clobbering
+  }
+
   function reset() {
-    setLabel("");
     setKind("");
+    setLabel("");
+    setLabelAutoFilled(false);
     setBalance("");
     setAsOf(todayIso().slice(0, 10));
     setNotes("");
@@ -90,7 +111,7 @@ function AddForm({ onSaved }: AddFormProps) {
     setError(null);
     try {
       const body: LiabilityCreate = {
-        label: label.trim(),
+        label: (label.trim() || kindLabel(kind)).trim(),
         kind: kind.trim(),
         balance: bal,
         as_of: new Date(asOf).toISOString(),
@@ -135,22 +156,26 @@ function AddForm({ onSaved }: AddFormProps) {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="flex flex-col gap-1">
-          <label className="text-body-sm font-medium">Label</label>
-          <Input
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="e.g. Primary mortgage"
-            required
-          />
-        </div>
-        <div className="flex flex-col gap-1">
           <label className="text-body-sm font-medium">Kind</label>
           <FreeformCombobox
             value={kind}
-            onChange={setKind}
+            onChange={handleKindChange}
             suggestions={KIND_SUGGESTIONS}
-            placeholder="mortgage, credit_card, …"
+            placeholder="Select debt type…"
             createLabel="kind"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-body-sm font-medium">
+            Label{" "}
+            {labelAutoFilled && (
+              <span className="text-muted-foreground font-normal text-xs">auto</span>
+            )}
+          </label>
+          <Input
+            value={label}
+            onChange={(e) => handleLabelChange(e.target.value)}
+            placeholder={kind ? kindLabel(kind) : "e.g. Primary mortgage"}
           />
         </div>
         <div className="flex flex-col gap-1">
