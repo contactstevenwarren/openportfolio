@@ -6,7 +6,7 @@ inputs -- they produce annotations that the review UI surfaces so the
 user can fix rows before commit.
 
 Rules implemented for v0.1 M2:
-- ticker matches ^[A-Z][A-Z0-9.-]{0,9}$ (plan + roadmap data-model)
+- ticker matches ^[A-Z0-9][A-Z0-9.-]{0,9}$ — leading digit allowed to store CUSIPs as-is
 - shares > 0 and below an implausibility ceiling
 - cost_basis, if present, >= 0 and below an implausibility ceiling
 - source_span contains no run of 6+ consecutive digits (PII heuristic;
@@ -20,7 +20,7 @@ import re
 
 from .schemas import ExtractedPosition
 
-TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,9}$")
 LONG_DIGIT_RUN_RE = re.compile(r"\d{6,}")
 
 # Plausibility ceilings. Chosen wide enough that a real position never
