@@ -1,24 +1,30 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import { PieChart, Pie, Cell } from "recharts";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, ChevronLeft } from "lucide-react";
 
-import { api, type AllocationResult, type TargetsPayload } from "@/app/lib/api";
+import {
+  api,
+  type AllocationResult,
+  type AllocationSlice,
+  type TargetsPayload,
+} from "@/app/lib/api";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Slider } from "@/app/components/ui/slider";
 import { Provenance } from "@/app/lib/provenance";
+import { humanize } from "@/app/lib/labels";
 import {
   ASSET_CLASS_COLOR,
   formatPct,
   type AssetClass,
 } from "@/app/(app)/_dashboard/mocks";
-import { NAME_TO_CLASS } from "@/app/(app)/_dashboard/sections/donut-card";
+import { NAME_TO_CLASS, meaningfulChildren as meaningfulChildrenSlice } from "@/app/(app)/_dashboard/sections/donut-card";
 
-// ── L1 canonical class list ────────────────────────────────────────────────
+// ── Shared types ──────────────────────────────────────────────────────────────
 
 type L1Class = {
   key: string;
@@ -72,22 +78,13 @@ const PRESETS: Preset[] = [
   },
 ];
 
-// ── Residual-row coupling ──────────────────────────────────────────────────
-//
-// Edit rule: when user changes row X to newPct, exactly one other row (the
-// "absorber") takes the full delta; all 5 remaining rows stay put. Absorber
-// is the least-recently-edited row (ties break to bottom of L1_CLASSES).
-// If the absorber can't legally take the delta (would go <0 or >100), the
-// edit is rejected — the slider snaps back to its previous value.
+// ── Shared math helpers ──────────────────────────────────────────────────────
 
 function touchIndex(key: string, touchOrder: string[]): number {
-  const idx = touchOrder.lastIndexOf(key);
-  return idx === -1 ? -1 : idx;
+  return touchOrder.lastIndexOf(key);
 }
 
-// Least-recently-edited row ≠ editedKey; ties → bottom of L1_CLASSES.
-function pickResidual(touchOrder: string[], editedKey: string): string {
-  const keys = L1_CLASSES.map((c) => c.key);
+function pickResidual(keys: string[], touchOrder: string[], editedKey: string): string {
   const candidates = keys.filter((k) => k !== editedKey);
   let bestKey = candidates[candidates.length - 1];
   let bestTouch = touchIndex(bestKey, touchOrder);
@@ -96,7 +93,6 @@ function pickResidual(touchOrder: string[], editedKey: string): string {
     const k = candidates[i];
     const t = touchIndex(k, touchOrder);
     const pos = keys.indexOf(k);
-    // Prefer lower touch index (less-recently edited); ties → higher pos (bottom wins).
     if (t < bestTouch || (t === bestTouch && pos > bestPos)) {
       bestKey = k;
       bestTouch = t;
@@ -106,9 +102,7 @@ function pickResidual(touchOrder: string[], editedKey: string): string {
   return bestKey;
 }
 
-// Which row will absorb the NEXT edit if the user clicks any other row?
-function displayResidual(touchOrder: string[]): string {
-  const keys = L1_CLASSES.map((c) => c.key);
+function displayResidual(keys: string[], touchOrder: string[]): string {
   let bestKey = keys[keys.length - 1];
   let bestTouch = touchIndex(bestKey, touchOrder);
   let bestPos = keys.length - 1;
@@ -130,17 +124,18 @@ function addTouch(order: string[], k: string): string[] {
 
 function applyResidualEdit(
   values: Record<string, number>,
+  keys: string[],
   editedKey: string,
   newPct: number,
   touchOrder: string[],
 ): { values: Record<string, number>; blocked: boolean } {
   const n = Math.max(0, Math.min(100, Math.round(newPct)));
   if (n === values[editedKey]) return { values, blocked: false };
-  const residualKey = pickResidual(touchOrder, editedKey);
+  const residualKey = pickResidual(keys, touchOrder, editedKey);
   const next = { ...values, [editedKey]: n };
   let sumOthers = 0;
-  for (const c of L1_CLASSES) {
-    if (c.key !== residualKey) sumOthers += next[c.key] ?? 0;
+  for (const k of keys) {
+    if (k !== residualKey) sumOthers += next[k] ?? 0;
   }
   const resPct = 100 - sumOthers;
   if (resPct < 0 || resPct > 100) {
@@ -149,8 +144,6 @@ function applyResidualEdit(
   next[residualKey] = resPct;
   return { values: next, blocked: false };
 }
-
-// ── Preset active detection ────────────────────────────────────────────────
 
 function activePresetId(values: Record<string, number>): string | null {
   for (const p of PRESETS) {
@@ -161,8 +154,6 @@ function activePresetId(values: Record<string, number>): string | null {
   return null;
 }
 
-// ── Seed from allocation actuals ───────────────────────────────────────────
-
 function seedFromActuals(alloc: AllocationResult): Record<string, number> {
   const funded = new Map(
     alloc.by_asset_class.filter((s) => s.value > 0).map((s) => [s.name, s.pct]),
@@ -171,19 +162,15 @@ function seedFromActuals(alloc: AllocationResult): Record<string, number> {
   for (const c of L1_CLASSES) {
     raw[c.key] = funded.has(c.key) ? Math.round(funded.get(c.key)!) : 0;
   }
-  // Reconcile to 100: funded classes may not sum to exactly 100 after rounding.
   const total = L1_CLASSES.reduce((a, c) => a + raw[c.key], 0);
   if (total !== 100 && total > 0) {
     const diff = 100 - total;
-    // Dump drift onto largest funded class.
     const largest = L1_CLASSES.filter((c) => raw[c.key] > 0)
       .sort((a, b) => raw[b.key] - raw[a.key])[0];
     if (largest) raw[largest.key] = Math.max(0, raw[largest.key] + diff);
   }
   return raw;
 }
-
-// ── Seed from saved targets ────────────────────────────────────────────────
 
 function seedFromTargets(
   saved: TargetsPayload,
@@ -195,7 +182,6 @@ function seedFromTargets(
   for (const c of L1_CLASSES) {
     raw[c.key] = savedMap.get(c.key) ?? 0;
   }
-  // Ensure exactly 100 (saved data should already be valid; just guard).
   const total = L1_CLASSES.reduce((a, c) => a + raw[c.key], 0);
   if (total !== 100 && total > 0) {
     const diff = 100 - total;
@@ -204,8 +190,6 @@ function seedFromTargets(
   }
   return raw;
 }
-
-// ── Drift helpers ──────────────────────────────────────────────────────────
 
 function formatPp(pp: number): string {
   if (pp === 0) return "—";
@@ -221,15 +205,122 @@ function driftColor(pp: number): string {
   return "text-destructive";
 }
 
-// ── Animation helpers ──────────────────────────────────────────────────────
-
 function lerp(a: number, b: number, t: number): number {
   return Math.round(a + (b - a) * t);
 }
 
-// ── Component ──────────────────────────────────────────────────────────────
+// L2 color: parent brand color mixed with white at stepped lightness.
+function l2Fill(parentCssColor: string, index: number, total: number): string {
+  const mix = total <= 1 ? 0 : Math.min(60, (index * 55) / (total - 1));
+  return `color-mix(in oklab, ${parentCssColor}, white ${mix}%)`;
+}
+
+// ── Shared editor row ─────────────────────────────────────────────────────────
+
+function EditorRow({
+  keyName,
+  label,
+  fill,
+  target,
+  now,
+  isAbsorber,
+  animating,
+  onEdit,
+}: {
+  keyName: string;
+  label: string;
+  fill: string;
+  target: number;
+  now: number;
+  isAbsorber: boolean;
+  animating: boolean;
+  onEdit: (key: string, v: number) => void;
+}) {
+  const drift = target - now;
+  return (
+    <div
+      className={
+        "grid grid-cols-[1fr_minmax(120px,1.5fr)_4.5rem_3rem_3.5rem] items-center gap-x-3 rounded-md px-1 py-2 " +
+        (isAbsorber ? "bg-muted/40" : "hover:bg-muted/40")
+      }
+      title={isAbsorber ? "Absorbs change from your next edit" : undefined}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span
+          className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+          style={{ backgroundColor: fill }}
+          aria-hidden
+        />
+        <span className="truncate text-body-sm text-foreground">{label}</span>
+        {isAbsorber && (
+          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground" aria-label="Absorbs next edit">
+            absorbs
+          </span>
+        )}
+      </div>
+      <Slider
+        min={0}
+        max={100}
+        step={1}
+        value={[target]}
+        onValueChange={([v]) => onEdit(keyName, v)}
+        disabled={animating}
+        aria-label={`${label} target percentage`}
+      />
+      <div className="relative flex items-center">
+        <Input
+          type="number"
+          min={0}
+          max={100}
+          value={target}
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            if (!isNaN(v)) onEdit(keyName, v);
+          }}
+          onBlur={(e) => {
+            const v = parseInt(e.target.value, 10);
+            if (!isNaN(v)) onEdit(keyName, Math.max(0, Math.min(100, v)));
+          }}
+          disabled={animating}
+          className="h-8 w-full pl-2 pr-6 text-right text-mono-sm tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          aria-label={`${label} target %`}
+        />
+        <span className="pointer-events-none absolute right-2 text-mono-sm text-muted-foreground">%</span>
+      </div>
+      <span className="text-right text-mono-sm tabular-nums text-muted-foreground">
+        <Provenance source="computed">{now > 0 ? `${now}%` : "—"}</Provenance>
+      </span>
+      <span className={`text-right text-mono-sm tabular-nums ${driftColor(drift)}`}>
+        <Provenance source="computed">{formatPp(drift)}</Provenance>
+      </span>
+    </div>
+  );
+}
+
+// ── Route ─────────────────────────────────────────────────────────────────────
+
+const VALID_ASSET_CLASSES = /^(equity|fixed_income|real_estate|commodity|crypto|cash|private)$/;
+
+function TargetsRouter() {
+  const searchParams = useSearchParams();
+  const focus = searchParams.get("focus");
+  if (focus && VALID_ASSET_CLASSES.test(focus)) {
+    return <L2Editor focusClass={focus} />;
+  }
+  return <L1Editor />;
+}
 
 export default function TargetsPage() {
+  return (
+    <React.Suspense fallback={<L1Editor />}>
+      <TargetsRouter />
+    </React.Suspense>
+  );
+}
+
+// ── L1 Editor ────────────────────────────────────────────────────────────────
+
+function L1Editor() {
   const router = useRouter();
   const { mutate } = useSWRConfig();
 
@@ -238,7 +329,6 @@ export default function TargetsPage() {
     api.allocation,
     { revalidateOnFocus: false },
   );
-
   const { data: remoteTargets, isLoading: targetsLoading } = useSWR<TargetsPayload>(
     "/api/targets",
     api.getTargets,
@@ -251,10 +341,11 @@ export default function TargetsPage() {
   const [saving, setSaving] = React.useState(false);
   const [saveError, setSaveError] = React.useState<string | null>(null);
 
-  // Seed state once we have both alloc + targets data.
+  const keys = L1_CLASSES.map((c) => c.key);
+
   React.useEffect(() => {
     if (!alloc || remoteTargets === undefined) return;
-    if (values !== null) return; // already seeded
+    if (values !== null) return;
     const seeded =
       remoteTargets.root.length > 0
         ? seedFromTargets(remoteTargets, alloc)
@@ -265,32 +356,26 @@ export default function TargetsPage() {
   const loading = allocLoading || targetsLoading || values === null;
   const noPositions = !allocLoading && alloc && alloc.total === 0;
 
-  // Actuals map from allocation for the "Now" column.
   const actualsMap = React.useMemo<Record<string, number>>(() => {
     if (!alloc) return {};
-    return Object.fromEntries(
-      alloc.by_asset_class.map((s) => [s.name, Math.round(s.pct)]),
-    );
+    return Object.fromEntries(alloc.by_asset_class.map((s) => [s.name, Math.round(s.pct)]));
   }, [alloc]);
 
   const activePreset = values ? activePresetId(values) : null;
-  // Which row will absorb the next edit? Used to render a subtle indicator.
   const absorberKey = React.useMemo(
-    () => (values ? displayResidual(touchOrder) : null),
-    [values, touchOrder],
+    () => (values ? displayResidual(keys, touchOrder) : null),
+    [values, touchOrder, keys],
   );
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
 
   const handleEdit = React.useCallback((key: string, raw: number) => {
     setValues((prev) => {
       if (!prev) return prev;
-      const result = applyResidualEdit(prev, key, raw, touchOrder);
-      if (result.blocked) return prev; // slider snaps back on next render
+      const result = applyResidualEdit(prev, keys, key, raw, touchOrder);
+      if (result.blocked) return prev;
       return result.values;
     });
     setTouchOrder((prev) => addTouch(prev, key));
-  }, [touchOrder]);
+  }, [touchOrder, keys]);
 
   const handlePreset = React.useCallback((preset: Preset) => {
     if (animating || !values) return;
@@ -299,15 +384,13 @@ export default function TargetsPage() {
     const end = preset.values;
     const duration = 500;
     const startTime = performance.now();
-
     function tick(now: number) {
       const t = Math.min(1, (now - startTime) / duration);
-      const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // ease-in-out quad
+      const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       const frame: Record<string, number> = {};
       for (const c of L1_CLASSES) {
         frame[c.key] = lerp(start[c.key] ?? 0, end[c.key] ?? 0, eased);
       }
-      // Ensure sum=100 every frame: dump drift onto largest target row.
       const sum = L1_CLASSES.reduce((a, c) => a + frame[c.key], 0);
       if (sum !== 100) {
         const largest = L1_CLASSES.sort((a, b) => frame[b.key] - frame[a.key])[0];
@@ -318,7 +401,7 @@ export default function TargetsPage() {
         requestAnimationFrame(tick);
       } else {
         setValues({ ...end });
-        setTouchOrder([]); // fresh slate: next manual edit absorbs into bottom row
+        setTouchOrder([]);
         setAnimating(false);
       }
     }
@@ -348,37 +431,27 @@ export default function TargetsPage() {
     }
   };
 
-  // ── Donut preview data ────────────────────────────────────────────────────
-
   const donutData = React.useMemo(() => {
     if (!values) return [];
     return L1_CLASSES.filter((c) => (values[c.key] ?? 0) > 0).map((c) => ({
       name: c.key,
-      cls: c.cls,
       value: values[c.key],
       fill: ASSET_CLASS_COLOR[c.cls],
     }));
   }, [values]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
   if (noPositions) {
     return (
       <div className="mx-auto flex w-full max-w-[900px] flex-col items-center gap-4 px-4 py-12 text-center">
         <p className="text-h3">No positions yet</p>
-        <p className="text-body-sm text-muted-foreground">
-          Add positions to your accounts before setting targets.
-        </p>
-        <Button variant="outline" onClick={() => router.push("/accounts")}>
-          Go to Accounts
-        </Button>
+        <p className="text-body-sm text-muted-foreground">Add positions to your accounts before setting targets.</p>
+        <Button variant="outline" onClick={() => router.push("/accounts")}>Go to Accounts</Button>
       </div>
     );
   }
 
   return (
     <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-6 lg:px-6">
-      {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -397,24 +470,15 @@ export default function TargetsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => router.push("/")}
-            disabled={saving}
-          >
-            Cancel
-          </Button>
+          <Button variant="outline" onClick={() => router.push("/")} disabled={saving}>Cancel</Button>
           <Button onClick={handleSave} disabled={loading || saving || animating}>
             {saving ? "Saving…" : "Save targets"}
           </Button>
         </div>
       </div>
 
-      {saveError && (
-        <p className="text-body-sm text-destructive">{saveError}</p>
-      )}
+      {saveError && <p className="text-body-sm text-destructive">{saveError}</p>}
 
-      {/* Preset chip row */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-body-sm text-muted-foreground">Start from:</span>
         <button
@@ -458,11 +522,8 @@ export default function TargetsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_1fr]">
-          {/* Left: donut preview */}
           <div className="flex flex-col items-center gap-4 lg:sticky lg:top-6 lg:self-start">
-            <p className="text-label uppercase tracking-wide text-muted-foreground">
-              Target mix
-            </p>
+            <p className="text-label uppercase tracking-wide text-muted-foreground">Target mix</p>
             <div className="relative">
               <PieChart width={220} height={220}>
                 <Pie
@@ -476,42 +537,29 @@ export default function TargetsPage() {
                   isAnimationActive={false}
                 >
                   {donutData.length > 0
-                    ? donutData.map((entry) => (
-                        <Cell key={entry.name} fill={entry.fill} />
-                      ))
+                    ? donutData.map((entry) => <Cell key={entry.name} fill={entry.fill} />)
                     : <Cell fill="var(--muted)" />}
                 </Pie>
               </PieChart>
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Target
-                </span>
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Target</span>
                 <span className="font-mono text-lg font-medium text-accent">100%</span>
               </div>
             </div>
-            {/* Color legend */}
             <div className="flex flex-col gap-1 w-full px-2">
               {L1_CLASSES.filter((c) => values && (values[c.key] ?? 0) > 0).map((c) => (
                 <div key={c.key} className="flex items-center justify-between gap-2 text-body-sm">
                   <div className="flex items-center gap-1.5">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                      style={{ backgroundColor: ASSET_CLASS_COLOR[c.cls] }}
-                      aria-hidden
-                    />
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: ASSET_CLASS_COLOR[c.cls] }} aria-hidden />
                     <span className="text-muted-foreground">{c.label}</span>
                   </div>
-                  <span className="font-mono tabular-nums text-foreground">
-                    {values?.[c.key] ?? 0}%
-                  </span>
+                  <span className="font-mono tabular-nums text-foreground">{values?.[c.key] ?? 0}%</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Right: editor table */}
           <div className="flex flex-col gap-1">
-            {/* Table header */}
             <div className="grid grid-cols-[1fr_minmax(120px,1.5fr)_4.5rem_3rem_3.5rem] items-center gap-x-3 px-1 pb-2">
               <span className="text-label text-muted-foreground">Class</span>
               <span className="text-label text-muted-foreground">Target</span>
@@ -519,98 +567,298 @@ export default function TargetsPage() {
               <span className="text-right text-label text-muted-foreground">Now</span>
               <span className="text-right text-label text-muted-foreground">Drift</span>
             </div>
-
-            {L1_CLASSES.map((c) => {
-              const target = values?.[c.key] ?? 0;
-              const now = actualsMap[c.key] ?? 0;
-              const drift = target - now;
-              const isAbsorber = c.key === absorberKey;
-              return (
-                <div
-                  key={c.key}
-                  className={
-                    "grid grid-cols-[1fr_minmax(120px,1.5fr)_4.5rem_3rem_3.5rem] items-center gap-x-3 rounded-md px-1 py-2 " +
-                    (isAbsorber ? "bg-muted/40" : "hover:bg-muted/40")
-                  }
-                  title={isAbsorber ? "Absorbs change from your next edit" : undefined}
-                >
-                  {/* Class label */}
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                      style={{ backgroundColor: ASSET_CLASS_COLOR[c.cls] }}
-                      aria-hidden
-                    />
-                    <span className="truncate text-body-sm text-foreground">{c.label}</span>
-                    {isAbsorber && (
-                      <span
-                        className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                        aria-label="Absorbs next edit"
-                      >
-                        absorbs
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Slider */}
-                  <Slider
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={[target]}
-                    onValueChange={([v]) => handleEdit(c.key, v)}
-                    disabled={animating}
-                    aria-label={`${c.label} target percentage`}
-                  />
-
-                  {/* Number input */}
-                  <div className="relative flex items-center">
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={target}
-                      onChange={(e) => {
-                        const v = parseInt(e.target.value, 10);
-                        if (!isNaN(v)) handleEdit(c.key, v);
-                      }}
-                      onBlur={(e) => {
-                        const v = parseInt(e.target.value, 10);
-                        if (!isNaN(v)) handleEdit(c.key, Math.max(0, Math.min(100, v)));
-                      }}
-                      disabled={animating}
-                      className="h-8 w-full pl-2 pr-6 text-right text-mono-sm tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                      aria-label={`${c.label} target %`}
-                    />
-                    <span className="pointer-events-none absolute right-2 text-mono-sm text-muted-foreground">
-                      %
-                    </span>
-                  </div>
-
-                  {/* Current % */}
-                  <span className="text-right text-mono-sm tabular-nums text-muted-foreground">
-                    <Provenance source="computed">
-                      {now > 0 ? `${now}%` : "—"}
-                    </Provenance>
-                  </span>
-
-                  {/* Drift */}
-                  <span className={`text-right text-mono-sm tabular-nums ${driftColor(drift)}`}>
-                    <Provenance source="computed">
-                      {formatPp(drift)}
-                    </Provenance>
-                  </span>
-                </div>
-              );
-            })}
-
-            {/* Reset button */}
+            {L1_CLASSES.map((c) => (
+              <EditorRow
+                key={c.key}
+                keyName={c.key}
+                label={c.label}
+                fill={ASSET_CLASS_COLOR[c.cls]}
+                target={values?.[c.key] ?? 0}
+                now={actualsMap[c.key] ?? 0}
+                isAbsorber={c.key === absorberKey}
+                animating={animating}
+                onEdit={handleEdit}
+              />
+            ))}
             <div className="pt-3">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={handleReset}
                 disabled={animating}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                Reset to current allocation
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── L2 Editor ────────────────────────────────────────────────────────────────
+
+function L2Editor({ focusClass }: { focusClass: string }) {
+  const router = useRouter();
+  const { mutate } = useSWRConfig();
+
+  const { data: alloc, isLoading: allocLoading } = useSWR<AllocationResult>(
+    "/api/allocation",
+    api.allocation,
+    { revalidateOnFocus: false },
+  );
+  const { data: remoteTargets, isLoading: targetsLoading } = useSWR<TargetsPayload>(
+    "/api/targets",
+    api.getTargets,
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  );
+
+  const [values, setValues] = React.useState<Record<string, number> | null>(null);
+  const [touchOrder, setTouchOrder] = React.useState<string[]>([]);
+  const [saving, setSaving] = React.useState(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+
+  // The parent asset class slice from the allocation.
+  const parentSlice: AllocationSlice | null = React.useMemo(() => {
+    if (!alloc) return null;
+    return alloc.by_asset_class.find((s) => s.name === focusClass) ?? null;
+  }, [alloc, focusClass]);
+
+  // The meaningful children — what the donut drill showed.
+  const l2Slices: AllocationSlice[] = React.useMemo(() => {
+    if (!parentSlice) return [];
+    return meaningfulChildrenSlice(parentSlice).filter((s) => s.value > 0);
+  }, [parentSlice]);
+
+  const keys: string[] = l2Slices.map((s) => s.name);
+  const parentCls = NAME_TO_CLASS[focusClass] ?? "other";
+  const parentColor = ASSET_CLASS_COLOR[parentCls];
+
+  // Actuals: % of parent for each meaningful child.
+  const actualsMap = React.useMemo<Record<string, number>>(() => {
+    if (!parentSlice || parentSlice.value <= 0) return {};
+    return Object.fromEntries(
+      l2Slices.map((s) => [s.name, Math.round((100 * s.value) / parentSlice.value)])
+    );
+  }, [parentSlice, l2Slices]);
+
+  // Seed values from saved group targets or actuals.
+  React.useEffect(() => {
+    if (!alloc || remoteTargets === undefined || l2Slices.length === 0) return;
+    if (values !== null) return;
+    const savedGroup = remoteTargets.groups[focusClass];
+    if (savedGroup && savedGroup.length > 0) {
+      const savedMap = new Map(savedGroup.map((r) => [r.path.split(".")[1], r.pct]));
+      const raw: Record<string, number> = {};
+      for (const key of keys) {
+        raw[key] = savedMap.get(key) ?? 0;
+      }
+      setValues(raw);
+    } else {
+      // Seed from actuals (% of parent).
+      const raw: Record<string, number> = { ...actualsMap };
+      const total = keys.reduce((a, k) => a + (raw[k] ?? 0), 0);
+      if (total !== 100 && total > 0) {
+        const diff = 100 - total;
+        const largest = [...keys].sort((a, b) => (raw[b] ?? 0) - (raw[a] ?? 0))[0];
+        if (largest) raw[largest] = Math.max(0, (raw[largest] ?? 0) + diff);
+      }
+      setValues(raw);
+    }
+  }, [alloc, remoteTargets, l2Slices, values, focusClass, keys, actualsMap]);
+
+  const loading = allocLoading || targetsLoading || values === null;
+
+  const absorberKey = React.useMemo(
+    () => (values ? displayResidual(keys, touchOrder) : null),
+    [values, touchOrder, keys],
+  );
+
+  const handleEdit = React.useCallback((key: string, raw: number) => {
+    setValues((prev) => {
+      if (!prev) return prev;
+      const result = applyResidualEdit(prev, keys, key, raw, touchOrder);
+      if (result.blocked) return prev;
+      return result.values;
+    });
+    setTouchOrder((prev) => addTouch(prev, key));
+  }, [touchOrder, keys]);
+
+  const handleReset = React.useCallback(() => {
+    const raw: Record<string, number> = { ...actualsMap };
+    const total = keys.reduce((a, k) => a + (raw[k] ?? 0), 0);
+    if (total !== 100 && total > 0) {
+      const diff = 100 - total;
+      const largest = [...keys].sort((a, b) => (raw[b] ?? 0) - (raw[a] ?? 0))[0];
+      if (largest) raw[largest] = Math.max(0, (raw[largest] ?? 0) + diff);
+    }
+    setValues(raw);
+    setTouchOrder([]);
+  }, [actualsMap, keys]);
+
+  const handleSave = async () => {
+    if (!values || !remoteTargets) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const groupRows = keys.map((k) => ({
+        path: `${focusClass}.${k}`,
+        pct: values[k] ?? 0,
+      }));
+      await api.putTargets({
+        root: remoteTargets.root,
+        groups: { ...remoteTargets.groups, [focusClass]: groupRows },
+      });
+      await mutate("/api/allocation");
+      await mutate("/api/targets");
+      router.push("/");
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Donut preview with parent-color lightness ramp.
+  const donutData = React.useMemo(() => {
+    if (!values) return [];
+    return keys
+      .filter((k) => (values[k] ?? 0) > 0)
+      .map((k, i, arr) => ({
+        name: k,
+        value: values[k],
+        fill: l2Fill(parentColor, i, arr.length),
+      }));
+  }, [values, keys, parentColor]);
+
+  // No meaningful children → redirect to L1 page.
+  if (!loading && l2Slices.length <= 1) {
+    return (
+      <div className="mx-auto flex w-full max-w-[900px] flex-col items-center gap-4 px-4 py-12 text-center">
+        <p className="text-h3">Only one bucket here</p>
+        <p className="text-body-sm text-muted-foreground">
+          {humanize(focusClass)} has only one sub-category — nothing to allocate between.
+        </p>
+        <Button variant="outline" onClick={() => router.push("/targets")}>Back to targets</Button>
+      </div>
+    );
+  }
+
+  const title = `${humanize(focusClass)} breakdown`;
+
+  return (
+    <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-6 lg:px-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <button
+            type="button"
+            onClick={() => router.push("/targets")}
+            className="mb-1 flex items-center gap-1 text-body-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronLeft className="size-3.5" aria-hidden />
+            All targets
+          </button>
+          <div className="flex items-center gap-2">
+            <h1 className="text-h2">{title}</h1>
+            {!loading && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2 className="size-3" aria-hidden />
+                Sums to 100%
+              </span>
+            )}
+          </div>
+          <p className="text-body-sm text-muted-foreground">
+            Set how to split your {humanize(focusClass).toLowerCase()} allocation.
+            Percentages are % of {humanize(focusClass).toLowerCase()}.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => router.push("/")} disabled={saving}>Cancel</Button>
+          <Button onClick={handleSave} disabled={loading || saving}>
+            {saving ? "Saving…" : "Save breakdown"}
+          </Button>
+        </div>
+      </div>
+
+      {saveError && <p className="text-body-sm text-destructive">{saveError}</p>}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <p className="text-body-sm text-muted-foreground">Loading…</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_1fr]">
+          {/* Donut preview */}
+          <div className="flex flex-col items-center gap-4 lg:sticky lg:top-6 lg:self-start">
+            <p className="text-label uppercase tracking-wide text-muted-foreground">Target mix</p>
+            <div className="relative">
+              <PieChart width={220} height={220}>
+                <Pie
+                  data={donutData.length > 0 ? donutData : [{ name: "empty", value: 1, fill: "var(--muted)" }]}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={65}
+                  outerRadius={100}
+                  strokeWidth={2}
+                  stroke="var(--background)"
+                  isAnimationActive={false}
+                >
+                  {donutData.length > 0
+                    ? donutData.map((entry) => <Cell key={entry.name} fill={entry.fill} />)
+                    : <Cell fill="var(--muted)" />}
+                </Pie>
+              </PieChart>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Target</span>
+                <span className="font-mono text-lg font-medium text-accent">100%</span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1 w-full px-2">
+              {keys.filter((k) => values && (values[k] ?? 0) > 0).map((k, i) => (
+                <div key={k} className="flex items-center justify-between gap-2 text-body-sm">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                      style={{ backgroundColor: l2Fill(parentColor, i, keys.length) }}
+                      aria-hidden
+                    />
+                    <span className="text-muted-foreground">{humanize(k)}</span>
+                  </div>
+                  <span className="font-mono tabular-nums text-foreground">{values?.[k] ?? 0}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Editor table */}
+          <div className="flex flex-col gap-1">
+            <div className="grid grid-cols-[1fr_minmax(120px,1.5fr)_4.5rem_3rem_3.5rem] items-center gap-x-3 px-1 pb-2">
+              <span className="text-label text-muted-foreground">Bucket</span>
+              <span className="text-label text-muted-foreground">Target</span>
+              <span className="text-right text-label text-muted-foreground">%</span>
+              <span className="text-right text-label text-muted-foreground">Now</span>
+              <span className="text-right text-label text-muted-foreground">Drift</span>
+            </div>
+            {keys.map((k, i) => (
+              <EditorRow
+                key={k}
+                keyName={k}
+                label={humanize(k)}
+                fill={l2Fill(parentColor, i, keys.length)}
+                target={values?.[k] ?? 0}
+                now={actualsMap[k] ?? 0}
+                isAbsorber={k === absorberKey}
+                animating={false}
+                onEdit={handleEdit}
+              />
+            ))}
+            <div className="pt-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleReset}
                 className="text-muted-foreground hover:text-foreground"
               >
                 Reset to current allocation

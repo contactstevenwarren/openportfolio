@@ -75,7 +75,7 @@ type DisplaySlice = {
 // one region "other") goes straight to its sub_classes. The 3-level data
 // tree (asset_class → region → sub_class) is preserved on the wire — this
 // is purely a presentation transform.
-function meaningfulChildren(slice: AllocationSlice): AllocationSlice[] {
+export function meaningfulChildren(slice: AllocationSlice): AllocationSlice[] {
   if (slice.children.length === 1) return meaningfulChildren(slice.children[0]);
   return slice.children;
 }
@@ -210,10 +210,14 @@ function DonutBody({
   });
   const rings = computeRings(slices);
 
-  // Header description and title reflect zoom level.
+  // Header description and focus link reflect zoom level.
   const description = zoomedParent
     ? `Inside ${humanize(zoomedParent.name)}`
     : "By asset class";
+  // Pass focus class only when zoomed AND there are meaningful children to edit.
+  const focusClass = zoomedParent && meaningfulChildren(zoomedParent).length > 1
+    ? zoomedParent.name
+    : null;
 
   function handleSliceClick(name: string) {
     if (isSimulating) return;
@@ -235,7 +239,7 @@ function DonutBody({
   if (isLoading || (!data && !error)) {
     return (
       <>
-        <DonutHeader description="By asset class" />
+        <DonutHeader description="By asset class" focusClass={null} />
         <DonutPlaceholder kind="loading" />
       </>
     );
@@ -243,7 +247,7 @@ function DonutBody({
   if (error) {
     return (
       <>
-        <DonutHeader description="By asset class" />
+        <DonutHeader description="By asset class" focusClass={null} />
         <DonutPlaceholder kind="error" message={(error as Error).message} />
       </>
     );
@@ -251,7 +255,7 @@ function DonutBody({
   if (slices.length === 0 && !zoomedParent) {
     return (
       <>
-        <DonutHeader description="By asset class" />
+        <DonutHeader description="By asset class" focusClass={null} />
         <DonutPlaceholder kind="empty" />
       </>
     );
@@ -268,7 +272,7 @@ function DonutBody({
 
   return (
     <>
-      <DonutHeader description={description} />
+      <DonutHeader description={description} focusClass={focusClass} />
       <div className="@container/donut-card">
         <div className="flex flex-col gap-6 @md/donut-card:flex-row @md/donut-card:items-center">
           <ChartContainer
@@ -417,7 +421,10 @@ function DonutBody({
 }
 
 // Header is rendered inside DonutBody so it can reflect zoom state.
-function DonutHeader({ description }: { description: string }) {
+// focusClass is set when the user is zoomed into a drillable asset class,
+// so Edit targets lands directly in the L2 editor for that class.
+function DonutHeader({ description, focusClass }: { description: string; focusClass: string | null }) {
+  const targetsHref = focusClass ? `/targets?focus=${focusClass}` : "/targets";
   return (
     <div className="flex items-start justify-between pb-4">
       <div>
@@ -425,7 +432,7 @@ function DonutHeader({ description }: { description: string }) {
         <p className="text-sm text-muted-foreground mt-1">{description}</p>
       </div>
       <Link
-        href="/targets"
+        href={targetsHref}
         className="text-body-sm text-muted-foreground hover:text-foreground"
       >
         Edit targets →

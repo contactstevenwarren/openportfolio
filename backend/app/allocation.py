@@ -306,6 +306,32 @@ def aggregate(
     )
 
 
+def meaningful_children(slice: AllocationSlice) -> list[AllocationSlice]:
+    """Walk down through single-child layers, returning the first level
+    with more than one child (or a singleton list of the deepest node
+    when all layers are single-child, including leaf nodes).
+
+    Server mirror of the frontend's ``meaningfulChildren()``. Defines
+    the L2 axis for any asset class:
+    - Equity / FI / RE with multiple regions: returns region slices
+    - Cash / Crypto / Commodity / Private (single "other" region):
+      collapses through and returns sub_class slices
+    - Single-sub_class cases (e.g. FI with only us_aggregate in one region):
+      returns a singleton list of that sub_class slice
+
+    Used by drift, rebalance, and the targets validator to compute the
+    canonical L2 paths for a given asset class uniformly.
+    """
+    cur = slice
+    while len(cur.children) == 1:
+        cur = cur.children[0]
+    # If we reached a leaf (no children), return the leaf itself as a singleton.
+    # This handles single-sub_class cases (e.g. only us_aggregate in FI).
+    if not cur.children:
+        return [cur]
+    return list(cur.children)
+
+
 def _dedup(items: list[str]) -> list[str]:
     seen: set[str] = set()
     return [x for x in items if not (x in seen or seen.add(x))]

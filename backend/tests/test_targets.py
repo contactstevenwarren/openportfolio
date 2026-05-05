@@ -372,3 +372,62 @@ def test_put_group_targets_sum_to_100_of_parent(
         },
     }
     assert client.put("/api/targets", headers=auth_headers, json=bad).status_code == 422
+
+
+def test_put_fi_group_requires_all_regions(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """Multi-region FI portfolio: group targets must cover all regions.
+
+    When FI has positions in both US and intl_developed, meaningful_children()
+    returns those two region slices. The validator requires both paths.
+    """
+    account = Account(label="T", type="brokerage")
+    test_db.add(account)
+    test_db.commit()
+    test_db.add_all(
+        [
+            Classification(
+                ticker="BUS",
+                asset_class="fixed_income",
+                sub_class="us_aggregate",
+                region="US",
+                source="user",
+            ),
+            Classification(
+                ticker="BINT",
+                asset_class="fixed_income",
+                sub_class="intl_aggregate",
+                region="intl_developed",
+                source="user",
+            ),
+        ]
+    )
+    test_db.add_all(
+        [
+            _position(account.id, "BUS", 60_000.0),
+            _position(account.id, "BINT", 40_000.0),
+        ]
+    )
+    test_db.commit()
+
+    # Missing intl_developed → should fail.
+    bad = {
+        "root": [],
+        "groups": {
+            "fixed_income": [{"path": "fixed_income.US", "pct": 100}]
+        },
+    }
+    assert client.put("/api/targets", headers=auth_headers, json=bad).status_code == 422
+
+    # Both regions covered, sum to 100 → should succeed.
+    ok = {
+        "root": [],
+        "groups": {
+            "fixed_income": [
+                {"path": "fixed_income.US", "pct": 60},
+                {"path": "fixed_income.intl_developed", "pct": 40},
+            ]
+        },
+    }
+    assert client.put("/api/targets", headers=auth_headers, json=ok).status_code == 200
