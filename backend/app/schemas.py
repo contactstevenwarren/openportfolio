@@ -583,3 +583,37 @@ class RebalanceResult(BaseModel):
 
 
 RebalanceMove.model_rebuild()
+
+
+# ----- allocation drill-down (feat/donut-drill-down) ----------------------
+
+
+class PositionContribution(BaseModel):
+    """One row in the drill panel: a single (account, ticker) position's
+    contribution to the requested asset_class slice."""
+
+    ticker: str
+    account_id: int
+    account_name: str
+    contributing_value: float
+    # Fraction of the slice (or L2 sub-slice when l2 filter is set).
+    share_of_slice: float
+    # Fraction of the total Investment Portfolio.
+    share_of_portfolio: float
+    # True when fund look-through assigned a weight < 1 (multi-class fund).
+    is_partial: bool
+    # "user" | "yaml" | "openfigi" | ...
+    classification_source: str
+
+
+class PositionContributionsResponse(BaseModel):
+    """Response for GET /api/allocation/positions/{asset_class}?l2={segment}."""
+
+    asset_class: str
+    l2: str | None
+    # Sum of contributing_value — equals the donut slice (or L2 sub-slice) total.
+    total: float
+    positions: list[PositionContribution]
+    # e.g. {"yaml": 18, "user": 6}
+    source_counts: dict[str, int]
+    unclassified_count: int

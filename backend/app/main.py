@@ -12,7 +12,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  -- register models with Base before create_all
-from .allocation import aggregate, meaningful_children
+from .allocation import aggregate, meaningful_children, positions_for_slice
 from .auth import require_admin_token
 from .config import settings
 from .drift import apply_drift
@@ -61,6 +61,8 @@ from .schemas import (
     PositionPatch,
     PositionRead,
     ProvenanceRead,
+    PositionContribution,
+    PositionContributionsResponse,
     RebalanceResult,
     SnapshotEarliest,
     SnapshotRead,
@@ -1313,6 +1315,85 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
             ),
         },
         deep=False,
+    )
+
+
+@app.get(
+    "/api/allocation/positions/{asset_class}",
+    dependencies=[Depends(require_admin_token)],
+)
+def get_allocation_positions(
+    asset_class: str,
+    l2: str | None = None,
+    db: Session = Depends(get_db),
+) -> PositionContributionsResponse:
+    """Return per-position contributions to an asset_class slice.
+
+    Optional ``l2`` query param filters to a region/sub_class segment —
+    the name must match one of the meaningful_children() of the slice.
+    404 on unknown asset_class; 400 on unknown l2.
+    """
+    from fastapi import HTTPException
+
+    if asset_class not in _VALID_ASSET_CLASSES:
+        raise HTTPException(status_code=404, detail=f"Unknown asset class: {asset_class!r}")
+
+    positions = db.query(Position).all()
+    classifications = {**load_classifications(), **load_user_classifications(db)}
+    non_investable_ids = _non_investable_account_ids(db)
+
+    # Validate l2 against the canonical L2 axis for this class.
+    if l2 is not None:
+        result = aggregate(positions, classifications, db=db, non_investable_account_ids=non_investable_ids)
+        slice_obj = next((s for s in result.by_asset_class if s.name == asset_class), None)
+        if slice_obj is None:
+            # Class exists but has no positions yet — any l2 filter is invalid.
+            raise HTTPException(status_code=400, detail=f"No data for asset class {asset_class!r}")
+        valid_l2 = {s.name for s in meaningful_children(slice_obj)}
+        if l2 not in valid_l2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown L2 segment {l2!r} for {asset_class!r}. Valid: {sorted(valid_l2)}",
+            )
+        portfolio_total = result.total
+    else:
+        result = aggregate(positions, classifications, db=db, non_investable_account_ids=non_investable_ids)
+        portfolio_total = result.total
+
+    # Collect account names for display.
+    accounts = db.query(Account).all()
+    account_names = {a.id: a.label for a in accounts}
+
+    sr = positions_for_slice(
+        positions,
+        classifications,
+        asset_class=asset_class,
+        l2=l2,
+        db=db,
+        non_investable_account_ids=non_investable_ids,
+        account_names=account_names,
+        portfolio_total=portfolio_total,
+    )
+
+    return PositionContributionsResponse(
+        asset_class=asset_class,
+        l2=l2,
+        total=sr.total,
+        positions=[
+            PositionContribution(
+                ticker=p.ticker,
+                account_id=p.account_id,
+                account_name=p.account_name,
+                contributing_value=p.contributing_value,
+                share_of_slice=p.share_of_slice,
+                share_of_portfolio=p.share_of_portfolio,
+                is_partial=p.is_partial,
+                classification_source=p.classification_source,
+            )
+            for p in sr.positions
+        ],
+        source_counts=sr.source_counts,
+        unclassified_count=sr.unclassified_count,
     )
 
 
