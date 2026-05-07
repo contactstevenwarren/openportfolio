@@ -59,15 +59,6 @@ class ExtractRequest(BaseModel):
 TAX_TREATMENTS_BROKERAGE_ONLY = {"tax_deferred", "tax_free", "hsa"}
 VALID_TAX_TREATMENTS = {"taxable", "tax_deferred", "tax_free", "hsa"}
 
-# Hardcoded staleness thresholds by account type (days)
-STALENESS_THRESHOLD_BY_TYPE: dict[str, int] = {
-    "brokerage": 30,
-    "bank": 7,
-    "crypto": 1,
-    "real_estate": 90,
-    "private": 365,
-}
-
 # Account types that map to is_manual=True
 MANUAL_ACCOUNT_TYPES = {"real_estate", "private"}
 

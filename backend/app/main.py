@@ -42,7 +42,6 @@ from .models import (
 from .schemas import (
     ASSET_CLASS_OPTIONS,
     MANUAL_ACCOUNT_TYPES,
-    STALENESS_THRESHOLD_BY_TYPE,
     TAX_TREATMENTS_BROKERAGE_ONLY,
     VALID_TAX_TREATMENTS,
     AccountClassBreakdown,
@@ -511,19 +510,11 @@ def _migrate_schema(eng: Engine) -> None:
                     "WHERE type='hsa'"
                 )
             )
-        # Backfill type-default thresholds for rows still at the schema default (30).
-        # Rows the user has already customised are untouched because their value != 30.
-        with eng.begin() as conn:
-            for acc_type, days in STALENESS_THRESHOLD_BY_TYPE.items():
-                if days == 30:
-                    continue  # schema default already correct
-                conn.execute(
-                    text(
-                        "UPDATE accounts SET staleness_threshold_days = :days "
-                        "WHERE type = :acc_type AND staleness_threshold_days = 30"
-                    ),
-                    {"days": days, "acc_type": acc_type},
-                )
+        # Do not bulk-overwrite staleness_threshold_days on startup. The old loop
+        # compared only to the schema default (30), so any account type whose default
+        # differs from 30 (bank, crypto, etc.) would reset user-visible values on
+        # every deploy/restart—including users who explicitly chose 30 days. Per-type
+        # defaults belong at create time (frontend + POST body), not in recurring SQL.
 
     # ── institutions: case-insensitive unique index ───────────────────────────
     # create_all handles table creation on fresh installs; this ensures the
