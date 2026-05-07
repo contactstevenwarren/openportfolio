@@ -3,8 +3,6 @@
 import * as React from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { ChevronUpIcon, ChevronDownIcon } from "lucide-react";
-
 import {
   Sheet,
   SheetContent,
@@ -13,7 +11,6 @@ import {
   SheetDescription,
 } from "@/app/components/ui/sheet";
 import { Input } from "@/app/components/ui/input";
-import { Skeleton } from "@/app/components/ui/skeleton";
 import {
   api,
   type PositionContribution,
@@ -53,15 +50,23 @@ export function DonutDrillPanel({
   open: boolean;
   onClose: () => void;
 }) {
-  const swrKey = scope
+  // Key encodes the full scope so SWR always fetches the right slice.
+  // The fetcher receives the key and parses it — no closure over scope —
+  // which prevents stale-closure bugs when scope changes while the panel is open.
+  const swrKey = open && scope
     ? scope.l2
       ? `/api/allocation/positions/${scope.assetClass}?l2=${scope.l2}`
       : `/api/allocation/positions/${scope.assetClass}`
     : null;
 
   const { data, error, isLoading, mutate } = useSWR<PositionContributionsResponse>(
-    open && scope ? swrKey : null,
-    () => api.allocationPositions(scope!.assetClass, scope?.l2),
+    swrKey,
+    (url: string) => {
+      const [path, qs] = url.split("?");
+      const assetClass = path.split("/").pop()!;
+      const l2 = qs ? new URLSearchParams(qs).get("l2") ?? undefined : undefined;
+      return api.allocationPositions(assetClass, l2);
+    },
     { revalidateOnFocus: false },
   );
 
@@ -85,7 +90,7 @@ export function DonutDrillPanel({
 
   const title = scope
     ? scope.l2
-      ? `${humanize(scope.assetClass)} › ${humanize(scope.l2)}`
+      ? `${humanize(scope.assetClass)} → ${humanize(scope.l2)}`
       : humanize(scope.assetClass)
     : "";
 
@@ -146,7 +151,7 @@ export function DonutDrillPanel({
 
         {/* Table */}
         <div className="flex-1 overflow-y-auto px-6">
-          {isLoading && <LoadingSkeleton />}
+          {isLoading && <LoadingBar />}
           {error && <ErrorState onRetry={() => mutate()} />}
           {!isLoading && !error && data && (
             <HoldingsTable
@@ -216,7 +221,7 @@ function PanelHeader({
                 )}
               </>
             ) : (
-              <span className="animate-pulse">Loading…</span>
+              <span className="inline-block h-0.5 w-16 rounded-full bg-border" aria-hidden />
             )}
           </SheetDescription>
           {scope?.isSimulating && (
@@ -242,18 +247,12 @@ function PanelHeader({
 // Holdings table
 // ---------------------------------------------------------------------------
 
-function SortIcon({
-  active,
-  dir,
-}: {
-  active: boolean;
-  dir: SortDir;
-}) {
-  if (!active) return <span className="ml-0.5 text-muted-foreground/30">↕</span>;
-  return dir === "desc" ? (
-    <ChevronDownIcon className="ml-0.5 inline h-3 w-3 text-muted-foreground" />
-  ) : (
-    <ChevronUpIcon className="ml-0.5 inline h-3 w-3 text-muted-foreground" />
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  if (!active) return null;
+  return (
+    <span className="ml-1 text-[10px] text-muted-foreground" aria-hidden>
+      {dir === "desc" ? "▼" : "▲"}
+    </span>
   );
 }
 
@@ -284,8 +283,9 @@ function HoldingsTable({
     );
   }
 
+  // Label style: Inter 500, 13px/18px — brand typography scale
   const thClass =
-    "py-2 text-label text-muted-foreground select-none cursor-pointer hover:text-foreground transition-colors";
+    "py-2 text-[13px] leading-[18px] font-medium text-muted-foreground select-none cursor-pointer hover:text-foreground transition-colors";
 
   return (
     <div>
@@ -333,9 +333,9 @@ function HoldingsTable({
         {rows.map((p) => (
           <div
             key={`${p.account_id}-${p.ticker}`}
-            className="grid grid-cols-[1fr_1fr_auto_auto_auto] items-center gap-x-3 px-1 py-2 text-sm"
+            className="grid grid-cols-[1fr_1fr_auto_auto_auto] items-center gap-x-3 px-1 py-2 text-[14px] leading-[20px]"
           >
-            <span className="font-mono text-xs font-medium text-foreground">
+            <span className="font-mono text-[13px] leading-[18px] font-medium text-foreground">
               {p.ticker}
             </span>
             <span className="truncate text-muted-foreground">
@@ -358,7 +358,7 @@ function HoldingsTable({
       </div>
 
       {isPartialPresent && (
-        <p className="mt-3 text-xs text-muted-foreground/70">
+        <p className="mt-3 text-[13px] leading-[18px] text-muted-foreground/70">
           * partial — only the portion of this fund attributed to this slice.
         </p>
       )}
@@ -370,12 +370,10 @@ function HoldingsTable({
 // Loading / error states
 // ---------------------------------------------------------------------------
 
-function LoadingSkeleton() {
+function LoadingBar() {
   return (
-    <div className="space-y-2 pt-2">
-      {Array.from({ length: 5 }).map((_, i) => (
-        <Skeleton key={i} className="h-8 w-full" />
-      ))}
+    <div className="h-0.5 w-full overflow-hidden bg-transparent" role="status" aria-label="Loading holdings">
+      <div className="h-full w-1/2 animate-[slide_1.2s_ease-in-out_infinite] bg-border" />
     </div>
   );
 }
@@ -383,13 +381,13 @@ function LoadingSkeleton() {
 function ErrorState({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="py-8 text-center">
-      <p className="text-sm text-muted-foreground">
-        Couldn&apos;t load holdings.
+      <p className="text-sm text-destructive">
+        ✕ Couldn&apos;t load holdings.
       </p>
       <button
         type="button"
         onClick={onRetry}
-        className="mt-2 text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        className="mt-2 text-sm text-foreground underline underline-offset-[0.15em] hover:decoration-2"
       >
         Retry
       </button>

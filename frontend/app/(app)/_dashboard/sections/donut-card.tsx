@@ -10,6 +10,7 @@ import {
   Card,
   CardContent,
 } from "@/app/components/ui/card";
+import { Button } from "@/app/components/ui/button";
 import {
   ChartContainer,
   ChartTooltip,
@@ -309,16 +310,10 @@ function DonutBody({
     }
   }
 
-  // Panel tracks donut scope: when zoomedParent changes, widen L2 filter in panel if open.
-  React.useEffect(() => {
-    if (!panelOpen || !panelScope) return;
-    if (zoomedParent && panelScope.assetClass === zoomedParent.name && panelScope.l2) {
-      // User un-drilled L2 (but we're still zoomed into this class) — widen to L1 scope.
-      setPanelScope((prev) =>
-        prev ? { ...prev, l2: undefined } : prev
-      );
-    }
-  }, [zoomedParent, panelOpen, panelScope]);
+  // (Panel-donut L2 tracking removed: it fired immediately after openPanel set l2,
+  //  wiping the l2 filter before SWR could fetch. The correct behavior is to let
+  //  the panel hold whatever scope openPanel set; un-drilling fully already closes
+  //  the panel via the zoomInto→null effect above.)
 
   // CTA: "View N {class/l2} holdings →"
   // Determine what the CTA should say based on current drill state.
@@ -515,13 +510,14 @@ function DonutBody({
 
             {/* CTA: replaces the old "← Back to all asset classes" button */}
             {ctaScope && (
-              <button
-                type="button"
+              <Button
+                variant="accent"
+                size="xs"
                 onClick={() => openPanel(ctaScope)}
-                className="mt-1 px-2 py-1 text-left text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                className="mt-2"
               >
                 View {humanize(ctaScope.assetClass)} holdings →
-              </button>
+              </Button>
             )}
           </div>
         </div>

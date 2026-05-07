@@ -169,12 +169,20 @@ def _per_position_contributions(
 
         for ac_bucket, ac_value in _bucket_weights(ac_w, value):
             for reg_bucket, reg_value in _bucket_weights(reg_w, ac_value):
+                # Mirror aggregate()'s equity fallback: unregioned equity
+                # positions land in "US" on the donut, so the drill panel
+                # must use the same bucket name or the filter won't match.
+                effective_reg = (
+                    (entry.region or "US")
+                    if ac_bucket == "equity" and reg_bucket == UNSPECIFIED
+                    else reg_bucket
+                )
                 for sc_bucket, sc_value in _bucket_weights(sc_w, reg_value):
                     yield _Contribution(
                         position=p,
                         entry=entry,
                         ac_bucket=ac_bucket,
-                        reg_bucket=reg_bucket,
+                        reg_bucket=effective_reg,
                         sc_bucket=sc_bucket,
                         dollars=sc_value,
                         is_partial=is_partial,
