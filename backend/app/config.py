@@ -27,15 +27,6 @@ class Settings(BaseSettings):
     llm_model: str = "llama3.1"
     ollama_api_base: str = "http://host.docker.internal:11434"
 
-    # yfinance look-through is authoritative in architecture but Yahoo's
-    # own taxonomy ("US Stocks", "Bonds") doesn't line up with our
-    # classifications (equity/fixed_income/...). M5 will add the
-    # normalization layer; until then we keep the yfinance adapter in
-    # place but off, and treat data/lookthrough.yaml as the source of
-    # truth. Flipping this to true before M5 lands will produce garbage
-    # rings -- tested here only via mocks.
-    lookthrough_yfinance_enabled: bool = False
-
     # Drift bands vs target allocation (v0.2 -- 4-band redesign). Env:
     # DRIFT_TOLERANCE_PCT, DRIFT_ACT_PCT, DRIFT_URGENT_PCT. Absolute
     # drift within tolerance is ``ok`` (no-trade band); above tolerance
@@ -49,6 +40,11 @@ class Settings(BaseSettings):
     # PDF statement text extraction (v0.4). Reject when extracted text
     # exceeds this budget (no silent truncate).
     pdf_max_extract_chars: int = 100_000
+
+    # Set DOCS_ENABLED=false to hide /api/docs, /api/redoc, and
+    # /api/openapi.json in production. Defaults to enabled; the API surface
+    # is already protected by X-Admin-Token so exposure is low-risk.
+    docs_enabled: bool = True
 
 
 settings = Settings()

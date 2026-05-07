@@ -65,13 +65,13 @@ const semanticColors: Array<{
 ];
 
 const vizPalette = [
-  { name: "cash", cssVar: "--viz-cash", light: "#d97706", dark: "#fbbf24" },
-  { name: "equity", cssVar: "--viz-equity", light: "#2563eb", dark: "#60a5fa" },
-  { name: "fixed-income", cssVar: "--viz-fixed-income", light: "#7c3aed", dark: "#a78bfa" },
-  { name: "real-estate", cssVar: "--viz-real-estate", light: "#ea580c", dark: "#fb923c" },
-  { name: "commodity", cssVar: "--viz-commodity", light: "#ca8a04", dark: "#facc15" },
-  { name: "crypto", cssVar: "--viz-crypto", light: "#db2777", dark: "#f472b6" },
-  { name: "private", cssVar: "--viz-private", light: "#71717a", dark: "#a1a1aa" },
+  { name: "Cash", cssVar: "--viz-cash", light: "#d97706", dark: "#fbbf24" },
+  { name: "Stocks", cssVar: "--viz-stocks", light: "#2563eb", dark: "#60a5fa" },
+  { name: "Bonds", cssVar: "--viz-bonds", light: "#7c3aed", dark: "#a78bfa" },
+  { name: "Real Estate", cssVar: "--viz-real-estate", light: "#ea580c", dark: "#fb923c" },
+  { name: "Commodities", cssVar: "--viz-commodities", light: "#ca8a04", dark: "#facc15" },
+  { name: "Crypto", cssVar: "--viz-crypto", light: "#db2777", dark: "#f472b6" },
+  { name: "Private", cssVar: "--viz-private", light: "#71717a", dark: "#a1a1aa" },
 ];
 
 const typeScale = [
@@ -204,7 +204,7 @@ export default function BrandPage() {
 
       <Section
         title="Asset categories"
-        intro="Eight viz colors in canonical order. The first five are also exposed as --chart-1..5 for shadcn charts."
+        intro="Seven viz colors in canonical order. The first five are also exposed as --chart-1..5 for shadcn charts."
       >
         <div className="grid gap-3 sm:grid-cols-2">
           {vizPalette.map((c) => (
@@ -229,9 +229,9 @@ export default function BrandPage() {
             <BrandDonut />
             <div className="text-body-sm text-muted-foreground flex flex-wrap justify-center gap-3">
               <LegendDot color="var(--viz-cash)" label="Cash" />
-              <LegendDot color="var(--viz-equity)" label="Equity" />
-              <LegendDot color="var(--viz-fixed-income)" label="Fixed income" />
-              <LegendDot color="var(--viz-real-estate)" label="Real estate" />
+              <LegendDot color="var(--viz-stocks)" label="Stocks" />
+              <LegendDot color="var(--viz-bonds)" label="Bonds" />
+              <LegendDot color="var(--viz-real-estate)" label="Real Estate" />
             </div>
           </CardContent>
         </Card>

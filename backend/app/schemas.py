@@ -12,11 +12,13 @@ flagged as validation_errors by the validation layer so the user can
 review and fix them in the UI, not rejected silently.
 """
 
+from __future__ import annotations
+
 from datetime import date, datetime
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ExtractedPosition(BaseModel):
@@ -154,12 +156,13 @@ class InlineClassification(BaseModel):
     /manual: ``auto_suffix`` defaults True (slug collision suffixing).
     /paste: sends ``auto_suffix=False`` with optional LLM suggestion meta
     for provenance on the classification row.
+
+    Commits always persist a single (asset_class, sub_class) bucket at
+    weight 1.0; multi-bucket funds are edited via PATCH /classifications.
     """
 
     asset_class: str
     sub_class: str | None = None
-    sector: str | None = None
-    region: str | None = None
     # True = manual slug flow (suffix on Classification collision). False =
     # market tickers: never suffix; skip DB write if a row already exists.
     auto_suffix: bool = True
@@ -338,12 +341,11 @@ DriftBand = Literal["ok", "watch", "act", "urgent"]
 
 
 class AllocationSlice(BaseModel):
-    """One wedge in the 3-ring sunburst.
+    """One wedge in the 2-ring sunburst (asset_class → sub_class).
 
-    ``children`` lets the same schema carry asset_class → region →
-    sub_class nesting. Leaves have ``children=[]`` and contribute their
-    value directly; inner nodes' ``value`` equals the sum of their
-    children.
+    ``children`` lists sub_class slices under each asset class. The
+    ``sector_breakdown`` field is deprecated (always empty); retained for
+    API shape compatibility.
     """
 
     name: str
@@ -351,9 +353,6 @@ class AllocationSlice(BaseModel):
     pct: float
     tickers: list[str] = []
     children: list["AllocationSlice"] = []
-    # Populated only on the equity top-level slice; contains one
-    # AllocationSlice per sector with name=sector key, value=dollars,
-    # pct=% of net worth. Empty on every other slice and at nested rings.
     sector_breakdown: list["AllocationSlice"] = []
     # v0.2: vs saved targets when present; sector_breakdown stays None.
     target_pct: float | None = None
@@ -361,83 +360,38 @@ class AllocationSlice(BaseModel):
     drift_band: DriftBand | None = None
 
 
-class FiveNumberSummary(BaseModel):
-    """Hero-strip numbers mandated by v0.1 Foundation acceptance (roadmap phase 0.1).
-
-    Percentages are of net worth. ``alts`` = real estate + commodity +
-    crypto + private (v0.1 scope).
-    """
-
-    net_worth: float
-    cash_pct: float
-    us_equity_pct: float
-    intl_equity_pct: float
-    alts_pct: float
+# ----- classifications (bucket model) -------------------------------------
 
 
-# ----- classifications (v0.1.5 M3) ----------------------------------------
+class ClassificationBucketPayload(BaseModel):
+    """One weighted routing bucket (asset_class × sub_class)."""
 
-
-class BreakdownBucket(BaseModel):
-    """One weighted bucket in a fund's look-through dimension."""
-
-    bucket: str
-    weight: float
-
-
-class FundBreakdown(BaseModel):
-    """Full look-through composition for a fund (from data/lookthrough.yaml).
-
-    Each dimension is a list of ``BreakdownBucket`` sorted by weight
-    descending so the UI can render the tooltip in a stable order
-    without re-sorting. Dimensions with no data are empty lists (bond
-    funds omit sector, gold funds omit region, etc.).
-    """
-
-    region: list[BreakdownBucket] = []
-    sub_class: list[BreakdownBucket] = []
-    sector: list[BreakdownBucket] = []
+    asset_class: str
+    sub_class: str | None = None
+    weight: float = Field(gt=0.0, le=1.0)
 
 
 class ClassificationRow(BaseModel):
-    """One row on the /classifications page.
-
-    Merged view over the YAML baseline and the DB user rows. ``source``
-    reflects where the active row came from; ``overrides_yaml`` is True
-    when a user row is replacing a YAML value (UI surfaces a badge).
-
-    ``has_breakdown`` flags funds that the allocation engine decomposes
-    via look-through (VT, VTI, VXUS, ...). The UI uses it to swap the
-    single-bucket sub_class/sector/region cells for an "Auto-split"
-    summary and to warn before an edit disables the decomposition.
-    ``breakdown`` carries the full look-through (all dimensions) so the
-    hover tooltip can show the same data the allocation engine uses,
-    matching the roadmap's "radical transparency" principle.
-    """
+    """Merged seed YAML row or user DB row for /api/classifications."""
 
     ticker: str
-    asset_class: str
-    sub_class: str | None = None
-    sector: str | None = None
-    region: str | None = None
+    buckets: list[ClassificationBucketPayload]
     source: str  # "yaml" | "user"
     overrides_yaml: bool = False
-    has_breakdown: bool = False
-    breakdown: FundBreakdown | None = None
+    has_breakdown: bool = False  # True when len(buckets) > 1
 
 
 class ClassificationPatch(BaseModel):
-    """Upsert payload for PATCH /api/classifications/{ticker}.
+    """Replace all buckets for a user-owned classification."""
 
-    Every field is required -- a user-owned classification must be
-    complete. ``asset_class`` must be in the taxonomy enum; the endpoint
-    enforces it so bad values can't sneak past Pydantic.
-    """
+    buckets: list[ClassificationBucketPayload] = Field(min_length=1)
 
-    asset_class: str
-    sub_class: str | None = None
-    sector: str | None = None
-    region: str | None = None
+    @model_validator(mode="after")
+    def weights_sum_to_one(self) -> "ClassificationPatch":
+        s = sum(b.weight for b in self.buckets)
+        if abs(s - 1.0) > 0.02:
+            raise ValueError("bucket weights must sum to 1.0 (+/- 0.02)")
+        return self
 
 
 class ClassificationSuggestRequest(BaseModel):
@@ -453,8 +407,6 @@ class ClassificationSuggestItem(BaseModel):
     source: Literal["existing", "llm", "none"]
     asset_class: str | None = None
     sub_class: str | None = None
-    sector: str | None = None
-    region: str | None = None
     confidence: float | None = None
     reasoning: str | None = None
 
@@ -462,26 +414,20 @@ class ClassificationSuggestItem(BaseModel):
 class TaxonomyOption(BaseModel):
     """One choice for the asset_class dropdown."""
 
-    value: str   # canonical snake_case stored in DB
-    label: str   # friendly label shown in UI ("Fixed Income")
+    value: str  # canonical plain-English key (storage + API)
+    label: str  # display (same as value for the locked taxonomy)
 
 
 class Taxonomy(BaseModel):
     asset_classes: list[TaxonomyOption]
+    # Allowed sub_class values per L1 from ``app.taxonomy.TAXONOMY``.
+    sub_classes_by_class: dict[str, list[TaxonomyOption]] = Field(default_factory=dict)
 
 
-# Single source of truth for the allocation taxonomy. Canonical values
-# are snake_case to match DB storage; labels are human-friendly for the
-# UI. Adding a new asset class = one line here. Displayed by /manual
-# and /classifications forms.
+from .taxonomy import TAXONOMY_L1_ORDER
+
 ASSET_CLASS_OPTIONS: list[TaxonomyOption] = [
-    TaxonomyOption(value="equity", label="Equity"),
-    TaxonomyOption(value="fixed_income", label="Fixed Income"),
-    TaxonomyOption(value="real_estate", label="Real Estate"),
-    TaxonomyOption(value="commodity", label="Commodity"),
-    TaxonomyOption(value="crypto", label="Crypto"),
-    TaxonomyOption(value="cash", label="Cash"),
-    TaxonomyOption(value="private", label="Private"),
+    TaxonomyOption(value=k, label=k) for k in TAXONOMY_L1_ORDER
 ]
 
 
@@ -512,9 +458,6 @@ class AllocationResult(BaseModel):
     # Tickers held but not present in data/classifications.yaml. UI flags
     # them so the user knows they're missing from the view.
     unclassified_tickers: list[str]
-    # M4 adds the 5-number summary strip. Optional for back-compat with
-    # M2 clients that pre-date it.
-    summary: FiveNumberSummary | None = None
     # Per-ticker source of the classification used to place it in the
     # tree. Values: "yaml" (bundled baseline), "user" (DB override),
     # "prefix" (synthetic fallback, pre-v0.1.5-M4). Drives the sunburst

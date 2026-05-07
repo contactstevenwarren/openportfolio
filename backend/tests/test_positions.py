@@ -293,7 +293,7 @@ def test_manual_realestate_commit_and_classify(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
     # v0.1.5 M4: the manual flow sends the classification alongside the
-    # position so aggregation sees real_estate immediately (no prefix
+    # position so aggregation sees Real Estate immediately (no prefix
     # fallback). The response surfaces the final ticker slug.
     body = {
         "source": "manual",
@@ -306,8 +306,8 @@ def test_manual_realestate_commit_and_classify(
                 "confidence": 1.0,
                 "source_span": "",
                 "classification": {
-                    "asset_class": "real_estate",
-                    "sub_class": "direct",
+                    "asset_class": "Real Estate",
+                    "sub_class": "Primary Residence",
                     "region": "US",
                 },
             }
@@ -320,6 +320,6 @@ def test_manual_realestate_commit_and_classify(
     r = client.get("/api/allocation", headers=auth_headers)
     body = r.json()
     names = {s["name"] for s in body["by_asset_class"]}
-    assert "real_estate" in names
+    assert "Real Estate" in names
     assert body["unclassified_tickers"] == []
     assert body["classification_sources"]["123main"] == "user"

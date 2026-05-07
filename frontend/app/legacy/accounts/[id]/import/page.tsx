@@ -281,8 +281,6 @@ export default function AccountPdfImportPage() {
               classification: {
                 asset_class: ac,
                 sub_class: null,
-                sector: null,
-                region: null,
                 auto_suffix: false,
                 suggestion_confidence: sug?.source === 'llm' ? sug.confidence ?? null : null,
                 suggestion_reasoning: sug?.source === 'llm' ? sug.reasoning ?? null : null,

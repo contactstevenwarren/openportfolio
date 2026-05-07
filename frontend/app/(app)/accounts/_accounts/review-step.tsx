@@ -52,8 +52,6 @@ type ReviewRow = {
   status: RowStatus;
   asset_class: string | null;
   sub_class: string | null;
-  sector: string | null;
-  region: string | null;
   class_source: ClassSource;
   showAdvanced: boolean;
 };
@@ -73,14 +71,6 @@ type ReviewStepProps = {
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-
-const REGION_OPTIONS = [
-  { value: "", label: "—" },
-  { value: "us", label: "US" },
-  { value: "intl_developed", label: "Intl developed" },
-  { value: "intl_emerging", label: "Intl emerging" },
-  { value: "global", label: "Global" },
-];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -161,8 +151,6 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           status,
           asset_class: null,
           sub_class: null,
-          sector: null,
-          region: null,
           class_source: "none",
           showAdvanced: false,
         };
@@ -186,8 +174,6 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           status: "removed" as RowStatus,
           asset_class: null,
           sub_class: null,
-          sector: null,
-          region: null,
           class_source: "none" as ClassSource,
           showAdvanced: false,
         }));
@@ -222,8 +208,6 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                 ...r,
                 asset_class: s.asset_class ?? null,
                 sub_class: s.sub_class ?? null,
-                sector: s.sector ?? null,
-                region: s.region ?? null,
                 class_source: classSource,
               };
             })
@@ -281,8 +265,6 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                     ...r,
                     asset_class: sug.asset_class ?? null,
                     sub_class: sug.sub_class ?? null,
-                    sector: sug.sector ?? null,
-                    region: sug.region ?? null,
                     class_source: sug.source === "existing" ? "yaml_user" : "llm",
                   }
                 : r
@@ -311,8 +293,6 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
               ? {
                   asset_class: r.asset_class,
                   sub_class: r.sub_class ?? null,
-                  sector: r.sector ?? null,
-                  region: r.region ?? null,
                   auto_suffix: false,
                 }
               : undefined,
@@ -471,25 +451,10 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
             <div className="flex flex-col gap-1 pl-1 border-l-2 border-border">
               <input
                 className="rounded border border-input bg-background px-1.5 py-0.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Sub-class"
+                placeholder="Sub-class (snake_case)"
                 value={row.sub_class ?? ""}
                 onChange={(e) => updateRow(row.id, "sub_class", e.target.value || null)}
               />
-              <input
-                className="rounded border border-input bg-background px-1.5 py-0.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Sector"
-                value={row.sector ?? ""}
-                onChange={(e) => updateRow(row.id, "sector", e.target.value || null)}
-              />
-              <select
-                className="rounded border border-input bg-background px-1.5 py-0.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                value={row.region ?? ""}
-                onChange={(e) => updateRow(row.id, "region", e.target.value || null)}
-              >
-                {REGION_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
             </div>
           )}
         </div>

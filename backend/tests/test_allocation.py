@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.allocation import aggregate, position_value
-from app.classifications import ClassificationEntry, load_classifications
+from app.classifications import BucketEntry, ClassificationEntry, load_classifications, primary_asset_class
 from app.models import Account, Position
 
 
@@ -57,9 +57,9 @@ def test_value_is_zero_when_both_missing() -> None:
 
 def _classifications() -> dict[str, ClassificationEntry]:
     return {
-        "VTI": ClassificationEntry(ticker="VTI", asset_class="equity"),
-        "BND": ClassificationEntry(ticker="BND", asset_class="fixed_income"),
-        "GLD": ClassificationEntry(ticker="GLD", asset_class="commodity"),
+        "VTI": ClassificationEntry.from_flat(ticker="VTI", asset_class="Stocks"),
+        "BND": ClassificationEntry.from_flat(ticker="BND", asset_class="Bonds"),
+        "GLD": ClassificationEntry.from_flat(ticker="GLD", asset_class="Commodities"),
     }
 
 
@@ -76,7 +76,7 @@ def test_single_position() -> None:
     )
     assert result.total == 10000.0
     assert len(result.by_asset_class) == 1
-    assert result.by_asset_class[0].name == "equity"
+    assert result.by_asset_class[0].name == "Stocks"
     assert result.by_asset_class[0].pct == 100.0
     assert result.by_asset_class[0].tickers == ["VTI"]
 
@@ -117,7 +117,7 @@ def test_slices_sorted_by_value_desc() -> None:
         ],
         _classifications(),
     )
-    assert [s.name for s in result.by_asset_class] == ["equity", "fixed_income", "commodity"]
+    assert [s.name for s in result.by_asset_class] == ["Stocks", "Bonds", "Commodities"]
 
 
 def test_mixed_value_sources() -> None:
@@ -131,14 +131,14 @@ def test_mixed_value_sources() -> None:
         _classifications(),
     )
     by_name = {s.name: s for s in result.by_asset_class}
-    assert by_name["equity"].value == 50000.0
-    assert by_name["fixed_income"].value == 30000.0
-    assert by_name["commodity"].value == 0.0
+    assert by_name["Stocks"].value == 50000.0
+    assert by_name["Bonds"].value == 30000.0
+    assert by_name["Commodities"].value == 0.0
 
 
 def test_aggregate_excludes_non_investable_from_total_and_tree() -> None:
     # GLD is non-investable -- counts toward net_worth but not Investment
-    # Portfolio. The commodity slice disappears entirely from the tree.
+    # Portfolio. The Commodities slice disappears entirely from the tree.
     result = aggregate(
         [
             _position("VTI", market_value=10000.0),
@@ -150,7 +150,7 @@ def test_aggregate_excludes_non_investable_from_total_and_tree() -> None:
     assert result.total == 15000.0
     assert result.net_worth == 18000.0
     names = {s.name for s in result.by_asset_class}
-    assert "commodity" not in names
+    assert "Commodities" not in names
     pct_sum = sum(s.pct for s in result.by_asset_class)
     assert abs(pct_sum - 100.0) < 1e-9
 
@@ -166,9 +166,8 @@ def test_aggregate_net_worth_equals_total_when_all_investable() -> None:
     assert result.total == result.net_worth == 15000.0
 
 
-def test_aggregate_summary_net_worth_is_full_net_worth() -> None:
-    # FiveNumberSummary.net_worth tracks the *full* sum, not the filtered
-    # Investment Portfolio total. Locks the contract that Snapshot reads.
+def test_aggregate_assets_total_includes_non_investable() -> None:
+    # assets_total is the full classified sum; total is investable-only.
     result = aggregate(
         [
             _position("VTI", market_value=10000.0),
@@ -176,8 +175,7 @@ def test_aggregate_summary_net_worth_is_full_net_worth() -> None:
         ],
         _classifications(),
     )
-    assert result.summary is not None
-    assert result.summary.net_worth == 13000.0
+    assert result.assets_total == 13000.0
     assert result.total == 10000.0
 
 
@@ -219,24 +217,20 @@ def test_unclassified_dedup_preserves_order() -> None:
     assert result.unclassified_tickers == ["FOO", "BAR"]
 
 
-def test_ring_layout_is_region_then_sub_class() -> None:
-    # Pins the invariant: Ring 2 = region, Ring 3 = sub_class, consistent
-    # across both equity and non-equity asset classes. Using tickers not
-    # in lookthrough.yaml so the breakdown fallback is the single-ticker
-    # classification (100% to each dimension), keeping the test focused
-    # on tree shape rather than fund fan-out.
+def test_ring_layout_is_asset_class_then_sub_class() -> None:
     classifications = {
-        "MYSTOCK": ClassificationEntry(
+        "MYSTOCK": ClassificationEntry.from_flat(
             ticker="MYSTOCK",
-            asset_class="equity",
-            sub_class="us_large_cap",
-            region="US",
+            asset_class="Stocks",
+            sub_class="US Stocks",
         ),
         "MYBOND": ClassificationEntry(
             ticker="MYBOND",
-            asset_class="fixed_income",
-            sub_class="us_aggregate",
-            region="US",
+            source="user",
+            buckets=(
+                BucketEntry("Bonds", "US Treasury", 0.67),
+                BucketEntry("Bonds", "US Corporate", 0.33),
+            ),
         ),
     }
     result = aggregate(
@@ -248,50 +242,35 @@ def test_ring_layout_is_region_then_sub_class() -> None:
     )
     by_name = {s.name: s for s in result.by_asset_class}
 
-    # Equity: ring 2 keyed by region, ring 3 keyed by sub_class.
-    equity_ring2 = by_name["equity"].children
-    assert [r.name for r in equity_ring2] == ["US"]
-    assert [c.name for c in equity_ring2[0].children] == ["us_large_cap"]
+    equity = by_name["Stocks"]
+    assert [c.name for c in equity.children] == ["US Stocks"]
+    assert equity.children[0].value == 60000.0
 
-    # Non-equity: same layout. (Previously ring 2 was sub_class here.)
-    fi_ring2 = by_name["fixed_income"].children
-    assert [r.name for r in fi_ring2] == ["US"]
-    assert [c.name for c in fi_ring2[0].children] == ["us_aggregate"]
-
-    # Ring totals sum correctly at each level.
-    assert equity_ring2[0].value == 60000.0
-    assert equity_ring2[0].children[0].value == 60000.0
-    assert fi_ring2[0].value == 40000.0
-    assert fi_ring2[0].children[0].value == 40000.0
+    fi = by_name["Bonds"]
+    assert len(fi.children) == 2
+    by_sub = {c.name: c.value for c in fi.children}
+    assert abs(by_sub.get("US Treasury", 0) + by_sub.get("US Corporate", 0) - 40000.0) < 0.01
 
 
-def test_ring_layout_falls_back_to_other_when_region_or_sub_class_missing() -> None:
-    # Cash entries with no region and sub_class="cash": Ring 2 (region)
-    # collapses to "other"; Ring 3 renders the known sub_class bucket.
-    # v0.1.5 M4 note: synthetic prefixes no longer auto-resolve inside
-    # classify(), so the caller passes an explicit entry.
+def test_ring_layout_falls_back_to_other_when_sub_class_missing() -> None:
     entries = {
-        "CASH:ally": ClassificationEntry(
+        "CASH:ally": ClassificationEntry.from_flat(
             ticker="CASH:ally",
-            asset_class="cash",
-            sub_class="cash",
+            asset_class="Cash",
+            sub_class="Cash & Savings",
         ),
     }
     result = aggregate([_position("CASH:ally", market_value=10000.0)], entries)
     cash = result.by_asset_class[0]
-    assert cash.name == "cash"
-    assert [r.name for r in cash.children] == ["other"]
-    assert [c.name for c in cash.children[0].children] == ["cash"]
+    assert cash.name == "Cash"
+    assert [c.name for c in cash.children] == ["Cash & Savings"]
     assert cash.children[0].value == 10000.0
 
 
-# --- equity sector_breakdown (v0.1.6 PR 1) --------------------------------
+# --- sector_breakdown (deprecated; always empty) -------------------------
 
 
-def test_equity_sector_breakdown_populated() -> None:
-    # VTI has a sector dict in data/lookthrough.yaml; BND and GLD don't.
-    # The equity slice should carry a non-empty sector_breakdown; all
-    # non-equity slices keep the default empty list.
+def test_sector_breakdown_empty_for_seed_portfolio() -> None:
     result = aggregate(
         [
             _position("VTI", market_value=60000.0),
@@ -300,38 +279,21 @@ def test_equity_sector_breakdown_populated() -> None:
         ],
         load_classifications(),
     )
-
-    equity = next(s for s in result.by_asset_class if s.name == "equity")
-    assert equity.sector_breakdown, "expected equity sector_breakdown to be populated"
-
-    sector_total = sum(s.value for s in equity.sector_breakdown)
-    assert abs(sector_total - equity.value) < 0.01
-
-    values = [s.value for s in equity.sector_breakdown]
-    assert values == sorted(values, reverse=True)
-
     for s in result.by_asset_class:
-        if s.name != "equity":
-            assert s.sector_breakdown == []
+        assert s.sector_breakdown == []
 
 
-def test_equity_sector_breakdown_empty_without_lookthrough() -> None:
-    # Direct equity ticker with no sector data -- user-owned override so
-    # get_breakdown is suppressed and _classification_weights yields
-    # sec_w={} (entry.sector is None). sector_breakdown should stay empty.
+def test_user_equity_slice_has_empty_sector_breakdown() -> None:
     entries = {
-        "MYSTOCK": ClassificationEntry(
+        "MYSTOCK": ClassificationEntry.from_flat(
             ticker="MYSTOCK",
-            asset_class="equity",
-            sub_class="us_large_cap",
-            region="US",
+            asset_class="Stocks",
+            sub_class="US Stocks",
             source="user",
         ),
     }
-    result = aggregate(
-        [_position("MYSTOCK", market_value=50000.0)], entries
-    )
-    equity = next(s for s in result.by_asset_class if s.name == "equity")
+    result = aggregate([_position("MYSTOCK", market_value=50000.0)], entries)
+    equity = next(s for s in result.by_asset_class if s.name == "Stocks")
     assert equity.sector_breakdown == []
 
 
@@ -355,7 +317,7 @@ def test_endpoint_empty(client: TestClient, auth_headers: dict[str, str]) -> Non
 def test_endpoint_reads_seed_classifications(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
-    # Seed portfolio: VTI (equity) + BND (fixed_income).
+    # Seed portfolio: VTI (equity) + BND (Bonds).
     account = Account(label="Test", type="brokerage")
     test_db.add(account)
     test_db.commit()
@@ -371,8 +333,8 @@ def test_endpoint_reads_seed_classifications(
     body = r.json()
     assert body["total"] == 100000.0
     by_name = {s["name"]: s for s in body["by_asset_class"]}
-    assert by_name["equity"]["pct"] == 60.0
-    assert by_name["fixed_income"]["pct"] == 40.0
+    assert by_name["Stocks"]["pct"] == 60.0
+    assert by_name["Bonds"]["pct"] == 40.0
 
 
 def _position_row(
@@ -392,9 +354,9 @@ def test_uses_real_yaml_classifications() -> None:
     # Sanity: the full seed YAML loads and contains the assets we expect
     # the allocation engine to group.
     entries = load_classifications()
-    assert entries["VTI"].asset_class == "equity"
-    assert entries["BND"].asset_class == "fixed_income"
-    assert entries["CASH"].asset_class == "cash"
+    assert primary_asset_class(entries["VTI"]) == "Stocks"
+    assert primary_asset_class(entries["BND"]) == "Bonds"
+    assert primary_asset_class(entries["CASH"]) == "Cash"
 
 
 # --- v0.1.5 M1: user overrides affect allocation --------------------------
@@ -406,35 +368,26 @@ def test_user_override_beats_yaml_in_allocation(
     """Core v0.1.5 user story 2: override a ticker's classification and
     see it reflected in the allocation payload (sub_class, sunburst
     routing, and the classification_sources map that drives tooltip
-    provenance). YAML says BND is ``us_aggregate``; the user reclassifies
-    it to ``us_treasury`` -- allocation must reflect the override.
+    provenance). YAML BND is split Treasury/Corporate; the user reclassifies
+    to a single US Treasury bucket — allocation must reflect the override.
     """
-    from app.models import Classification as DbClassification
+    from tests.db_helpers import seed_user_classification
 
     account = Account(label="Test", type="brokerage")
     test_db.add(account)
     test_db.commit()
     test_db.add(_position_row(account.id, "BND", market_value=10000.0))
-    test_db.add(
-        DbClassification(
-            ticker="BND",
-            asset_class="fixed_income",
-            sub_class="us_treasury",
-            region="US",
-            source="user",
-        )
-    )
+    seed_user_classification(test_db, "BND", "Bonds", "US Treasury")
     test_db.commit()
 
     r = client.get("/api/allocation", headers=auth_headers)
     body = r.json()
     assert body["classification_sources"]["BND"] == "user"
 
-    fixed_income = next(s for s in body["by_asset_class"] if s["name"] == "fixed_income")
-    us_region = next(c for c in fixed_income["children"] if c["name"] == "US")
-    sub_names = [c["name"] for c in us_region["children"]]
-    assert "us_treasury" in sub_names
-    assert "us_aggregate" not in sub_names
+    bonds = next(s for s in body["by_asset_class"] if s["name"] == "Bonds")
+    sub_names = [c["name"] for c in bonds["children"]]
+    assert "US Treasury" in sub_names
+    assert "US Corporate" not in sub_names or "US Treasury" in sub_names
 
 
 def test_classification_sources_default_to_yaml(

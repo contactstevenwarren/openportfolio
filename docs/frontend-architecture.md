@@ -57,7 +57,7 @@ shadcn semantic names are used directly. The accent-color rule is enforced by ma
 | `--destructive` | `#dc2626` | `#f87171` | |
 | `--success`, `--warning` | `#16a34a` / `#d97706` | `#4ade80` / `#fbbf24` | Status |
 | `--*-soft` (success/warning/destructive) | per `brand.md` | per `brand.md` | Pill backgrounds |
-| `--viz-cash`, `--viz-us-equity`, `--viz-intl-equity`, `--viz-fixed-income`, `--viz-real-estate`, `--viz-crypto`, `--viz-alts`, `--viz-other` | per `brand.md` | per `brand.md` | 8-category data viz |
+| `--viz-cash`, `--viz-stocks`, `--viz-bonds`, `--viz-real-estate`, `--viz-commodities`, `--viz-crypto`, `--viz-private` | per `brand.md` | per `brand.md` | L1 data viz |
 | `--chart-1..5` | = first 5 of viz | = first 5 of viz | shadcn `<Chart>` palette |
 
 Sidebar tokens (`--sidebar`, `--sidebar-foreground`, etc.) alias the corresponding semantic tokens; no separate sidebar palette.

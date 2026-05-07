@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.main import _migrate_schema
-from app.models import Account, Classification, Institution, Position
+from app.models import Account, Classification, ClassificationBucket, Institution, Position
 
 
 def test_list_requires_admin_token(client: TestClient) -> None:
@@ -163,8 +163,28 @@ def test_list_returns_enriched_shape(
 
     now = datetime.now(UTC)
     # Two classified positions + one unclassified
-    test_db.add(Classification(ticker="VTI", asset_class="equity", source="user"))
-    test_db.add(Classification(ticker="BND", asset_class="fixed_income", source="user"))
+    vti_c = Classification(ticker="VTI", source="user")
+    bnd_c = Classification(ticker="BND", source="user")
+    test_db.add_all([vti_c, bnd_c])
+    test_db.flush()
+    test_db.add_all(
+        [
+            ClassificationBucket(
+                ticker="VTI",
+                sort_order=0,
+                asset_class="Stocks",
+                sub_class="US Stocks",
+                weight=1.0,
+            ),
+            ClassificationBucket(
+                ticker="BND",
+                sort_order=0,
+                asset_class="Bonds",
+                sub_class="US Treasury",
+                weight=1.0,
+            ),
+        ]
+    )
     test_db.commit()
 
     test_db.add(Position(account_id=account.id, ticker="VTI", shares=10, market_value=2000.0, as_of=now, source="paste"))
@@ -192,8 +212,8 @@ def test_list_returns_enriched_shape(
 
     # class_breakdown: only non-zero asset classes
     breakdown_classes = {b["asset_class"] for b in row["class_breakdown"]}
-    assert "equity" in breakdown_classes
-    assert "fixed_income" in breakdown_classes
+    assert "Stocks" in breakdown_classes
+    assert "Bonds" in breakdown_classes
     # All values positive
     for b in row["class_breakdown"]:
         assert b["value"] > 0
@@ -366,7 +386,8 @@ def test_create_real_estate_account_with_position(
     classifications = client.get("/api/classifications", headers=auth_headers).json()
     cls_row = next((c for c in classifications if c["ticker"] == "my-home"), None)
     assert cls_row is not None
-    assert cls_row["asset_class"] == "real_estate"
+    assert cls_row["buckets"][0]["asset_class"] == "Real Estate"
+    assert cls_row["buckets"][0]["sub_class"] == "Primary Residence"
     assert cls_row["source"] == "user"
 
 

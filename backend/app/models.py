@@ -95,18 +95,46 @@ class Position(Base):
 
 
 class Classification(Base):
+    """Per-ticker classification header (user rows live in SQLite).
+
+    Weights and routing live in ``classification_buckets`` (one or more
+    rows per ticker). YAML tickers resolve from ``data/classifications.yaml``
+    without a DB row.
+    """
+
     __tablename__ = "classifications"
 
     ticker: Mapped[str] = mapped_column(String(64), primary_key=True)
-    asset_class: Mapped[str] = mapped_column(String(50))
-    sub_class: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    sector: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    region: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    # source = "yaml" | "yfinance" | "user"
+    # source = "yaml" | "user" — yaml-sourced rows are deprecated; v0.1.6+ uses file seed only.
     source: Mapped[str] = mapped_column(String(50))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+    buckets: Mapped[list["ClassificationBucket"]] = relationship(
+        back_populates="classification",
+        cascade="all, delete-orphan",
+        order_by="ClassificationBucket.sort_order",
+    )
+
+
+class ClassificationBucket(Base):
+    """Weighted (asset_class, sub_class) slice for a ticker (sums to 1.0 per ticker)."""
+
+    __tablename__ = "classification_buckets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticker: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("classifications.ticker", ondelete="CASCADE"),
+        index=True,
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"), default=0)
+    asset_class: Mapped[str] = mapped_column(String(50))
+    sub_class: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    weight: Mapped[float] = mapped_column(Float)
+
+    classification: Mapped["Classification"] = relationship(back_populates="buckets")
 
 
 class Snapshot(Base):
@@ -132,35 +160,12 @@ class Provenance(Base):
     entity_id: Mapped[int] = mapped_column(Integer, index=True)
     entity_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     field: Mapped[str] = mapped_column(String(50))
-    # source = "paste:fidelity-2026-04-18" | "manual" | "yfinance:2026-04-18" | "yaml:v0.1" | ...
+    # source = "paste:fidelity-2026-04-18" | "manual" | "yaml:v0.1" | ...
     source: Mapped[str] = mapped_column(String(200))
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Source span from the LLM extraction (character range or quoted excerpt).
     llm_span: Mapped[str | None] = mapped_column(Text, nullable=True)
     captured_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
-class FundHolding(Base):
-    """Cached fund composition (M4 look-through).
-
-    One row per (fund_ticker, dimension, bucket) triple, where dimension
-    is one of {"asset_class", "sub_class", "sector", "region"} and bucket
-    is the value within that dimension (e.g. "us_large_cap", "technology").
-    weight is 0..1. fetched_at drives the 24h cache; rows older than that
-    are refetched before use. Architecture data-model rule: "locked in
-    v0.1, extended in later phases" -- this is a pure extension.
-    """
-
-    __tablename__ = "fund_holdings"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    fund_ticker: Mapped[str] = mapped_column(String(64), index=True)
-    dimension: Mapped[str] = mapped_column(String(20))
-    bucket: Mapped[str] = mapped_column(String(50))
-    weight: Mapped[float] = mapped_column(Float)
-    # "yaml" | "yfinance"
-    source: Mapped[str] = mapped_column(String(50))
-    fetched_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class Liability(Base):
@@ -195,8 +200,9 @@ class Target(Base):
     """User-defined allocation targets (v0.2).
 
     ``path`` is the stable key: top-level asset class for ring-1
-    (``equity``) or a dotted drill path (``equity.US``,
-    ``fixed_income.us_aggregate``). Root targets are % of portfolio;
+    (``equity``) or a dotted drill path (``equity.us_large_cap``) where
+    the leaf is a sub_class name (2-ring allocation model).
+    Root targets are % of portfolio;
     group targets (``<ac>.<leaf>``) are % of parent asset class.
     Percentages are integers 0..100 validated on write.
     """

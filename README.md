@@ -15,7 +15,7 @@ An open-source portfolio x-ray for US DIY investors with fragmented accounts and
 
 ## What this is
 
-Paste broker statement text → the LLM extracts positions with per-row confidence and source spans → you review and commit → a deterministic Python engine produces a 3-ring sunburst (asset class → region → sub-class) with a 5-number summary on top. Non-brokerage assets (real estate, gold, crypto, private, HSA cash) enter through a manual form where you pick the asset class yourself. Every number on screen shows provenance on hover.
+Paste broker statement text → the LLM extracts positions with per-row confidence and source spans → you review and commit → a deterministic Python engine produces allocation by asset class (L1) with sub-class drill-down. Non-brokerage assets (real estate, gold, crypto, private, HSA cash) enter through a manual form where you pick the asset class yourself. Every number on screen shows provenance on hover.
 
 Not a returns tracker, not a benchmark comparison, not a trading tool. Visibility, not advice.
 
@@ -23,7 +23,7 @@ Not a returns tracker, not a benchmark comparison, not a trading tool. Visibilit
 
 | Route | What it does |
 |---|---|
-| `/` | 3-ring sunburst + 5-number summary. Click a wedge to drill down. |
+| `/` | Allocation donut (L1 + sub-class drill). Click a wedge to drill or open details. |
 | `/paste` | Paste a broker statement; LLM extracts rows; review and commit. |
 | `/manual` | Enter a non-brokerage asset (real estate, gold, checking, crypto, …) with its own classification. |
 | `/accounts` | Create, edit, delete accounts (brokerage / HSA / crypto / real-estate buckets). |
@@ -150,8 +150,7 @@ Pasted text → client-side scrub (6+ digit runs → [REDACTED])
            → SQLite
                 ↓
        allocation engine (Python; math never touches the LLM)
-           + fund look-through (yfinance gated; data/lookthrough.yaml)
-           + classifications (data/classifications.yaml, ~50 tickers)
+           + classifications (data/classifications.yaml)
                 ↓
        3-ring sunburst + 5-number summary + drill-down panel
 ```
@@ -165,24 +164,20 @@ Key invariants:
 
 ---
 
-## Editing the data files
+## Editing the data file
 
-Two source-controlled YAMLs drive the allocation engine. Both are checked into the repo so the math is auditable.
+One source-controlled YAML drives bundled ticker routing:
 
 ### `data/classifications.yaml`
 
-~50 tickers mapped to `asset_class` / `sub_class` / `sector` / `region`. Add a row for any ticker you hold that's missing — the UI will flag unclassified tickers in a red banner. Restart the backend after editing.
+Per-ticker `asset_class` / `sub_class` (flat) or a weighted `buckets` list for funds that split across L2 slices. Add or edit rows for any held ticker the UI flags as unclassified. Restart the backend after editing.
 
-Synthetic tickers (for manual entries) use prefixes resolved in `backend/app/classifications.py`:
+Synthetic tickers (manual entries) use prefixes resolved in `backend/app/classifications.py`:
 - `REALESTATE:123Main` → real_estate
 - `GOLD:*`, `SILVER:*` → commodity
 - `CRYPTO:*` → crypto
 - `PRIVATE:*` → private
 - `HSA_CASH:*` → cash
-
-### `data/lookthrough.yaml`
-
-Aggregate composition for funds (how VTI breaks down into sectors and regions). ~12 funds covering core index ETFs and target-date funds. When yfinance normalization lands in v0.2 this YAML becomes the fallback only; for now it's authoritative because Yahoo's taxonomy doesn't match ours (see `settings.lookthrough_yfinance_enabled`).
 
 ---
 

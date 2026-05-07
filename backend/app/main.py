@@ -22,13 +22,23 @@ from .classifications import (
     load_classifications,
     load_user_classifications,
     migrate_synthetic_positions,
+    primary_asset_class,
 )
 from .db import Base, SessionLocal, engine, get_db
 from .llm import classify_ticker, extract_positions
 from .pdf_text import PdfNoTextError, PdfTextTooLargeError, pdf_bytes_to_text
 from .scrub_digits import scrub_digit_runs
-from .lookthrough import Breakdown, get_yaml_breakdowns
-from .models import Account, Classification, FundHolding, Institution, Liability, Position, Provenance, Snapshot, Target
+from .models import (
+    Account,
+    Classification,
+    ClassificationBucket,
+    Institution,
+    Liability,
+    Position,
+    Provenance,
+    Snapshot,
+    Target,
+)
 from .schemas import (
     ASSET_CLASS_OPTIONS,
     MANUAL_ACCOUNT_TYPES,
@@ -40,7 +50,7 @@ from .schemas import (
     AccountPatch,
     AccountRead,
     AllocationResult,
-    BreakdownBucket,
+    ClassificationBucketPayload,
     ClassificationPatch,
     ClassificationRow,
     ClassificationSuggestItem,
@@ -51,7 +61,6 @@ from .schemas import (
     ExportResult,
     ExtractionResult,
     ExtractRequest,
-    FundBreakdown,
     InstitutionCreate,
     InstitutionRead,
     LiabilityCreate,
@@ -68,15 +77,90 @@ from .schemas import (
     SnapshotRead,
     TargetsPayload,
     Taxonomy,
+    TaxonomyOption,
+)
+from .taxonomy import (
+    TAXONOMY,
+    is_allowed_pair,
+    target_path_is_valid,
+    taxonomy_options_for_api,
 )
 
 _VALID_ASSET_CLASSES = {o.value for o in ASSET_CLASS_OPTIONS}
 
-# Suffix allows A–Z so region codes like ``US`` match allocation slice names.
-_TARGET_PATH_RE = re.compile(
-    r"^(equity|fixed_income|real_estate|commodity|crypto|cash|private)"
-    r"(\.[A-Za-z0-9_]+)?$"
-)
+
+def _migrate_classifications_bucket_model(eng: Engine) -> None:
+    """v0.1.6: flat classifications → bucket table; drop fund_holdings; wipe targets."""
+    inspector = inspect(eng)
+    tables = set(inspector.get_table_names())
+
+    if "fund_holdings" in tables:
+        with eng.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS fund_holdings"))
+
+    if "targets" in tables:
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM targets"))
+
+    if "classifications" not in tables:
+        return
+
+    cols = {c["name"] for c in inspector.get_columns("classifications")}
+    if "asset_class" not in cols:
+        return
+
+    with eng.begin() as conn:
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        conn.execute(text("DROP TABLE IF EXISTS classification_buckets"))
+        conn.execute(text("ALTER TABLE classifications RENAME TO classifications_legacy"))
+        conn.execute(
+            text(
+                "CREATE TABLE classifications ("
+                "ticker VARCHAR(64) NOT NULL PRIMARY KEY, "
+                "source VARCHAR(50) NOT NULL, "
+                "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO classifications (ticker, source, updated_at) "
+                "SELECT ticker, source, updated_at FROM classifications_legacy"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE classification_buckets ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "ticker VARCHAR(64) NOT NULL "
+                "REFERENCES classifications(ticker) ON DELETE CASCADE, "
+                "sort_order INTEGER NOT NULL DEFAULT 0, "
+                "asset_class VARCHAR(50) NOT NULL, "
+                "sub_class VARCHAR(50), "
+                "weight FLOAT NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO classification_buckets "
+                "(ticker, sort_order, asset_class, sub_class, weight) "
+                "SELECT ticker, 0, asset_class, "
+                "COALESCE(NULLIF(TRIM(sub_class), ''), 'other'), 1.0 "
+                "FROM classifications_legacy"
+            )
+        )
+        conn.execute(text("DROP TABLE classifications_legacy"))
+        conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
+def _taxonomy_from_locked() -> Taxonomy:
+    ac_rows, subs_map = taxonomy_options_for_api()
+    return Taxonomy(
+        asset_classes=[TaxonomyOption(value=v, label=l) for v, l in ac_rows],
+        sub_classes_by_class={
+            ac: [TaxonomyOption(value=v, label=l) for v, l in opts]
+            for ac, opts in subs_map.items()
+        },
+    )
 
 
 def _slug(s: str) -> str:
@@ -89,6 +173,114 @@ def _slug(s: str) -> str:
     slug = re.sub(r"[^a-z0-9._-]+", "-", s.strip().lower()).strip("-")
     slug = re.sub(r"-{2,}", "-", slug)
     return slug or "item"
+
+
+def _classification_row_from_entry(
+    ticker: str, entry: ClassificationEntry, *, overrides_yaml: bool = False
+) -> ClassificationRow:
+    payloads = [
+        ClassificationBucketPayload(
+            asset_class=b.asset_class, sub_class=b.sub_class, weight=b.weight
+        )
+        for b in entry.buckets
+    ]
+    return ClassificationRow(
+        ticker=ticker,
+        buckets=payloads,
+        source=entry.source,
+        overrides_yaml=overrides_yaml,
+        has_breakdown=len(entry.buckets) > 1,
+    )
+
+
+def _replace_user_classification_buckets(
+    db: Session,
+    ticker: str,
+    buckets: list[ClassificationBucketPayload],
+    provenance_source: str,
+    now: datetime,
+    *,
+    provenance_confidence: float = 1.0,
+    provenance_llm_span: str | None = None,
+) -> Classification:
+    row = db.get(Classification, ticker)
+    if row is None:
+        row = Classification(ticker=ticker, source="user")
+        db.add(row)
+        db.flush()
+    else:
+        row.source = "user"
+    db.query(ClassificationBucket).filter(ClassificationBucket.ticker == ticker).delete(
+        synchronize_session=False
+    )
+    for i, b in enumerate(buckets):
+        db.add(
+            ClassificationBucket(
+                ticker=ticker,
+                sort_order=i,
+                asset_class=b.asset_class,
+                sub_class=b.sub_class,
+                weight=b.weight,
+            )
+        )
+    db.add(
+        Provenance(
+            entity_type="classification",
+            entity_id=0,
+            entity_key=ticker,
+            field="buckets",
+            source=provenance_source,
+            confidence=provenance_confidence,
+            llm_span=provenance_llm_span,
+            captured_at=now,
+        )
+    )
+    return row
+
+
+def _single_bucket(
+    asset_class: str, sub_class: str | None
+) -> list[ClassificationBucketPayload]:
+    return [
+        ClassificationBucketPayload(
+            asset_class=asset_class,
+            sub_class=sub_class,
+            weight=1.0,
+        )
+    ]
+
+
+# Synthetic tickers for manual account types: map account.type → (L1, L2).
+_MANUAL_ACCOUNT_TYPE_TO_TAXONOMY: dict[str, tuple[str, str]] = {
+    "real_estate": ("Real Estate", "Primary Residence"),
+    "private": ("Private", "Private Equity"),
+}
+
+
+def _yaml_matches_single_bucket(
+    yaml_entry: ClassificationEntry | None,
+    asset_class: str,
+    sub_class: str | None,
+) -> bool:
+    if yaml_entry is None or len(yaml_entry.buckets) != 1:
+        return False
+    yb = yaml_entry.buckets[0]
+    return yb.asset_class == asset_class and (yb.sub_class or None) == (sub_class or None)
+
+
+def _yaml_asset_class_only_matches(
+    yaml_entry: ClassificationEntry | None,
+    asset_class: str,
+    sub_class: str | None,
+) -> bool:
+    """Paste/LLM often sends only asset_class. Skip a redundant user row when every
+    seed bucket is already that asset class (e.g. VTI = all equity buckets).
+    """
+    if yaml_entry is None or sub_class is not None:
+        return False
+    if not yaml_entry.buckets:
+        return False
+    return all(b.asset_class == asset_class for b in yaml_entry.buckets)
 
 
 def _targets_sum_ok(pcts: list[int]) -> bool:
@@ -131,13 +323,13 @@ def _validate_put_targets(body: TargetsPayload, result: AllocationResult) -> Non
             )
 
     for r in body.root:
-        if not _TARGET_PATH_RE.fullmatch(r.path):
+        if not target_path_is_valid(r.path):
             raise HTTPException(
                 status_code=422, detail=f"invalid target path {r.path!r}"
             )
     for rows in body.groups.values():
         for r in rows:
-            if not _TARGET_PATH_RE.fullmatch(r.path):
+            if not target_path_is_valid(r.path):
                 raise HTTPException(
                     status_code=422, detail=f"invalid target path {r.path!r}"
                 )
@@ -344,6 +536,8 @@ def _migrate_schema(eng: Engine) -> None:
             )
         )
 
+    _migrate_classifications_bucket_model(eng)
+
     # ── institutions: seed well-known US institutions ─────────────────────────
     # Idempotent: INSERT OR IGNORE skips any row whose lower(name) already
     # matches the unique index. Safe to run every startup.
@@ -436,10 +630,41 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(lifespan=lifespan)
+_OPENAPI_TAGS = [
+    {"name": "health", "description": "Liveness probe."},
+    {"name": "extract", "description": "LLM-powered position extraction from pasted text or PDF."},
+    {"name": "accounts", "description": "Investment and manual accounts (brokerage, real-estate, private, …)."},
+    {"name": "institutions", "description": "Financial institutions referenced by accounts and liabilities."},
+    {"name": "positions", "description": "Individual holdings inside an account."},
+    {"name": "allocation", "description": "Portfolio-wide asset allocation, drift, and per-class breakdowns."},
+    {"name": "snapshots", "description": "Historical net-worth snapshots written automatically on mutations."},
+    {"name": "liabilities", "description": "Debts subtracted from assets to produce net worth."},
+    {"name": "targets", "description": "Target allocation percentages used for drift and rebalance calculations."},
+    {"name": "rebalance", "description": "Trade suggestions to bring the portfolio back to target weights."},
+    {"name": "classifications", "description": "Ticker → asset-class/sub-class mappings (YAML seed + user overrides)."},
+    {"name": "export", "description": "Full JSON dump of all user-owned state for backup or migration."},
+    {"name": "admin", "description": "Destructive admin operations (reset)."},
+]
+
+app = FastAPI(
+    lifespan=lifespan,
+    title="OpenPortfolio API",
+    version="0.1",
+    description=(
+        "Personal portfolio tracker backend.\n\n"
+        "## Authentication\n\n"
+        "Every endpoint except `GET /health` requires the `X-Admin-Token` header "
+        "whose value must match the `ADMIN_TOKEN` environment variable set on the server. "
+        "Use the **Authorize** button above to enter your token once for the session."
+    ),
+    openapi_url="/api/openapi.json" if settings.docs_enabled else None,
+    docs_url="/api/docs" if settings.docs_enabled else None,
+    redoc_url="/api/redoc" if settings.docs_enabled else None,
+    openapi_tags=_OPENAPI_TAGS,
+)
 
 
-@app.get("/health")
+@app.get("/health", tags=["health"], summary="Liveness probe")
 def health() -> dict[str, bool]:
     return {"ok": True}
 
@@ -448,12 +673,12 @@ def _account_tuples(db: Session) -> list[tuple[int, str, str]]:
     return [(a.id, a.label, a.type) for a in db.query(Account).order_by(Account.id).all()]
 
 
-@app.post("/api/extract", dependencies=[Depends(require_admin_token)])
+@app.post("/api/extract", tags=["extract"], summary="Extract positions from pasted text", dependencies=[Depends(require_admin_token)])
 def extract(body: ExtractRequest, db: Session = Depends(get_db)) -> ExtractionResult:
     return extract_positions(body.text, accounts=_account_tuples(db))
 
 
-@app.post("/api/extract/pdf", dependencies=[Depends(require_admin_token)])
+@app.post("/api/extract/pdf", tags=["extract"], summary="Extract positions from a PDF file", dependencies=[Depends(require_admin_token)])
 def extract_pdf(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -580,7 +805,7 @@ def _enrich_account(
     )
 
 
-@app.get("/api/accounts", dependencies=[Depends(require_admin_token)])
+@app.get("/api/accounts", tags=["accounts"], summary="List all accounts", dependencies=[Depends(require_admin_token)])
 def list_accounts(db: Session = Depends(get_db)) -> list[AccountRead]:
     accounts = db.query(Account).order_by(Account.id).all()
     classifications = {**load_classifications(), **load_user_classifications(db)}
@@ -589,6 +814,8 @@ def list_accounts(db: Session = Depends(get_db)) -> list[AccountRead]:
 
 @app.post(
     "/api/accounts",
+    tags=["accounts"],
+    summary="Create an account",
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin_token)],
 )
@@ -636,19 +863,13 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)) -> Accoun
 
         # Upsert classification: asset_class mirrors account.type
         existing_cls = db.get(Classification, ticker)
+        now = datetime.now(UTC)
+        l1, l2 = _MANUAL_ACCOUNT_TYPE_TO_TAXONOMY[body.type]
+        manual_buckets = _single_bucket(l1, l2)
         if existing_cls is None:
-            db.add(
-                Classification(
-                    ticker=ticker,
-                    asset_class=body.type,
-                    sub_class=None,
-                    sector=None,
-                    region=None,
-                    source="user",
-                )
-            )
+            _replace_user_classification_buckets(db, ticker, manual_buckets, "manual", now)
         elif existing_cls.source == "user":
-            existing_cls.asset_class = body.type
+            _replace_user_classification_buckets(db, ticker, manual_buckets, "manual", now)
 
     db.commit()
     db.refresh(account)
@@ -656,7 +877,7 @@ def create_account(body: AccountCreate, db: Session = Depends(get_db)) -> Accoun
     return _enrich_account(account, classifications, db)
 
 
-@app.patch("/api/accounts/{account_id}", dependencies=[Depends(require_admin_token)])
+@app.patch("/api/accounts/{account_id}", tags=["accounts"], summary="Update an account", dependencies=[Depends(require_admin_token)])
 def patch_account(
     account_id: int, body: AccountPatch, db: Session = Depends(get_db)
 ) -> AccountRead:
@@ -676,6 +897,8 @@ def patch_account(
 
 @app.delete(
     "/api/accounts/{account_id}",
+    tags=["accounts"],
+    summary="Delete an account",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_admin_token)],
 )
@@ -713,13 +936,13 @@ def delete_account(account_id: int, db: Session = Depends(get_db)) -> None:
 # ----- institutions -------------------------------------------------------
 
 
-@app.get("/api/institutions", dependencies=[Depends(require_admin_token)])
+@app.get("/api/institutions", tags=["institutions"], summary="List all institutions", dependencies=[Depends(require_admin_token)])
 def list_institutions(db: Session = Depends(get_db)) -> list[InstitutionRead]:
     rows = db.query(Institution).order_by(func.lower(Institution.name)).all()
     return [InstitutionRead.model_validate(r) for r in rows]
 
 
-@app.post("/api/institutions", dependencies=[Depends(require_admin_token)])
+@app.post("/api/institutions", tags=["institutions"], summary="Create an institution", dependencies=[Depends(require_admin_token)])
 def create_institution(
     body: InstitutionCreate, db: Session = Depends(get_db)
 ) -> InstitutionRead:
@@ -811,90 +1034,59 @@ def _apply_commit_row_classification(
                     f"got {cls_in.asset_class!r}"
                 ),
             )
+        ac = cls_in.asset_class
+        sc = cls_in.sub_class
+        if sc is None:
+            sc = TAXONOMY[ac][0]
+        elif not is_allowed_pair(ac, sc):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"sub_class for {ac!r} must be one of {list(TAXONOMY[ac])}; "
+                    f"got {cls_in.sub_class!r}"
+                ),
+            )
+        commit_buckets = _single_bucket(ac, sc)
+        sc = cls_in.suggestion_confidence
+        sr = cls_in.suggestion_reasoning if sc is not None else None
+        pconf = float(sc) if sc is not None else 1.0
         if cls_in.auto_suffix:
             ticker = _resolve_ticker(db, ticker)
-            db.add(
-                Classification(
-                    ticker=ticker,
-                    asset_class=cls_in.asset_class,
-                    sub_class=cls_in.sub_class,
-                    sector=cls_in.sector,
-                    region=cls_in.region,
-                    source="user",
-                )
+            _replace_user_classification_buckets(
+                db, ticker, commit_buckets, source, now,
+                provenance_confidence=pconf,
+                provenance_llm_span=sr,
             )
-            for field, value in (
-                ("asset_class", cls_in.asset_class),
-                ("sub_class", cls_in.sub_class),
-                ("sector", cls_in.sector),
-                ("region", cls_in.region),
-            ):
-                db.add(
-                    Provenance(
-                        entity_type="classification",
-                        entity_id=0,
-                        entity_key=ticker,
-                        field=field,
-                        source=source,
-                        confidence=1.0,
-                        llm_span=None,
-                        captured_at=now,
-                    )
-                )
         else:
             existing_c = db.get(Classification, ticker)
             yaml_entries = load_classifications()
             yaml_hit = yaml_entries.get(ticker)
-            same_as_yaml = (
-                yaml_hit is not None
-                and yaml_hit.asset_class == cls_in.asset_class
+            same_as_yaml = _yaml_matches_single_bucket(
+                yaml_hit, cls_in.asset_class, cls_in.sub_class
+            ) or _yaml_asset_class_only_matches(
+                yaml_hit, cls_in.asset_class, cls_in.sub_class
             )
             if existing_c is not None:
-                # Update the existing user-owned row with the explicitly
-                # selected class. YAML-baseline rows are left alone.
                 if existing_c.source == "user":
-                    existing_c.asset_class = cls_in.asset_class
-                    existing_c.sub_class = cls_in.sub_class
-                    existing_c.sector = cls_in.sector
-                    existing_c.region = cls_in.region
+                    _replace_user_classification_buckets(
+                        db,
+                        ticker,
+                        commit_buckets,
+                        source,
+                        now,
+                        provenance_confidence=pconf,
+                        provenance_llm_span=sr,
+                    )
             elif not same_as_yaml:
-                db.add(
-                    Classification(
-                        ticker=ticker,
-                        asset_class=cls_in.asset_class,
-                        sub_class=cls_in.sub_class,
-                        sector=cls_in.sector,
-                        region=cls_in.region,
-                        source="user",
-                    )
+                _replace_user_classification_buckets(
+                    db,
+                    ticker,
+                    commit_buckets,
+                    source,
+                    now,
+                    provenance_confidence=pconf,
+                    provenance_llm_span=sr,
                 )
-            if existing_c is None or (existing_c is not None and existing_c.source == "user"):
-                sc = cls_in.suggestion_confidence
-                sr = cls_in.suggestion_reasoning
-                for field, value in (
-                    ("asset_class", cls_in.asset_class),
-                    ("sub_class", cls_in.sub_class),
-                    ("sector", cls_in.sector),
-                    ("region", cls_in.region),
-                ):
-                    conf = (
-                        sc
-                        if field == "asset_class" and sc is not None
-                        else 1.0
-                    )
-                    span = sr if field == "asset_class" else None
-                    db.add(
-                        Provenance(
-                            entity_type="classification",
-                            entity_id=0,
-                            entity_key=ticker,
-                            field=field,
-                            source=source,
-                            confidence=conf,
-                            llm_span=span,
-                            captured_at=now,
-                        )
-                    )
     return ticker
 
 
@@ -931,6 +1123,8 @@ def _add_position_numeric_provenance(
 
 @app.post(
     "/api/positions/commit",
+    tags=["positions"],
+    summary="Commit extracted positions to an account",
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin_token)],
 )
@@ -1179,9 +1373,6 @@ def _write_snapshot(db: Session) -> None:
         "by_asset_class": {
             s.name: {"value": s.value, "pct": s.pct} for s in result.by_asset_class
         },
-        "summary": (
-            result.summary.model_dump() if result.summary is not None else None
-        ),
         "unclassified_count": len(result.unclassified_tickers),
     }
     db.add(
@@ -1197,7 +1388,7 @@ def _write_snapshot(db: Session) -> None:
 # ----- positions read / patch / delete (M3) ------------------------------
 
 
-@app.get("/api/positions", dependencies=[Depends(require_admin_token)])
+@app.get("/api/positions", tags=["positions"], summary="List positions (optionally filtered by account)", dependencies=[Depends(require_admin_token)])
 def list_positions(
     account_id: int | None = Query(None),
     db: Session = Depends(get_db),
@@ -1219,7 +1410,7 @@ def list_positions(
     return [PositionRead.model_validate(p) for p in rows]
 
 
-@app.patch("/api/positions/{position_id}", dependencies=[Depends(require_admin_token)])
+@app.patch("/api/positions/{position_id}", tags=["positions"], summary="Update a position", dependencies=[Depends(require_admin_token)])
 def patch_position(
     position_id: int, body: PositionPatch, db: Session = Depends(get_db)
 ) -> PositionRead:
@@ -1259,6 +1450,8 @@ def patch_position(
 
 @app.delete(
     "/api/positions/{position_id}",
+    tags=["positions"],
+    summary="Delete a position",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_admin_token)],
 )
@@ -1275,7 +1468,7 @@ def delete_position(position_id: int, db: Session = Depends(get_db)) -> None:
 # ----- allocation ---------------------------------------------------------
 
 
-@app.get("/api/allocation", dependencies=[Depends(require_admin_token)])
+@app.get("/api/allocation", tags=["allocation"], summary="Portfolio allocation with drift bands", dependencies=[Depends(require_admin_token)])
 def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
     positions = db.query(Position).all()
     # YAML baseline + DB user overrides (user wins on ticker collision).
@@ -1320,6 +1513,8 @@ def get_allocation(db: Session = Depends(get_db)) -> AllocationResult:
 
 @app.get(
     "/api/allocation/positions/{asset_class}",
+    tags=["allocation"],
+    summary="Per-position contributions to an asset-class slice",
     dependencies=[Depends(require_admin_token)],
 )
 def get_allocation_positions(
@@ -1397,7 +1592,7 @@ def get_allocation_positions(
     )
 
 
-@app.get("/api/snapshots/earliest", dependencies=[Depends(require_admin_token)])
+@app.get("/api/snapshots/earliest", tags=["snapshots"], summary="Earliest net-worth snapshot", dependencies=[Depends(require_admin_token)])
 def get_earliest_snapshot(db: Session = Depends(get_db)) -> SnapshotEarliest | None:
     """Return the oldest Snapshot row, or null if none exist."""
     import json as _json
@@ -1423,7 +1618,7 @@ def get_earliest_snapshot(db: Session = Depends(get_db)) -> SnapshotEarliest | N
 # ----- liabilities (v0.1.7) ------------------------------------------------
 
 
-@app.get("/api/liabilities", dependencies=[Depends(require_admin_token)])
+@app.get("/api/liabilities", tags=["liabilities"], summary="List all liabilities", dependencies=[Depends(require_admin_token)])
 def list_liabilities(db: Session = Depends(get_db)) -> list[LiabilityRead]:
     """Return all liabilities sorted by as_of descending."""
     rows = db.query(Liability).order_by(Liability.as_of.desc()).all()
@@ -1432,6 +1627,8 @@ def list_liabilities(db: Session = Depends(get_db)) -> list[LiabilityRead]:
 
 @app.post(
     "/api/liabilities",
+    tags=["liabilities"],
+    summary="Create a liability",
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin_token)],
 )
@@ -1470,6 +1667,8 @@ def create_liability(
 
 @app.patch(
     "/api/liabilities/{liability_id}",
+    tags=["liabilities"],
+    summary="Update a liability",
     dependencies=[Depends(require_admin_token)],
 )
 def patch_liability(
@@ -1514,6 +1713,8 @@ def patch_liability(
 
 @app.delete(
     "/api/liabilities/{liability_id}",
+    tags=["liabilities"],
+    summary="Delete a liability",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_admin_token)],
 )
@@ -1530,12 +1731,12 @@ def delete_liability(liability_id: int, db: Session = Depends(get_db)) -> None:
 # ----- targets (v0.2) -------------------------------------------------------
 
 
-@app.get("/api/targets", dependencies=[Depends(require_admin_token)])
+@app.get("/api/targets", tags=["targets"], summary="Get target allocation", dependencies=[Depends(require_admin_token)])
 def get_targets(db: Session = Depends(get_db)) -> dict[str, object]:
     return _targets_get_payload(db)
 
 
-@app.put("/api/targets", dependencies=[Depends(require_admin_token)])
+@app.put("/api/targets", tags=["targets"], summary="Replace target allocation", dependencies=[Depends(require_admin_token)])
 def put_targets(body: TargetsPayload, db: Session = Depends(get_db)) -> dict[str, object]:
     positions = db.query(Position).all()
     classifications = {**load_classifications(), **load_user_classifications(db)}
@@ -1555,7 +1756,7 @@ def put_targets(body: TargetsPayload, db: Session = Depends(get_db)) -> dict[str
     return _targets_get_payload(db)
 
 
-@app.get("/api/rebalance", dependencies=[Depends(require_admin_token)])
+@app.get("/api/rebalance", tags=["rebalance"], summary="Rebalance trade suggestions", dependencies=[Depends(require_admin_token)])
 def get_rebalance(
     mode: Literal["full", "new_money"] = "full",
     amount: float | None = None,
@@ -1630,24 +1831,17 @@ def get_rebalance(
 # ----- classifications (v0.1.5 M3) ----------------------------------------
 
 
-@app.get("/api/classifications/taxonomy", dependencies=[Depends(require_admin_token)])
+@app.get("/api/classifications/taxonomy", tags=["classifications"], summary="L1/L2 taxonomy reference", dependencies=[Depends(require_admin_token)])
 def get_taxonomy() -> Taxonomy:
-    """Allowed asset_class values with display labels.
-
-    Single source of truth for both /classifications and /manual forms
-    (v0.1.5 M4). Frontend renders ``label``, sends ``value``.
-    """
-    return Taxonomy(asset_classes=ASSET_CLASS_OPTIONS)
+    """Locked L1/L2 taxonomy (plain-English keys)."""
+    return _taxonomy_from_locked()
 
 
-@app.post("/api/classifications/suggest", dependencies=[Depends(require_admin_token)])
+@app.post("/api/classifications/suggest", tags=["classifications"], summary="LLM classification hints for unclassified tickers", dependencies=[Depends(require_admin_token)])
 def suggest_classifications(
     body: ClassificationSuggestRequest, db: Session = Depends(get_db)
 ) -> list[ClassificationSuggestItem]:
-    """LLM hints for tickers not in merged YAML + user classifications.
-
-    Sends each unknown ticker to the configured LLM (ticker symbol only).
-    """
+    """LLM hints for tickers not in merged seed + user classifications."""
     yaml_entries = load_classifications()
     user_entries = load_user_classifications(db)
     merged: dict[str, ClassificationEntry] = {**yaml_entries, **user_entries}
@@ -1660,14 +1854,13 @@ def suggest_classifications(
         seen.add(ticker)
         if ticker in merged:
             ent = merged[ticker]
+            b0 = ent.buckets[0]
             out.append(
                 ClassificationSuggestItem(
                     ticker=ticker,
                     source="existing",
-                    asset_class=ent.asset_class,
-                    sub_class=ent.sub_class,
-                    sector=ent.sector,
-                    region=ent.region,
+                    asset_class=primary_asset_class(ent),
+                    sub_class=b0.sub_class,
                 )
             )
             continue
@@ -1687,161 +1880,71 @@ def suggest_classifications(
     return out
 
 
-def _full_breakdown(br: Breakdown) -> FundBreakdown:
-    """Structure a Breakdown as weight-sorted bucket lists for the UI.
-
-    Each dimension is sorted by weight descending so the hover tooltip
-    reads top-weighted first without the frontend needing to re-sort.
-    Empty dimensions stay empty lists (bond funds skip sector, gold
-    funds skip region, etc.).
-    """
-
-    def _sorted(dim: dict[str, float]) -> list[BreakdownBucket]:
-        return [
-            BreakdownBucket(bucket=b, weight=w)
-            for b, w in sorted(dim.items(), key=lambda kv: kv[1], reverse=True)
-        ]
-
-    return FundBreakdown(
-        region=_sorted(br.region),
-        sub_class=_sorted(br.sub_class),
-        sector=_sorted(br.sector),
-    )
-
-
-@app.get("/api/classifications", dependencies=[Depends(require_admin_token)])
+@app.get("/api/classifications", tags=["classifications"], summary="List all classifications (YAML seed + user overrides)", dependencies=[Depends(require_admin_token)])
 def list_classifications(db: Session = Depends(get_db)) -> list[ClassificationRow]:
-    """YAML baseline + user DB rows, user wins on ticker collision.
-
-    Funds with a known look-through are annotated with ``has_breakdown``
-    + the full ``breakdown`` so the UI can show "Auto-split by
-    underlying holdings" with a hover tooltip revealing the same
-    decomposition the allocation engine uses. YAML lookthroughs are
-    consulted directly -- no yfinance calls from this endpoint, which
-    keeps the response fast even for thousands of bundled tickers.
-    """
+    """Seed YAML baseline + user DB rows (user wins on ticker collision)."""
     yaml_entries = load_classifications()
     user_rows = {c.ticker: c for c in db.query(Classification).all()}
-    breakdowns = get_yaml_breakdowns()
-
-    def _annotate(ticker: str) -> tuple[bool, FundBreakdown | None]:
-        br = breakdowns.get(ticker)
-        if br is None:
-            return (False, None)
-        return (True, _full_breakdown(br))
-
+    user_entries_full = load_user_classifications(db)
     merged: list[ClassificationRow] = []
     for ticker, entry in yaml_entries.items():
         if ticker in user_rows:
-            continue  # user row emitted below with overrides_yaml=True
-        has_breakdown, breakdown = _annotate(ticker)
-        merged.append(
-            ClassificationRow(
-                ticker=ticker,
-                asset_class=entry.asset_class,
-                sub_class=entry.sub_class,
-                sector=entry.sector,
-                region=entry.region,
-                source="yaml",
-                has_breakdown=has_breakdown,
-                breakdown=breakdown,
-            )
-        )
+            continue
+        merged.append(_classification_row_from_entry(ticker, entry, overrides_yaml=False))
     for ticker, row in user_rows.items():
-        has_breakdown, breakdown = _annotate(ticker)
+        user_ent = user_entries_full.get(ticker)
+        if user_ent is None:
+            continue
         merged.append(
-            ClassificationRow(
-                ticker=ticker,
-                asset_class=row.asset_class,
-                sub_class=row.sub_class,
-                sector=row.sector,
-                region=row.region,
-                source="user",
-                overrides_yaml=ticker in yaml_entries,
-                has_breakdown=has_breakdown,
-                breakdown=breakdown,
+            _classification_row_from_entry(
+                ticker, user_ent, overrides_yaml=ticker in yaml_entries
             )
         )
     merged.sort(key=lambda r: r.ticker)
     return merged
 
 
-@app.patch("/api/classifications/{ticker}", dependencies=[Depends(require_admin_token)])
+@app.patch("/api/classifications/{ticker}", tags=["classifications"], summary="Upsert a user classification override", dependencies=[Depends(require_admin_token)])
 def patch_classification(
     ticker: str, body: ClassificationPatch, db: Session = Depends(get_db)
 ) -> ClassificationRow:
-    """Upsert a user-owned classification for ``ticker``.
-
-    Writes a Provenance row per changed field (entity_type='classification',
-    entity_key=ticker) so the audit trail matches positions. No diff
-    detection across fields: the caller supplies the full target shape,
-    and we capture provenance for every field we end up persisting --
-    keeps the code small and the audit trail thorough.
-    """
-    if body.asset_class not in _VALID_ASSET_CLASSES:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"asset_class must be one of "
-                f"{sorted(_VALID_ASSET_CLASSES)}; got {body.asset_class!r}"
-            ),
-        )
+    """Upsert user-owned buckets for ``ticker`` (weights must sum to ~1)."""
+    for b in body.buckets:
+        if b.asset_class not in _VALID_ASSET_CLASSES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"asset_class must be one of "
+                    f"{sorted(_VALID_ASSET_CLASSES)}; got {b.asset_class!r}"
+                ),
+            )
+        if b.sub_class is None or not is_allowed_pair(b.asset_class, b.sub_class):
+            allowed = list(TAXONOMY.get(b.asset_class, ()))
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"sub_class for asset_class={b.asset_class!r} must be one of "
+                    f"{allowed}; got {b.sub_class!r}"
+                ),
+            )
 
     now = datetime.now(UTC)
-    existing = db.get(Classification, ticker)
-    if existing is None:
-        existing = Classification(
-            ticker=ticker,
-            asset_class=body.asset_class,
-            sub_class=body.sub_class,
-            sector=body.sector,
-            region=body.region,
-            source="user",
-        )
-        db.add(existing)
-    else:
-        existing.asset_class = body.asset_class
-        existing.sub_class = body.sub_class
-        existing.sector = body.sector
-        existing.region = body.region
-        existing.source = "user"
-
-    for field, value in (
-        ("asset_class", body.asset_class),
-        ("sub_class", body.sub_class),
-        ("sector", body.sector),
-        ("region", body.region),
-    ):
-        db.add(
-            Provenance(
-                entity_type="classification",
-                entity_id=0,
-                entity_key=ticker,
-                field=field,
-                source="user",
-                confidence=1.0,
-                llm_span=None,
-                captured_at=now,
-            )
-        )
-
+    _replace_user_classification_buckets(
+        db, ticker, list(body.buckets), "user", now
+    )
     db.commit()
-    db.refresh(existing)
 
     yaml_entries = load_classifications()
-    return ClassificationRow(
-        ticker=ticker,
-        asset_class=existing.asset_class,
-        sub_class=existing.sub_class,
-        sector=existing.sector,
-        region=existing.region,
-        source="user",
-        overrides_yaml=ticker in yaml_entries,
+    user_ent = load_user_classifications(db)[ticker]
+    return _classification_row_from_entry(
+        ticker, user_ent, overrides_yaml=ticker in yaml_entries
     )
 
 
 @app.delete(
     "/api/classifications/{ticker}",
+    tags=["classifications"],
+    summary="Revert a user classification override to the YAML baseline",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_admin_token)],
 )
@@ -1882,7 +1985,7 @@ def delete_classification(ticker: str, db: Session = Depends(get_db)) -> None:
 # ----- export (M5) --------------------------------------------------------
 
 
-@app.get("/api/export", dependencies=[Depends(require_admin_token)])
+@app.get("/api/export", tags=["export"], summary="Full JSON export of user-owned state", dependencies=[Depends(require_admin_token)])
 def export_all(db: Session = Depends(get_db)) -> ExportResult:
     """Full JSON dump of user-owned state (architecture Privacy + risk #9 manual path).
 
@@ -1919,7 +2022,7 @@ def export_all(db: Session = Depends(get_db)) -> ExportResult:
 # ----- reset ---------------------------------------------------------------
 
 
-@app.post("/api/reset", status_code=204, dependencies=[Depends(require_admin_token)])
+@app.post("/api/reset", tags=["admin"], summary="Wipe all user data (irreversible)", status_code=204, dependencies=[Depends(require_admin_token)])
 def reset_all(db: Session = Depends(get_db)) -> None:
     """Wipe all user-owned account data and start fresh.
 
@@ -1934,6 +2037,5 @@ def reset_all(db: Session = Depends(get_db)) -> None:
     db.execute(delete(Target))
     db.execute(delete(Snapshot))
     db.execute(delete(Provenance))
-    db.execute(delete(FundHolding))
     db.execute(delete(Liability))
     db.commit()

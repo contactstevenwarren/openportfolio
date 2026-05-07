@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import useSWR from "swr";
+import useSWR, { mutate as globalMutate } from "swr";
 import {
   Sheet,
   SheetContent,
@@ -11,12 +11,24 @@ import {
   SheetDescription,
 } from "@/app/components/ui/sheet";
 import { Input } from "@/app/components/ui/input";
+import { Button } from "@/app/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
+import { BucketEditor, normalizeBucketsForTaxonomy } from "@/app/components/bucket-editor";
 import {
   api,
+  type ClassificationBucketPayload,
+  type ClassificationRow,
   type PositionContribution,
   type PositionContributionsResponse,
+  type Taxonomy,
 } from "@/app/lib/api";
-import { humanize } from "@/app/lib/labels";
 import { cn } from "@/app/lib/utils";
 import { formatPct, formatUsd } from "../mocks";
 
@@ -59,7 +71,7 @@ export function DonutDrillPanel({
       : `/api/allocation/positions/${scope.assetClass}`
     : null;
 
-  const { data, error, isLoading, mutate } = useSWR<PositionContributionsResponse>(
+  const { data, error, isLoading, mutate: revalidatePositions } = useSWR<PositionContributionsResponse>(
     swrKey,
     (url: string) => {
       const [path, qs] = url.split("?");
@@ -88,10 +100,72 @@ export function DonutDrillPanel({
     return () => clearTimeout(t);
   }, [search]);
 
+  const [editTicker, setEditTicker] = React.useState<string | null>(null);
+  const [editBuckets, setEditBuckets] = React.useState<ClassificationBucketPayload[]>([]);
+  const editInitRef = React.useRef<string | null>(null);
+
+  const { data: taxonomy } = useSWR<Taxonomy>(
+    editTicker ? "/api/classifications/taxonomy" : null,
+    api.taxonomy,
+    { revalidateOnFocus: false },
+  );
+  const { data: classificationRows = [] } = useSWR<ClassificationRow[]>(
+    editTicker ? "/api/classifications" : null,
+    api.classifications,
+    { revalidateOnFocus: false },
+  );
+
+  React.useEffect(() => {
+    if (!editTicker) {
+      editInitRef.current = null;
+      return;
+    }
+    if (!classificationRows.length || !taxonomy) return;
+    if (editInitRef.current === editTicker) return;
+    const row = classificationRows.find((c) => c.ticker === editTicker);
+    if (row) {
+      setEditBuckets(
+        normalizeBucketsForTaxonomy(row.buckets.map((b) => ({ ...b })), taxonomy),
+      );
+      editInitRef.current = editTicker;
+    } else {
+      editInitRef.current = editTicker;
+      setEditBuckets(
+        normalizeBucketsForTaxonomy(
+          [{ asset_class: "Stocks", sub_class: "US Stocks", weight: 1 }],
+          taxonomy,
+        ),
+      );
+    }
+  }, [editTicker, classificationRows, taxonomy]);
+
+  const [clsSaving, setClsSaving] = React.useState(false);
+
+  async function saveClassificationEdit() {
+    if (!editTicker || !taxonomy) return;
+    const s = editBuckets.reduce((acc, b) => acc + b.weight, 0);
+    if (Math.abs(s - 1) > 0.02) return;
+    setClsSaving(true);
+    try {
+      await api.patchClassification(editTicker, { buckets: editBuckets });
+      await globalMutate("/api/classifications");
+      await globalMutate("/api/allocation");
+      if (swrKey) await revalidatePositions();
+      setEditTicker(null);
+    } finally {
+      setClsSaving(false);
+    }
+  }
+
+  function openClassificationEditor(ticker: string) {
+    editInitRef.current = null;
+    setEditTicker(ticker);
+  }
+
   const title = scope
-    ? scope.l2
-      ? `${humanize(scope.assetClass)} → ${humanize(scope.l2)}`
-      : humanize(scope.assetClass)
+    ?     scope.l2
+      ? `${scope.assetClass} → ${scope.l2}`
+      : scope.assetClass
     : "";
 
   const filtered = React.useMemo(() => {
@@ -126,6 +200,7 @@ export function DonutDrillPanel({
   }
 
   return (
+    <>
     <Sheet open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <SheetContent
         side="right"
@@ -152,7 +227,7 @@ export function DonutDrillPanel({
         {/* Table */}
         <div className="flex-1 overflow-y-auto px-6">
           {isLoading && <LoadingBar />}
-          {error && <ErrorState onRetry={() => mutate()} />}
+          {error && <ErrorState onRetry={() => revalidatePositions()} />}
           {!isLoading && !error && data && (
             <HoldingsTable
               rows={filtered}
@@ -162,6 +237,7 @@ export function DonutDrillPanel({
               isFiltered={debouncedSearch.length > 0}
               total={filtered.length}
               isPartialPresent={filtered.some((p) => p.is_partial)}
+              onEditTicker={openClassificationEditor}
             />
           )}
         </div>
@@ -175,6 +251,46 @@ export function DonutDrillPanel({
         )}
       </SheetContent>
     </Sheet>
+
+    <Dialog open={editTicker !== null} onOpenChange={(o) => !o && setEditTicker(null)}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-h3">
+            Edit classification ·{" "}
+            <span className="font-mono">{editTicker}</span>
+          </DialogTitle>
+          <DialogDescription className="text-body-sm">
+            Weights must sum to 100% (±2%). Saves apply portfolio-wide for this ticker.
+          </DialogDescription>
+        </DialogHeader>
+        {taxonomy && (
+          <BucketEditor
+            buckets={editBuckets}
+            taxonomy={taxonomy}
+            disabled={clsSaving}
+            onChange={setEditBuckets}
+          />
+        )}
+        <DialogFooter className="gap-3 sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={clsSaving}
+            onClick={() => setEditTicker(null)}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            disabled={clsSaving || !taxonomy}
+            onClick={() => void saveClassificationEdit()}
+          >
+            {clsSaving ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
@@ -264,6 +380,7 @@ function HoldingsTable({
   isFiltered,
   total,
   isPartialPresent,
+  onEditTicker,
 }: {
   rows: PositionContribution[];
   sortKey: SortKey;
@@ -272,6 +389,7 @@ function HoldingsTable({
   isFiltered: boolean;
   total: number;
   isPartialPresent: boolean;
+  onEditTicker: (ticker: string) => void;
 }) {
   if (rows.length === 0) {
     return (
@@ -290,7 +408,7 @@ function HoldingsTable({
   return (
     <div>
       {/* Column headers */}
-      <div className="grid grid-cols-[1fr_1fr_auto_auto_auto] items-center gap-x-3 border-b px-1 pb-1">
+      <div className="grid grid-cols-[1fr_1fr_auto_auto_auto_auto] items-center gap-x-3 border-b px-1 pb-1">
         <button
           type="button"
           className={cn(thClass, "text-left")}
@@ -326,6 +444,9 @@ function HoldingsTable({
           % Port.
           <SortIcon active={sortKey === "share_of_portfolio"} dir={sortDir} />
         </button>
+        <span className={cn(thClass, "w-14 text-right text-[11px] cursor-default")}>
+          Class
+        </span>
       </div>
 
       {/* Rows */}
@@ -333,7 +454,7 @@ function HoldingsTable({
         {rows.map((p) => (
           <div
             key={`${p.account_id}-${p.ticker}`}
-            className="grid grid-cols-[1fr_1fr_auto_auto_auto] items-center gap-x-3 px-1 py-2 text-[14px] leading-[20px]"
+            className="grid grid-cols-[1fr_1fr_auto_auto_auto_auto] items-center gap-x-3 px-1 py-2 text-[14px] leading-[20px]"
           >
             <span className="font-mono text-[13px] leading-[18px] font-medium text-foreground">
               {p.ticker}
@@ -352,6 +473,15 @@ function HoldingsTable({
             </span>
             <span className="w-16 text-right tabular-nums text-muted-foreground">
               {formatPct(p.share_of_portfolio, { digits: 1 })}
+            </span>
+            <span className="w-14 text-right">
+              <button
+                type="button"
+                className="text-[12px] font-medium text-foreground underline-offset-2 hover:underline"
+                onClick={() => onEditTicker(p.ticker)}
+              >
+                Edit
+              </button>
             </span>
           </div>
         ))}
@@ -417,7 +547,7 @@ function PanelFooter({
       )}
       {unclassifiedCount > 0 && (
         <Link
-          href="/health"
+          href="/classifications"
           className="ml-3 underline underline-offset-2 hover:text-foreground"
         >
           Review {unclassifiedCount} unclassified →

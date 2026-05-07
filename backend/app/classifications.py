@@ -1,17 +1,16 @@
-"""YAML + user-override ticker classifications (docs/architecture.md classification and look-through).
+"""YAML classifications + user-override ticker classifications (bucket model).
 
-YAML is the baseline source of truth. DB rows in the ``classifications``
-table with ``source='user'`` override the YAML at aggregation time --
-see ``load_user_classifications`` below. ``classify()`` is pure
-dict-lookup against the merged YAML + user dict; the v0.1 "synthetic
-prefix" convention is gone as of v0.1.5 M4. Existing
-``PREFIX:suffix`` positions are migrated to per-ticker user rows on
-startup via ``migrate_synthetic_positions``.
+``data/classifications.yaml`` holds per-ticker rows: either a flat
+``asset_class`` / ``sub_class`` or a weighted ``buckets`` list for
+multi-slice funds. DB rows in ``classifications`` +
+``classification_buckets`` override the YAML for matching tickers
+(``source='user'``).
 
-The ``source`` carried on each ``ClassificationEntry`` is surfaced on
-the allocation response so the sunburst hover can show "classified as:
-us_tips (your override)".
+``classify()`` resolves merged YAML + user dict. Synthetic ``PREFIX:suffix``
+positions are migrated on startup via ``migrate_synthetic_positions``.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,104 +18,113 @@ from pathlib import Path
 import yaml
 from sqlalchemy.orm import Session
 
+from .taxonomy import TAXONOMY, assert_valid_buckets, merge_canonical_bucket_rows
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_PATH = REPO_ROOT / "data" / "classifications.yaml"
 
 
 @dataclass(frozen=True)
+class BucketEntry:
+    asset_class: str
+    sub_class: str | None
+    weight: float
+
+
+@dataclass(frozen=True)
 class ClassificationEntry:
     ticker: str
-    asset_class: str
-    sub_class: str | None = None
-    sector: str | None = None
-    region: str | None = None
-    # "yaml" = bundled baseline, "user" = DB override, "prefix" = synthetic
-    # fallback from _SYNTHETIC_PREFIXES. The allocation endpoint exposes
-    # this per ticker so the sunburst hover can show provenance for the
-    # classification routing (not just the position's numbers).
+    buckets: tuple[BucketEntry, ...]
+    # "yaml" = bundled baseline, "user" = DB override
     source: str = "yaml"
 
+    @staticmethod
+    def from_flat(
+        ticker: str,
+        *,
+        asset_class: str,
+        sub_class: str | None = None,
+        source: str = "yaml",
+    ) -> ClassificationEntry:
+        """Build a single 100% bucket (tests + API)."""
+        if sub_class is None or (isinstance(sub_class, str) and not str(sub_class).strip()):
+            if asset_class not in TAXONOMY:
+                raise ValueError(f"unknown asset_class {asset_class!r}")
+            sc = TAXONOMY[asset_class][0]
+        else:
+            sc = sub_class
+        merged = merge_canonical_bucket_rows([(asset_class, sc, 1.0)])
+        return ClassificationEntry(
+            ticker=ticker,
+            buckets=tuple(BucketEntry(a, s, w) for a, s, w in merged),
+            source=source,
+        )
 
-# Legacy prefix→classification table used ONLY by
-# ``migrate_synthetic_positions`` to convert existing v0.1 synthetic
-# ticker positions (e.g. ``REALESTATE:house``) into per-ticker
-# Classification rows at startup. Not consulted by ``classify()`` --
-# v0.1.5 M4 moved classification routing entirely onto the YAML +
-# Classification table. Delete this dict once all known installs have
-# run the migration at least once (roadmap v1.0 hardening).
-_LEGACY_SYNTHETIC_PREFIXES: dict[str, ClassificationEntry] = {
-    "REALESTATE": ClassificationEntry(
-        ticker="REALESTATE",
-        asset_class="real_estate",
-        sub_class="direct",
-        sector="real_estate",
-        region="US",
-    ),
-    "GOLD": ClassificationEntry(
-        ticker="GOLD",
-        asset_class="commodity",
-        sub_class="gold",
-    ),
-    "SILVER": ClassificationEntry(
-        ticker="SILVER",
-        asset_class="commodity",
-        sub_class="silver",
-    ),
-    "CRYPTO": ClassificationEntry(
-        ticker="CRYPTO",
-        asset_class="crypto",
-        sub_class="other",
-    ),
-    "PRIVATE": ClassificationEntry(
-        ticker="PRIVATE",
-        asset_class="private",
-        sub_class="equity",
-    ),
-    "HSA_CASH": ClassificationEntry(
-        ticker="HSA_CASH",
-        asset_class="cash",
-        sub_class="hsa_cash",
-    ),
-    # Generic cash pool for checking / savings / brokerage sweep cash that
-    # isn't tied to an HSA (e.g. ``CASH:ally``, ``CASH:wf-checking``).
-    "CASH": ClassificationEntry(
-        ticker="CASH",
-        asset_class="cash",
-        sub_class="cash",
-    ),
-    # Directly-held Treasury notes / bills (brokerage shows the CUSIP, not
-    # an ETF ticker). ``TREASURY:91282CKE0`` is the natural encoding.
-    "TREASURY": ClassificationEntry(
-        ticker="TREASURY",
-        asset_class="fixed_income",
-        sub_class="us_treasury",
-        region="US",
-    ),
-    # Treasury Inflation-Protected Securities held directly (TreasuryDirect).
-    "TIPS": ClassificationEntry(
-        ticker="TIPS",
-        asset_class="fixed_income",
-        sub_class="us_tips",
-        region="US",
-    ),
-    # FDIC-insured CDs held inside a brokerage (Schwab, Vanguard, etc.).
-    # Treated as cash-equivalent for the 5-number summary.
-    "CD": ClassificationEntry(
-        ticker="CD",
-        asset_class="cash",
-        sub_class="cd",
-    ),
-    # Employer stock held through an ESPP / RSU grant. Classified as a
-    # generic US large-cap equity; user can override via /positions if
-    # the employer is small/mid/foreign.
-    "ESPP": ClassificationEntry(
-        ticker="ESPP",
-        asset_class="equity",
-        sub_class="us_large_cap",
-        sector="diversified",
-        region="US",
-    ),
+
+# Legacy prefix→classification used ONLY by ``migrate_synthetic_positions``.
+# Values use the locked plain-English taxonomy (see ``app.taxonomy``).
+_LEGACY_SYNTHETIC_PREFIXES: dict[str, tuple[str, str | None]] = {
+    "REALESTATE": ("Real Estate", "Primary Residence"),
+    "GOLD": ("Commodities", "Gold"),
+    "SILVER": ("Commodities", "Silver"),
+    "CRYPTO": ("Crypto", "Other Crypto"),
+    "PRIVATE": ("Private", "Private Equity"),
+    "HSA_CASH": ("Cash", "Cash & Savings"),
+    "CASH": ("Cash", "Cash & Savings"),
+    "TREASURY": ("Bonds", "US Treasury"),
+    "TIPS": ("Bonds", "US Treasury"),
+    "CD": ("Cash", "CDs"),
+    "ESPP": ("Stocks", "US Stocks"),
 }
+
+
+def _entry_buckets(attrs: dict, ticker: str) -> tuple[BucketEntry, ...]:
+    """Parse flat row, explicit ``buckets`` list, or raise."""
+    if isinstance(attrs.get("buckets"), list):
+        blist = attrs["buckets"]
+        if not blist:
+            raise ValueError(f"{ticker!r}: buckets list is empty")
+        out: list[BucketEntry] = []
+        for i, b in enumerate(blist):
+            if not isinstance(b, dict):
+                raise ValueError(f"{ticker!r}: bucket {i} must be a mapping")
+            ac = b.get("asset_class")
+            if not ac or not isinstance(ac, str):
+                raise ValueError(f"{ticker!r}: bucket {i} needs asset_class string")
+            sc = b.get("sub_class")
+            if sc is not None and not isinstance(sc, str):
+                raise ValueError(f"{ticker!r}: bucket {i} sub_class must be string or null")
+            w = b.get("weight")
+            if w is None:
+                raise ValueError(f"{ticker!r}: bucket {i} needs weight")
+            wf = float(w)
+            if wf < 0 or wf > 1.0 + 1e-6:
+                raise ValueError(f"{ticker!r}: bucket {i} weight out of range")
+            out.append(BucketEntry(asset_class=ac, sub_class=sc, weight=wf))
+        s = sum(x.weight for x in out)
+        if s <= 0:
+            raise ValueError(f"{ticker!r}: bucket weights must sum to a positive value")
+        prelim = tuple(
+            BucketEntry(b.asset_class, b.sub_class, b.weight / s) for b in out
+        )
+        merged = merge_canonical_bucket_rows(
+            [(b.asset_class, b.sub_class, b.weight) for b in prelim],
+        )
+        assert_valid_buckets(merged)
+        return tuple(BucketEntry(a, s, w) for a, s, w in merged)
+
+    ac = str(attrs.get("asset_class") or "")
+    if not ac:
+        raise ValueError(f"{ticker!r}: missing asset_class (or non-empty buckets)")
+    sc = attrs.get("sub_class")
+    if sc is None or (isinstance(sc, str) and not str(sc).strip()):
+        if ac not in TAXONOMY:
+            raise ValueError(f"{ticker!r}: unknown asset_class {ac!r}")
+        sc_use = TAXONOMY[ac][0]
+    else:
+        sc_use = str(sc).strip()
+    merged = merge_canonical_bucket_rows([(ac, sc_use, 1.0)])
+    return tuple(BucketEntry(a, s, w) for a, s, w in merged)
 
 
 def load_classifications(path: Path = DEFAULT_PATH) -> dict[str, ClassificationEntry]:
@@ -127,57 +135,57 @@ def load_classifications(path: Path = DEFAULT_PATH) -> dict[str, ClassificationE
 
     entries: dict[str, ClassificationEntry] = {}
     for ticker, attrs in raw.items():
-        if not isinstance(attrs, dict) or not attrs.get("asset_class"):
-            raise ValueError(f"ticker {ticker!r} missing required asset_class")
+        if not isinstance(ticker, str) or ticker.startswith("#"):
+            continue
+        if not isinstance(attrs, dict):
+            continue
         entries[ticker] = ClassificationEntry(
             ticker=ticker,
-            asset_class=attrs["asset_class"],
-            sub_class=attrs.get("sub_class"),
-            sector=attrs.get("sector"),
-            region=attrs.get("region"),
+            buckets=_entry_buckets(attrs, ticker),
             source="yaml",
         )
     return entries
 
 
 def load_user_classifications(db: Session) -> dict[str, ClassificationEntry]:
-    """Pull every row from the ``classifications`` DB table.
+    from sqlalchemy.orm import selectinload
 
-    Every row has ``source='user'`` in v0.1.5 (either explicit user
-    edits via /classifications or the one-shot migration of synthetic
-    prefix positions). Caller merges this dict over the YAML baseline
-    so user rows win.
-    """
     from .models import Classification as DbClassification
 
-    rows = db.query(DbClassification).all()
-    return {
-        r.ticker: ClassificationEntry(
+    rows = (
+        db.query(DbClassification)
+        .options(selectinload(DbClassification.buckets))
+        .all()
+    )
+    out: dict[str, ClassificationEntry] = {}
+    for r in rows:
+        if not r.buckets:
+            continue
+        btuple = tuple(
+            BucketEntry(b.asset_class, b.sub_class, b.weight)
+            for b in sorted(r.buckets, key=lambda x: x.sort_order)
+        )
+        s = sum(b.weight for b in btuple)
+        if s <= 0:
+            continue
+        norm = tuple(
+            BucketEntry(b.asset_class, b.sub_class, b.weight / s) for b in btuple
+        )
+        merged = merge_canonical_bucket_rows(
+            [(b.asset_class, b.sub_class, b.weight) for b in norm],
+        )
+        out[r.ticker] = ClassificationEntry(
             ticker=r.ticker,
-            asset_class=r.asset_class,
-            sub_class=r.sub_class,
-            sector=r.sector,
-            region=r.region,
+            buckets=tuple(BucketEntry(a, sc, w) for a, sc, w in merged),
             source=r.source,
         )
-        for r in rows
-    }
+    return out
 
 
 def migrate_synthetic_positions(db: Session) -> int:
-    """One-shot: turn every existing ``PREFIX:suffix`` position into a
-    user Classification row, then the prefix fallback can disappear.
-
-    Idempotent -- rows that already have a Classification are skipped,
-    so it's safe to call on every startup. Returns the count of new
-    Classification rows created (handy for logs and tests).
-
-    Runs at startup because v0.1.5 drops the prefix-based fallback in
-    ``classify()``; without this migration, existing synthetic-ticker
-    positions (e.g. ``REALESTATE:house``) would become unclassified
-    after the upgrade.
-    """
+    """Convert ``PREFIX:suffix`` positions into per-ticker user Classification + buckets."""
     from .models import Classification as DbClassification
+    from .models import ClassificationBucket as DbBucket
     from .models import Position
 
     created = 0
@@ -192,15 +200,18 @@ def migrate_synthetic_positions(db: Session) -> int:
         prefix = p.ticker.split(":", 1)[0].upper()
         legacy = _LEGACY_SYNTHETIC_PREFIXES.get(prefix)
         if legacy is None:
-            continue  # unknown prefix -> let aggregation flag it unclassified
+            continue
+        ac, sc = legacy
+        row = DbClassification(ticker=p.ticker, source="user")
+        db.add(row)
+        db.flush()
         db.add(
-            DbClassification(
+            DbBucket(
                 ticker=p.ticker,
-                asset_class=legacy.asset_class,
-                sub_class=legacy.sub_class,
-                sector=legacy.sector,
-                region=legacy.region,
-                source="user",
+                sort_order=0,
+                asset_class=ac,
+                sub_class=sc,
+                weight=1.0,
             )
         )
         created += 1
@@ -209,14 +220,15 @@ def migrate_synthetic_positions(db: Session) -> int:
     return created
 
 
+def primary_asset_class(entry: ClassificationEntry) -> str:
+    """Dominant asset_class for account summaries and zero-value fallbacks."""
+    if len(entry.buckets) == 1:
+        return entry.buckets[0].asset_class
+    return max(entry.buckets, key=lambda b: b.weight).asset_class
+
+
 def classify(
     ticker: str, entries: dict[str, ClassificationEntry]
 ) -> ClassificationEntry | None:
-    """Resolve a ticker to a ClassificationEntry.
-
-    v0.1.5 model: exact match against the merged YAML + user DB dict.
-    Synthetic prefix fallback is gone (``migrate_synthetic_positions``
-    at startup converts existing ``PREFIX:suffix`` positions into
-    per-ticker user rows so their ticker is now a direct lookup hit).
-    """
+    """Resolve a ticker to a ClassificationEntry (exact match)."""
     return entries.get(ticker)

@@ -3,7 +3,7 @@ import Link from "next/link";
 const routes = [
   { href: "/legacy/accounts", label: "Accounts" },
   { href: "/legacy/positions", label: "Positions" },
-  { href: "/legacy/classifications", label: "Classifications" },
+  { href: "/classifications", label: "Classifications" },
   { href: "/legacy/targets", label: "Targets" },
   { href: "/legacy/paste", label: "Paste positions" },
   { href: "/legacy/manual", label: "Manual entry" },

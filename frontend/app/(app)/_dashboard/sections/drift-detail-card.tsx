@@ -13,10 +13,9 @@ import {
 } from "@/app/components/ui/card";
 import { Provenance } from "@/app/lib/provenance";
 import { api, type AllocationResult } from "@/app/lib/api";
-import { humanize } from "@/app/lib/labels";
 import { useSandbox } from "@/app/lib/sandbox-context";
 import { formatPct, formatUsd, type DriftRow } from "../mocks";
-import { NAME_TO_CLASS } from "./donut-card";
+import { toAssetClass } from "./donut-card";
 
 const SCALE_MAX = 0.6;
 
@@ -62,8 +61,8 @@ export function DriftDetailCard() {
       const actualPct = s.pct / 100;
       const targetPct = (s.target_pct ?? s.pct) / 100;
       return {
-        class: NAME_TO_CLASS[s.name] ?? "other",
-        label: humanize(s.name),
+        class: toAssetClass(s.name),
+        label: s.name,
         actualPct,
         targetPct,
         gap: actualPct - targetPct,

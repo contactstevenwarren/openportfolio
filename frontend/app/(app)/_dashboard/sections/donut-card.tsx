@@ -23,7 +23,6 @@ import {
   type DriftBand,
 } from "@/app/lib/api";
 import { useSandbox } from "@/app/lib/sandbox-context";
-import { humanize } from "@/app/lib/labels";
 import { Provenance } from "@/app/lib/provenance";
 import { ASSET_CLASS_COLOR, formatPct, formatUsd, type AssetClass } from "../mocks";
 import { DonutDrillPanel, type PanelScope } from "./donut-drill-panel";
@@ -42,24 +41,22 @@ const INNER_RADIUS = 70;
 const DRIFT_FLOOR_PP = 1;
 const DRIFT_CEILING_PP = 10;
 
-// API L1 names → AssetClass slug used by ASSET_CLASS_COLOR.
-export const NAME_TO_CLASS: Record<string, AssetClass> = {
-  cash: "cash",
-  equity: "us-equity",
-  us_equity: "us-equity",
-  intl_equity: "intl-equity",
-  fixed_income: "fixed-income",
-  real_estate: "real-estate",
-  crypto: "crypto",
-  alts: "alts",
-  other: "other",
-};
+// Canonical L1 order for legend / sort (matches backend TAXONOMY_L1_ORDER).
+const CANONICAL_ORDER = [
+  "Cash",
+  "Stocks",
+  "Bonds",
+  "Real Estate",
+  "Commodities",
+  "Crypto",
+  "Private",
+] as const satisfies readonly AssetClass[];
 
-// Canonical brand order for the legend (brand.md §Charts).
-const CANONICAL_ORDER: AssetClass[] = [
-  "cash", "us-equity", "intl-equity", "fixed-income",
-  "real-estate", "crypto", "alts", "other",
-];
+const L1_NAMES = new Set<string>(CANONICAL_ORDER);
+
+export function toAssetClass(name: string): AssetClass {
+  return (L1_NAMES.has(name) ? name : "Private") as AssetClass;
+}
 
 type DisplaySlice = {
   name: string;
@@ -73,10 +70,8 @@ type DisplaySlice = {
   fill: string;
 };
 
-// Walk down through single-child layers so drilling Cash (which has only
-// one region "other") goes straight to its sub_classes. The 3-level data
-// tree (asset_class → region → sub_class) is preserved on the wire — this
-// is purely a presentation transform.
+// Walk through single-child layers (e.g. one sub_class) so drilling collapses
+// to the meaningful slice list. The API tree is asset_class → sub_class.
 export function meaningfulChildren(slice: AllocationSlice): AllocationSlice[] {
   const kids = slice.children ?? [];
   if (kids.length === 1) return meaningfulChildren(kids[0]);
@@ -100,8 +95,8 @@ function toDisplaySlices(
   const sorted = opts.sortByValueDesc
     ? [...visible].sort((a, b) => b.value - a.value)
     : [...visible].sort((a, b) => {
-        const ac = NAME_TO_CLASS[a.name] ?? "other";
-        const bc = NAME_TO_CLASS[b.name] ?? "other";
+        const ac = toAssetClass(a.name);
+        const bc = toAssetClass(b.name);
         const ai = CANONICAL_ORDER.indexOf(ac);
         const bi = CANONICAL_ORDER.indexOf(bc);
         if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
@@ -111,14 +106,14 @@ function toDisplaySlices(
   const parentColor = opts.parentCls ? ASSET_CLASS_COLOR[opts.parentCls] : null;
 
   return sorted.map((s, i) => {
-    const cls = NAME_TO_CLASS[s.name] ?? "other";
+    const cls = toAssetClass(s.name);
     const fill = parentColor
       ? l2Fill(parentColor, i, sorted.length)
       : ASSET_CLASS_COLOR[cls];
     return {
       name: s.name,
       cls,
-      label: humanize(s.name),
+      label: s.name,
       value: s.value,
       pct: s.pct,
       targetPct: s.target_pct ?? null,
@@ -229,7 +224,7 @@ function DonutBody({
     }
   }, [zoomInto, panelOpen]);
 
-  const parentCls = zoomedParent ? (NAME_TO_CLASS[zoomedParent.name] ?? "other") : undefined;
+  const parentCls = zoomedParent ? toAssetClass(zoomedParent.name) : undefined;
   const sourceSlices = zoomedParent ? meaningfulChildren(zoomedParent) : l1;
   const slices = toDisplaySlices(sourceSlices, {
     sortByValueDesc: zoomedParent != null,
@@ -238,12 +233,12 @@ function DonutBody({
   const rings = computeRings(slices);
 
   const description = zoomedParent
-    ? `Inside ${humanize(zoomedParent.name)}`
+    ? `Inside ${zoomedParent.name}`
     : "By asset class";
   const focusClass =
     zoomedParent &&
-    zoomedParent.name !== "fixed_income" &&
-    zoomedParent.name !== "real_estate" &&
+    zoomedParent.name !== "Bonds" &&
+    zoomedParent.name !== "Real Estate" &&
     meaningfulChildren(zoomedParent).length > 1
       ? zoomedParent.name
       : null;
@@ -284,8 +279,8 @@ function DonutBody({
       setZoomInto(null);
       return;
     }
-    // Fixed Income and Real Estate — L2 drill is not yet enabled; open panel directly.
-    if (name === "fixed_income" || name === "real_estate") {
+    // Bonds and Real Estate — L2 drill is not yet enabled; open panel directly.
+    if (name === "Bonds" || name === "Real Estate") {
       const l1Slice = l1.find((s) => s.name === name);
       openPanel({
         assetClass: name,
@@ -396,7 +391,7 @@ function DonutBody({
                   const sliceName = slices[index]?.name ?? "";
                   const l1Slice = !zoomedParent ? l1.find((s) => s.name === sliceName) : null;
                   const drillable = !isSimulating && !zoomedParent && l1Slice != null &&
-                    sliceName !== "fixed_income" && sliceName !== "real_estate" &&
+                    sliceName !== "Bonds" && sliceName !== "Real Estate" &&
                     meaningfulChildren(l1Slice).length > 1;
                   const clickable = zoomedParent != null || drillable || !isSimulating;
                   return (
@@ -421,11 +416,11 @@ function DonutBody({
                           <button
                             type="button"
                             onClick={() => setZoomInto(null)}
-                            aria-label={`Back to all asset classes (currently inside ${humanize(zoomedParent.name)})`}
+                            aria-label={`Back to all asset classes (currently inside ${zoomedParent.name})`}
                             className="flex h-full w-full flex-col items-center justify-center text-center hover:opacity-80 transition-opacity"
                           >
                             <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                              ← {humanize(zoomedParent.name)}
+                              ← {zoomedParent.name}
                             </span>
                             <span className="font-mono text-xl font-medium text-accent">
                               <Provenance source={STUB_PROVENANCE.source}>
@@ -466,7 +461,7 @@ function DonutBody({
             {slices.map((s) => {
               const l1Slice = !zoomedParent ? l1.find((ls) => ls.name === s.name) : undefined;
               const isDrillable = !isSimulating && l1Slice != null &&
-                s.name !== "fixed_income" && s.name !== "real_estate" &&
+                s.name !== "Bonds" && s.name !== "Real Estate" &&
                 meaningfulChildren(l1Slice).length > 1;
               // In L2 view: every slice is clickable (opens panel filtered to that L2).
               const isClickable = zoomedParent != null || isDrillable || !isSimulating;
@@ -516,7 +511,7 @@ function DonutBody({
                 onClick={() => openPanel(ctaScope)}
                 className="mt-2"
               >
-                View {humanize(ctaScope.assetClass)} holdings →
+                View {ctaScope.assetClass} holdings →
               </Button>
             )}
           </div>

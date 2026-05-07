@@ -23,7 +23,7 @@ export default function LegacyLayout({
         <a href="/legacy/positions" style={{ color: "#111" }}>
           Positions
         </a>
-        <a href="/legacy/classifications" style={{ color: "#111" }}>
+        <a href="/classifications" style={{ color: "#111" }}>
           Classifications
         </a>
         <a href="/" style={{ marginLeft: "auto", color: "#666" }}>

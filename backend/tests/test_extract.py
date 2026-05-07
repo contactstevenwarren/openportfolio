@@ -298,7 +298,7 @@ def test_extract_pdf_422_on_too_large(
 def test_classify_ticker_parses_llm_response(azure_configured: None) -> None:
     llm_json = json.dumps(
         {
-            "asset_class": "equity",
+            "asset_class": "Stocks",
             "confidence": 0.9,
             "reasoning": "US total market ETF.",
         }
@@ -306,7 +306,7 @@ def test_classify_ticker_parses_llm_response(azure_configured: None) -> None:
     with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
         result = classify_ticker("VTI")
     assert result is not None
-    assert result.asset_class == "equity"
+    assert result.asset_class == "Stocks"
     assert result.confidence == 0.9
     assert "ETF" in result.reasoning
 

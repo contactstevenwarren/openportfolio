@@ -11,6 +11,8 @@ import { useRouter } from 'next/navigation';
 
 import {
   api,
+  classificationDominantBucket,
+  classificationPrimaryAssetClass,
   type Account,
   type ClassificationRow,
   type ExtractedPosition,
@@ -728,9 +730,13 @@ export default function PositionsPage() {
                         <a
                           href={`/classifications?ticker=${encodeURIComponent(p.ticker)}`}
                           style={{ color: '#111', textDecoration: 'none' }}
-                          title={`${humanize(cls.asset_class)}${cls.sub_class ? ` / ${humanize(cls.sub_class)}` : ''}${cls.source === 'user' ? ' (your override)' : ''}`}
+                          title={`${humanize(classificationPrimaryAssetClass(cls)!)}${
+                            classificationDominantBucket(cls).sub_class
+                              ? ` / ${humanize(classificationDominantBucket(cls).sub_class!)}`
+                              : ''
+                          }${cls.source === 'user' ? ' (your override)' : ''}`}
                         >
-                          {humanize(cls.asset_class)}
+                          {humanize(classificationPrimaryAssetClass(cls)!)}
                           {cls.source === 'user' && (
                             <span style={overrideBadge} title="Your override">·</span>
                           )}

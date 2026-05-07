@@ -16,13 +16,12 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Slider } from "@/app/components/ui/slider";
 import { Provenance } from "@/app/lib/provenance";
-import { humanize } from "@/app/lib/labels";
 import {
   ASSET_CLASS_COLOR,
   formatPct,
   type AssetClass,
 } from "@/app/(app)/_dashboard/mocks";
-import { NAME_TO_CLASS, meaningfulChildren as meaningfulChildrenSlice } from "@/app/(app)/_dashboard/sections/donut-card";
+import { toAssetClass, meaningfulChildren as meaningfulChildrenSlice } from "@/app/(app)/_dashboard/sections/donut-card";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -33,13 +32,13 @@ type L1Class = {
 };
 
 const L1_CLASSES: L1Class[] = [
-  { key: "cash", label: "Cash", cls: "cash" },
-  { key: "equity", label: "Equity", cls: "us-equity" },
-  { key: "fixed_income", label: "Fixed income", cls: "fixed-income" },
-  { key: "real_estate", label: "Real estate", cls: "real-estate" },
-  { key: "commodity", label: "Commodity", cls: "alts" },
-  { key: "crypto", label: "Crypto", cls: "crypto" },
-  { key: "private", label: "Private", cls: "other" },
+  { key: "Cash", label: "Cash", cls: "Cash" },
+  { key: "Stocks", label: "Stocks", cls: "Stocks" },
+  { key: "Bonds", label: "Bonds", cls: "Bonds" },
+  { key: "Real Estate", label: "Real Estate", cls: "Real Estate" },
+  { key: "Commodities", label: "Commodities", cls: "Commodities" },
+  { key: "Crypto", label: "Crypto", cls: "Crypto" },
+  { key: "Private", label: "Private", cls: "Private" },
 ];
 
 const EMPTY_VALUES: Record<string, number> = Object.fromEntries(
@@ -54,27 +53,27 @@ const PRESETS: Preset[] = [
   {
     id: "conservative",
     label: "Conservative",
-    values: { cash: 20, equity: 30, fixed_income: 50, real_estate: 0, commodity: 0, crypto: 0, private: 0 },
+    values: { Cash: 20, Stocks: 30, Bonds: 50, "Real Estate": 0, Commodities: 0, Crypto: 0, Private: 0 },
   },
   {
     id: "60_40",
     label: "60/40",
-    values: { cash: 0, equity: 60, fixed_income: 40, real_estate: 0, commodity: 0, crypto: 0, private: 0 },
+    values: { Cash: 0, Stocks: 60, Bonds: 40, "Real Estate": 0, Commodities: 0, Crypto: 0, Private: 0 },
   },
   {
     id: "aggressive",
     label: "Aggressive",
-    values: { cash: 0, equity: 90, fixed_income: 10, real_estate: 0, commodity: 0, crypto: 0, private: 0 },
+    values: { Cash: 0, Stocks: 90, Bonds: 10, "Real Estate": 0, Commodities: 0, Crypto: 0, Private: 0 },
   },
   {
     id: "all_weather",
     label: "All-weather",
-    values: { cash: 0, equity: 30, fixed_income: 55, real_estate: 0, commodity: 15, crypto: 0, private: 0 },
+    values: { Cash: 0, Stocks: 30, Bonds: 55, "Real Estate": 0, Commodities: 15, Crypto: 0, Private: 0 },
   },
   {
     id: "diversified",
     label: "Diversified",
-    values: { cash: 5, equity: 50, fixed_income: 20, real_estate: 10, commodity: 5, crypto: 5, private: 5 },
+    values: { Cash: 5, Stocks: 50, Bonds: 20, "Real Estate": 10, Commodities: 5, Crypto: 5, Private: 5 },
   },
 ];
 
@@ -299,7 +298,7 @@ function EditorRow({
 
 // ── Route ─────────────────────────────────────────────────────────────────────
 
-const VALID_ASSET_CLASSES = /^(equity|fixed_income|real_estate|commodity|crypto|cash|private)$/;
+const VALID_ASSET_CLASSES = /^(Stocks|Bonds|Real Estate|Commodities|Crypto|Cash|Private)$/;
 
 function TargetsRouter() {
   const searchParams = useSearchParams();
@@ -633,7 +632,7 @@ function L2Editor({ focusClass }: { focusClass: string }) {
   }, [parentSlice]);
 
   const keys: string[] = l2Slices.map((s) => s.name);
-  const parentCls = NAME_TO_CLASS[focusClass] ?? "other";
+  const parentCls = toAssetClass(focusClass);
   const parentColor = ASSET_CLASS_COLOR[parentCls];
 
   // Actuals: % of parent for each meaningful child.
@@ -739,14 +738,14 @@ function L2Editor({ focusClass }: { focusClass: string }) {
       <div className="mx-auto flex w-full max-w-[900px] flex-col items-center gap-4 px-4 py-12 text-center">
         <p className="text-h3">Only one bucket here</p>
         <p className="text-body-sm text-muted-foreground">
-          {humanize(focusClass)} has only one sub-category — nothing to allocate between.
+          {focusClass} has only one sub-category — nothing to allocate between.
         </p>
         <Button variant="outline" onClick={() => router.push("/targets")}>Back to targets</Button>
       </div>
     );
   }
 
-  const title = `${humanize(focusClass)} breakdown`;
+  const title = `${focusClass} breakdown`;
 
   return (
     <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-6 lg:px-6">
@@ -770,8 +769,8 @@ function L2Editor({ focusClass }: { focusClass: string }) {
             )}
           </div>
           <p className="text-body-sm text-muted-foreground">
-            Set how to split your {humanize(focusClass).toLowerCase()} allocation.
-            Percentages are % of {humanize(focusClass).toLowerCase()}.
+            Set how to split your {focusClass.toLowerCase()} allocation.
+            Percentages are % of {focusClass.toLowerCase()}.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -824,7 +823,7 @@ function L2Editor({ focusClass }: { focusClass: string }) {
                       style={{ backgroundColor: l2Fill(parentColor, i, keys.length) }}
                       aria-hidden
                     />
-                    <span className="text-muted-foreground">{humanize(k)}</span>
+                    <span className="text-muted-foreground">{k}</span>
                   </div>
                   <span className="font-mono tabular-nums text-foreground">{values?.[k] ?? 0}%</span>
                 </div>
@@ -845,7 +844,7 @@ function L2Editor({ focusClass }: { focusClass: string }) {
               <EditorRow
                 key={k}
                 keyName={k}
-                label={humanize(k)}
+                label={k}
                 fill={l2Fill(parentColor, i, keys.length)}
                 target={values?.[k] ?? 0}
                 now={actualsMap[k] ?? 0}

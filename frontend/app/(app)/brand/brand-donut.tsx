@@ -11,33 +11,33 @@ import {
 } from "@/app/components/ui/chart";
 
 const chartData = [
-  { category: "cash", label: "Cash", value: 67791, fill: "var(--color-cash)" },
+  { category: "Cash", label: "Cash", value: 67791, fill: "var(--viz-cash)" },
   {
-    category: "equity",
-    label: "Equity",
+    category: "Stocks",
+    label: "Stocks",
     value: 516909,
-    fill: "var(--color-equity)",
+    fill: "var(--viz-stocks)",
   },
   {
-    category: "fixed-income",
-    label: "Fixed income",
+    category: "Bonds",
+    label: "Bonds",
     value: 152531,
-    fill: "var(--color-fixed-income)",
+    fill: "var(--viz-bonds)",
   },
   {
-    category: "real-estate",
-    label: "Real estate",
+    category: "Real Estate",
+    label: "Real Estate",
     value: 110161,
-    fill: "var(--color-real-estate)",
+    fill: "var(--viz-real-estate)",
   },
 ];
 
 const chartConfig = {
   value: { label: "Allocation" },
-  cash: { label: "Cash", color: "var(--viz-cash)" },
-  equity: { label: "Equity", color: "var(--viz-equity)" },
-  "fixed-income": { label: "Fixed income", color: "var(--viz-fixed-income)" },
-  "real-estate": { label: "Real estate", color: "var(--viz-real-estate)" },
+  Cash: { label: "Cash", color: "var(--viz-cash)" },
+  Stocks: { label: "Stocks", color: "var(--viz-stocks)" },
+  Bonds: { label: "Bonds", color: "var(--viz-bonds)" },
+  "Real Estate": { label: "Real Estate", color: "var(--viz-real-estate)" },
 } satisfies ChartConfig;
 
 const total = chartData.reduce((acc, d) => acc + d.value, 0);

@@ -1,14 +1,17 @@
 import type { AllocationSlice } from './api';
 
-export type Dim = 'geography' | 'sector' | 'sub_class';
+export type Dim = 'sub_class';
 export type Drill = { assetClass: string; dim: Dim } | null;
 
+/** L1 → drill dimension (2-ring model: sub_class children only). */
 export const DRILL_CONFIG: Record<string, Dim[]> = {
-  equity: ['geography', 'sector'],
-  fixed_income: ['sub_class'],
-  real_estate: ['sub_class'],
-  cash: ['sub_class'],
-  crypto: ['sub_class'],
+  Stocks: ['sub_class'],
+  Bonds: ['sub_class'],
+  'Real Estate': ['sub_class'],
+  Commodities: ['sub_class'],
+  Crypto: ['sub_class'],
+  Cash: ['sub_class'],
+  Private: ['sub_class'],
 };
 
 export function getDrillSlices(
@@ -19,20 +22,7 @@ export function getDrillSlices(
   if (!slice) return [];
   const parentValue = slice.value;
 
-  let raw: { name: string; value: number }[];
-  if (drill.dim === 'geography') {
-    raw = (slice.children ?? []).map((c) => ({ name: c.name, value: c.value }));
-  } else if (drill.dim === 'sector') {
-    raw = (slice.sector_breakdown ?? []).map((c) => ({ name: c.name, value: c.value }));
-  } else {
-    const sums = new Map<string, number>();
-    for (const region of slice.children ?? []) {
-      for (const sub of region.children ?? []) {
-        sums.set(sub.name, (sums.get(sub.name) ?? 0) + sub.value);
-      }
-    }
-    raw = Array.from(sums, ([name, value]) => ({ name, value }));
-  }
+  const raw = (slice.children ?? []).map((c) => ({ name: c.name, value: c.value }));
 
   return raw
     .filter((s) => s.value > 0)

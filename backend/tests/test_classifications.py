@@ -19,19 +19,15 @@ from app.classifications import (
     classify,
     load_classifications,
     migrate_synthetic_positions,
+    primary_asset_class,
 )
-from app.models import Account, Classification, Position
+from app.models import Account, Classification, ClassificationBucket, Position
+from tests.db_helpers import seed_user_classification
+
+from app.taxonomy import TAXONOMY
 
 EXPECTED_SEED = {"VTI", "VXUS", "BND", "VNQ", "GLD", "BTC", "SPY", "QQQ", "AAPL", "CASH"}
-VALID_ASSET_CLASSES = {
-    "equity",
-    "fixed_income",
-    "real_estate",
-    "commodity",
-    "crypto",
-    "cash",
-    "private",
-}
+VALID_ASSET_CLASSES = set(TAXONOMY.keys())
 
 
 def test_default_yaml_file_exists() -> None:
@@ -46,32 +42,43 @@ def test_all_seed_tickers_present() -> None:
 def test_every_entry_has_valid_asset_class() -> None:
     entries = load_classifications()
     for ticker, entry in entries.items():
-        assert entry.asset_class in VALID_ASSET_CLASSES, (
-            f"{ticker} has unknown asset_class {entry.asset_class!r}"
-        )
+        for b in entry.buckets:
+            assert b.asset_class in VALID_ASSET_CLASSES, (
+                f"{ticker} has unknown asset_class {b.asset_class!r}"
+            )
 
 
 def test_cash_classified_as_cash() -> None:
     entries = load_classifications()
-    assert entries["CASH"].asset_class == "cash"
+    assert primary_asset_class(entries["CASH"]) == "Cash"
 
 
-def test_us_equity_tickers_have_us_region() -> None:
+def test_us_equity_tickers_have_us_sub_class_dominance() -> None:
     entries = load_classifications()
     for ticker in ("VTI", "SPY", "QQQ", "AAPL"):
-        assert entries[ticker].region == "US", f"{ticker} region != US"
+        eq_buckets = [b for b in entries[ticker].buckets if b.asset_class == "Stocks"]
+        assert eq_buckets, f"{ticker}: expected at least one Stocks bucket"
+        dominant = max(eq_buckets, key=lambda b: b.weight)
+        assert dominant.sub_class is not None
+        assert dominant.sub_class == "US Stocks", (
+            f"{ticker} dominant Stocks sub_class {dominant.sub_class!r}"
+        )
 
 
 def test_entry_type_is_frozen_dataclass() -> None:
     entry = load_classifications()["VTI"]
     assert isinstance(entry, ClassificationEntry)
     with pytest.raises(Exception):
-        entry.asset_class = "mutated"  # type: ignore[misc]
+        entry.ticker = "mutated"  # type: ignore[misc]
 
 
 def test_missing_asset_class_raises(tmp_path: Path) -> None:
     bad = tmp_path / "bad.yaml"
-    bad.write_text(yaml.safe_dump({"FOO": {"sub_class": "x"}}))
+    bad.write_text(
+        yaml.safe_dump(
+            {"FOO": {"buckets": [{"sub_class": "x", "weight": 1.0}]}}
+        )
+    )
     with pytest.raises(ValueError, match="asset_class"):
         load_classifications(bad)
 
@@ -105,7 +112,7 @@ def test_classify_exact_match_wins() -> None:
     entries = load_classifications()
     entry = classify("VTI", entries)
     assert entry is not None
-    assert entry.asset_class == "equity"
+    assert primary_asset_class(entry) == "Stocks"
 
 
 def test_classify_unknown_returns_none() -> None:
@@ -152,15 +159,19 @@ def test_migration_converts_synthetic_positions(test_db: Session) -> None:
 
     house = test_db.get(Classification, "REALESTATE:123Main")
     assert house is not None
-    assert house.asset_class == "real_estate"
     assert house.source == "user"
+    hb = test_db.query(ClassificationBucket).filter_by(ticker="REALESTATE:123Main").one()
+    assert hb.asset_class == "Real Estate"
 
     gold = test_db.get(Classification, "GOLD:bar-1")
     assert gold is not None
-    assert gold.sub_class == "gold"
+    gb = test_db.query(ClassificationBucket).filter_by(ticker="GOLD:bar-1").one()
+    assert gb.sub_class == "Gold"
 
-
-def test_migration_is_idempotent(test_db: Session) -> None:
+    crypto = test_db.get(Classification, "CRYPTO:solana")
+    assert crypto is not None
+    cb = test_db.query(ClassificationBucket).filter_by(ticker="CRYPTO:solana").one()
+    assert cb.asset_class == "Crypto"
     _seed_position(test_db, "CASH:ally")
     assert migrate_synthetic_positions(test_db) == 1
     # Second run finds the row, skips it.
@@ -186,17 +197,11 @@ def test_migration_preserves_existing_user_row(test_db: Session) -> None:
     # If the user already created a Classification for a synthetic
     # ticker (e.g. via /classifications), the migration leaves it alone.
     _seed_position(test_db, "REALESTATE:house")
-    test_db.add(
-        Classification(
-            ticker="REALESTATE:house",
-            asset_class="real_estate",
-            sub_class="custom",
-            source="user",
-        )
-    )
+    seed_user_classification(test_db, "REALESTATE:house", "Real Estate", "Rental Property")
     test_db.commit()
 
     assert migrate_synthetic_positions(test_db) == 0
     row = test_db.get(Classification, "REALESTATE:house")
     assert row is not None
-    assert row.sub_class == "custom"  # user value preserved
+    b = test_db.query(ClassificationBucket).filter_by(ticker="REALESTATE:house").one()
+    assert b.sub_class == "Rental Property"  # user value preserved
