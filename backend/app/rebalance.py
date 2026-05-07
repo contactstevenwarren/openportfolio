@@ -24,6 +24,7 @@ All math in floats; callers round for display.
 import math
 from collections import defaultdict
 
+from .allocation import meaningful_children
 from .schemas import (
     AllocationResult,
     AllocationSlice,
@@ -47,35 +48,20 @@ def _l2_currents(
 ) -> dict[str, tuple[float, float]]:
     """Return {sub_path: (current_usd, actual_pct_of_parent)} for L2 targets.
 
-    Equity targets key by region (``equity.<region>`` -> region slice);
-    non-equity targets key by sub_class name (``<ac>.<sub>`` -> sum of
-    leaf values across regions with that sub_class name). Mirrors the
-    scoping used by ``apply_drift``.
+    Uses ``meaningful_children()`` so the current-value lookup matches the
+    same axis as the validator and drift code: regions for equity/FI/RE,
+    sub_classes for cash/crypto/commodity/private.
     """
     parent = ac_slice.value
     out: dict[str, tuple[float, float]] = {}
     prefix = f"{ac}."
-
-    if ac == "equity":
-        region_values = {c.name: c.value for c in ac_slice.children}
-        for path in targets:
-            if not path.startswith(prefix):
-                continue
-            name = path[len(prefix):]
-            cur = region_values.get(name, 0.0)
-            pct = (100.0 * cur / parent) if parent > 0 else 0.0
-            out[path] = (cur, pct)
-        return out
-
-    sub_values: dict[str, float] = defaultdict(float)
-    for reg in ac_slice.children:
-        for leaf in reg.children:
-            sub_values[leaf.name] += leaf.value
+    children_by_name = {c.name: c for c in meaningful_children(ac_slice)}
     for path in targets:
         if not path.startswith(prefix):
             continue
         name = path[len(prefix):]
-        cur = sub_values.get(name, 0.0)
+        child = children_by_name.get(name)
+        cur = child.value if child is not None else 0.0
         pct = (100.0 * cur / parent) if parent > 0 else 0.0
         out[path] = (cur, pct)
     return out

@@ -12,7 +12,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  -- register models with Base before create_all
-from .allocation import aggregate
+from .allocation import aggregate, meaningful_children
 from .auth import require_admin_token
 from .config import settings
 from .drift import apply_drift
@@ -180,14 +180,12 @@ def _validate_put_targets(body: TargetsPayload, result: AllocationResult) -> Non
                 status_code=422,
                 detail=f"group {gkey!r} has targets but allocation has no funded slice",
             )
-        if gkey == "equity":
-            required_p = {f"equity.{c.name}" for c in sl.children if c.value > 0}
-        else:
-            required_p = set()
-            for reg in sl.children:
-                for leaf in reg.children:
-                    if leaf.value > 0:
-                        required_p.add(f"{gkey}.{leaf.name}")
+        # Use meaningful_children() so the required paths match exactly what
+        # the donut drill shows: regions for equity/FI/RE, sub_classes for
+        # cash/crypto/commodity/private (after collapsing single-child layers).
+        required_p = {
+            f"{gkey}.{c.name}" for c in meaningful_children(sl) if c.value > 0
+        }
         provided_p = {r.path for r in rows}
         if required_p != provided_p:
             raise HTTPException(
@@ -1506,20 +1504,16 @@ def get_rebalance(
         )
 
     # Stale-L2 detection: mirrors _validate_put_targets group coverage.
+    # Uses meaningful_children() so required paths match the donut drill.
     by_name = {s.name: s for s in result.by_asset_class}
     for ac, sl in by_name.items():
         prefix = f"{ac}."
         provided_p = {p for p in targets if p.startswith(prefix)}
         if not provided_p:
             continue
-        if ac == "equity":
-            required_p = {f"equity.{c.name}" for c in sl.children if c.value > 0}
-        else:
-            required_p = set()
-            for reg in sl.children:
-                for leaf in reg.children:
-                    if leaf.value > 0:
-                        required_p.add(f"{ac}.{leaf.name}")
+        required_p = {
+            f"{ac}.{c.name}" for c in meaningful_children(sl) if c.value > 0
+        }
         if provided_p != required_p:
             raise HTTPException(
                 status_code=409,

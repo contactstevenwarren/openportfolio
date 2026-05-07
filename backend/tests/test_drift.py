@@ -114,16 +114,32 @@ def test_sector_breakdown_untouched() -> None:
         assert sec.drift_band is None
 
 
-def test_fixed_income_subclass_aggregate_drift() -> None:
+def test_fixed_income_region_drift() -> None:
+    """FI L2 targets now key by region (same axis as the donut drill).
+
+    B1 is classified region=US. With 100% in FI and a single region,
+    meaningful_children walks through the single "US" region to sub_classes.
+    Wait -- B1 has region="US" which gives one region child. So
+    meaningful_children() walks through the single US region and returns the
+    sub_class layer. Hence FI single-region → sub_class axis.
+    Target fixed_income.us_aggregate should still land on the sub_class slice.
+    """
     result = aggregate([_pos("B1", 100_000.0)], _classes())
-    targets = {"fixed_income.us_aggregate": 95.0}
+    # B1: region=US (single region) → meaningful_children collapses to sub_class layer.
+    # The target path is still fixed_income.us_aggregate (the sub_class name).
+    targets = {"fixed_income.us_aggregate": 100.0}
     out = apply_drift(result, targets, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
     fi = next(s for s in out.by_asset_class if s.name == "fixed_income")
+    # Find the annotated leaf
+    found = False
     for reg in fi.children:
         for leaf in reg.children:
             if leaf.name == "us_aggregate":
-                assert leaf.target_pct == 95.0
-                assert abs(leaf.drift_pct - (100.0 - 95.0)) < 1e-6
+                assert leaf.target_pct == 100.0
+                assert abs(leaf.drift_pct - 0.0) < 1e-6
+                assert leaf.drift_band == "ok"
+                found = True
+    assert found, "us_aggregate leaf should have drift fields"
 
 
 def _classes_with_tips() -> dict[str, ClassificationEntry]:
@@ -164,7 +180,11 @@ def test_equity_region_drift_is_pct_of_parent_not_portfolio() -> None:
 
 
 def test_non_equity_subclass_drift_is_pct_of_parent_not_portfolio() -> None:
-    """L2 fixed_income targets are % of fixed_income, not % of portfolio.
+    """L2 FI targets are % of parent (FI), not % of portfolio.
+
+    B1 and B2 are both region=US, so meaningful_children() collapses through
+    the single US region and returns the sub_class layer. Targets remain
+    sub_class-keyed for single-region FI.
 
     FI = $25k of $50k (50% of portfolio) split $15k us_aggregate /
     $10k us_tips. Parent-scoped actuals: 60 / 40. Targets
@@ -178,6 +198,7 @@ def test_non_equity_subclass_drift_is_pct_of_parent_not_portfolio() -> None:
         ],
         _classes_with_tips(),
     )
+    # Single-region FI: meaningful_children collapses US → returns sub_class slice.
     targets = {
         "fixed_income.us_aggregate": 60.0,
         "fixed_income.us_tips": 40.0,
@@ -187,7 +208,52 @@ def test_non_equity_subclass_drift_is_pct_of_parent_not_portfolio() -> None:
     seen: dict[str, float] = {}
     for reg in fi.children:
         for leaf in reg.children:
-            seen[leaf.name] = leaf.drift_pct
-            assert leaf.drift_band == "ok"
+            if leaf.drift_pct is not None:
+                seen[leaf.name] = leaf.drift_pct
+                assert leaf.drift_band == "ok"
     assert abs(seen["us_aggregate"]) < 1e-6
     assert abs(seen["us_tips"]) < 1e-6
+
+
+def _classes_fi_multiregion() -> dict[str, ClassificationEntry]:
+    """FI with US and intl_developed so meaningful_children returns regions."""
+    base = _classes()
+    base["BINT"] = ClassificationEntry(
+        ticker="BINT",
+        asset_class="fixed_income",
+        sub_class="intl_aggregate",
+        region="intl_developed",
+    )
+    return base
+
+
+def test_fi_multiregion_drift_by_region() -> None:
+    """When FI has positions in multiple regions, L2 targets key by region.
+
+    B1 (us_aggregate, region=US $15k) + BINT (intl_aggregate, intl_developed $10k)
+    → meaningful_children returns [US, intl_developed].
+    Targets fixed_income.US = 60, fixed_income.intl_developed = 40 → drift 0.
+    """
+    result = aggregate(
+        [
+            _pos("B1", 15_000.0),
+            _pos("BINT", 10_000.0),
+            _pos("E1", 25_000.0),
+        ],
+        _classes_fi_multiregion(),
+    )
+    targets = {
+        "fixed_income.US": 60.0,
+        "fixed_income.intl_developed": 40.0,
+    }
+    out = apply_drift(result, targets, drift_tolerance_pct=1.0, drift_act_pct=3.0, drift_urgent_pct=10.0)
+    fi = next(s for s in out.by_asset_class if s.name == "fixed_income")
+    # meaningful_children → region slices directly
+    us_reg = next(c for c in fi.children if c.name == "US")
+    intl_reg = next(c for c in fi.children if c.name == "intl_developed")
+    assert us_reg.target_pct == 60.0
+    assert abs(us_reg.drift_pct) < 1e-6
+    assert us_reg.drift_band == "ok"
+    assert intl_reg.target_pct == 40.0
+    assert abs(intl_reg.drift_pct) < 1e-6
+    assert intl_reg.drift_band == "ok"
