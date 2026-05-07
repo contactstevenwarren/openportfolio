@@ -214,10 +214,15 @@ function DonutBody({
   const description = zoomedParent
     ? `Inside ${humanize(zoomedParent.name)}`
     : "By asset class";
-  // Pass focus class only when zoomed AND there are meaningful children to edit.
-  const focusClass = zoomedParent && meaningfulChildren(zoomedParent).length > 1
-    ? zoomedParent.name
-    : null;
+  // Pass focus class only when zoomed, drillable, and has meaningful children to edit.
+  // Fixed Income and Real Estate are excluded until their L2 editor UX is enabled.
+  const focusClass =
+    zoomedParent &&
+    zoomedParent.name !== "fixed_income" &&
+    zoomedParent.name !== "real_estate" &&
+    meaningfulChildren(zoomedParent).length > 1
+      ? zoomedParent.name
+      : null;
 
   function handleSliceClick(name: string) {
     if (isSimulating) return;
@@ -230,6 +235,9 @@ function DonutBody({
       setZoomInto(null);
       return;
     }
+    // Fixed Income and Real Estate show multi-region data but their
+    // L2 UX is not enabled yet — skip drill for those classes.
+    if (name === "fixed_income" || name === "real_estate") return;
     const l1Slice = l1.find((s) => s.name === name);
     if (l1Slice && meaningfulChildren(l1Slice).length > 1) {
       setZoomInto(name);
@@ -294,6 +302,7 @@ function DonutBody({
                   const sliceName = slices[index]?.name ?? "";
                   const l1Slice = !zoomedParent ? l1.find((s) => s.name === sliceName) : null;
                   const drillable = !isSimulating && !zoomedParent && l1Slice != null &&
+                    sliceName !== "fixed_income" && sliceName !== "real_estate" &&
                     meaningfulChildren(l1Slice).length > 1;
                   return (
                     <Sector
@@ -366,6 +375,7 @@ function DonutBody({
               // but we don't render the parent row here — no-op.
               const l1Slice = !zoomedParent ? l1.find((ls) => ls.name === s.name) : undefined;
               const isDrillable = !isSimulating && l1Slice != null &&
+                s.name !== "fixed_income" && s.name !== "real_estate" &&
                 meaningfulChildren(l1Slice).length > 1;
               return (
                 <div key={s.name}>
