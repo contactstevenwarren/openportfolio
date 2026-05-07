@@ -76,8 +76,9 @@ type DisplaySlice = {
 // tree (asset_class → region → sub_class) is preserved on the wire — this
 // is purely a presentation transform.
 export function meaningfulChildren(slice: AllocationSlice): AllocationSlice[] {
-  if (slice.children.length === 1) return meaningfulChildren(slice.children[0]);
-  return slice.children;
+  const kids = slice.children ?? [];
+  if (kids.length === 1) return meaningfulChildren(kids[0]);
+  return kids;
 }
 
 // Generate a fill color for an L2 slice by mixing the parent's brand color
