@@ -23,7 +23,7 @@ classification). Math lives here, never in the LLM.
 """
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
 
 from sqlalchemy.orm import Session
 
@@ -83,6 +83,255 @@ def _classification_weights(
     region = {entry.region: 1.0} if entry.region else {}
     return asset_class, sub_class, sector, region
 
+
+# ---------------------------------------------------------------------------
+# Per-position contribution record — shared math for aggregate() and
+# positions_for_slice().  The generator owns weight resolution so the
+# distribution logic is defined exactly once.
+# ---------------------------------------------------------------------------
+
+class _Contribution:
+    """One (position, ac, reg, sc, dollars) tuple from the weight fan-out."""
+
+    __slots__ = (
+        "position",
+        "entry",
+        "ac_bucket",
+        "reg_bucket",
+        "sc_bucket",
+        "dollars",
+        "is_partial",
+    )
+
+    def __init__(
+        self,
+        position: Position,
+        entry: ClassificationEntry,
+        ac_bucket: str,
+        reg_bucket: str,
+        sc_bucket: str,
+        dollars: float,
+        is_partial: bool,
+    ) -> None:
+        self.position = position
+        self.entry = entry
+        self.ac_bucket = ac_bucket
+        self.reg_bucket = reg_bucket
+        self.sc_bucket = sc_bucket
+        self.dollars = dollars
+        self.is_partial = is_partial
+
+
+def _per_position_contributions(
+    positions: list[Position],
+    classifications: dict[str, ClassificationEntry],
+    db: Session | None = None,
+    non_investable_account_ids: frozenset[int] | None = None,
+) -> Generator[_Contribution, None, None]:
+    """Yield one _Contribution per (position × ac_bucket × reg_bucket × sc_bucket).
+
+    This is the canonical math for splitting position dollars into the 3-ring
+    tree.  Both aggregate() and positions_for_slice() rely on it — changing
+    the weight logic here changes both endpoints consistently.
+
+    Positions that are unclassified, zero-value, or non-investable are skipped.
+    ``is_partial`` is True when the fund's asset_class weights have more than
+    one bucket or any single bucket weight < 1 (i.e. a multi-class fund).
+    """
+    for p in positions:
+        entry = classify(p.ticker, classifications)
+        if entry is None:
+            continue
+
+        value = position_value(p)
+        if value <= 0:
+            continue
+
+        if non_investable_account_ids and p.account_id in non_investable_account_ids:
+            continue
+        if p.investable is False:
+            continue
+
+        br: Breakdown | None = (
+            None if entry.source == "user" else get_breakdown(p.ticker, db=db)
+        )
+        if br is not None:
+            ac_w, sc_w, _sec_w, reg_w = (
+                br.asset_class,
+                br.sub_class,
+                br.sector,
+                br.region,
+            )
+            is_partial = len(ac_w) > 1 or any(w < 1.0 - 1e-9 for w in ac_w.values())
+        else:
+            ac_w, sc_w, _sec_w, reg_w = _classification_weights(entry)
+            is_partial = False
+
+        for ac_bucket, ac_value in _bucket_weights(ac_w, value):
+            for reg_bucket, reg_value in _bucket_weights(reg_w, ac_value):
+                # Mirror aggregate()'s equity fallback: unregioned equity
+                # positions land in "US" on the donut, so the drill panel
+                # must use the same bucket name or the filter won't match.
+                effective_reg = (
+                    (entry.region or "US")
+                    if ac_bucket == "equity" and reg_bucket == UNSPECIFIED
+                    else reg_bucket
+                )
+                for sc_bucket, sc_value in _bucket_weights(sc_w, reg_value):
+                    yield _Contribution(
+                        position=p,
+                        entry=entry,
+                        ac_bucket=ac_bucket,
+                        reg_bucket=effective_reg,
+                        sc_bucket=sc_bucket,
+                        dollars=sc_value,
+                        is_partial=is_partial,
+                    )
+
+
+# ---------------------------------------------------------------------------
+# positions_for_slice — backing the drill-down panel endpoint
+# ---------------------------------------------------------------------------
+
+class SlicePosition:
+    """One row in the drill panel: (account, ticker) → contributing dollars."""
+
+    __slots__ = (
+        "ticker",
+        "account_id",
+        "account_name",
+        "contributing_value",
+        "share_of_slice",
+        "share_of_portfolio",
+        "is_partial",
+        "classification_source",
+    )
+
+    def __init__(
+        self,
+        ticker: str,
+        account_id: int,
+        account_name: str,
+        contributing_value: float,
+        share_of_slice: float,
+        share_of_portfolio: float,
+        is_partial: bool,
+        classification_source: str,
+    ) -> None:
+        self.ticker = ticker
+        self.account_id = account_id
+        self.account_name = account_name
+        self.contributing_value = contributing_value
+        self.share_of_slice = share_of_slice
+        self.share_of_portfolio = share_of_portfolio
+        self.is_partial = is_partial
+        self.classification_source = classification_source
+
+
+class SlicePositionsResult:
+    """Return value of positions_for_slice."""
+
+    __slots__ = ("total", "portfolio_total", "positions", "source_counts", "unclassified_count")
+
+    def __init__(
+        self,
+        total: float,
+        portfolio_total: float,
+        positions: list[SlicePosition],
+        source_counts: dict[str, int],
+        unclassified_count: int,
+    ) -> None:
+        self.total = total
+        self.portfolio_total = portfolio_total
+        self.positions = positions
+        self.source_counts = source_counts
+        self.unclassified_count = unclassified_count
+
+
+def positions_for_slice(
+    positions: list[Position],
+    classifications: dict[str, ClassificationEntry],
+    asset_class: str,
+    l2: str | None = None,
+    db: Session | None = None,
+    non_investable_account_ids: frozenset[int] | None = None,
+    account_names: dict[int, str] | None = None,
+    portfolio_total: float = 0.0,
+) -> SlicePositionsResult:
+    """Return per-position contributions to a given asset_class + optional L2 filter.
+
+    The L2 filter matches against reg_bucket (region ring) first, which is
+    what meaningful_children() surfaces for most classes.  For classes where
+    meaningful_children() collapsed through to sub_class, the caller may pass
+    the sc_bucket name; this function matches against both reg and sc buckets.
+
+    ``portfolio_total`` should be aggregate().total so share_of_portfolio
+    fractions reconcile exactly with the donut percentages.
+    """
+    # key: (account_id, ticker) → accumulated dollars + metadata
+    rows: dict[tuple[int, str], dict] = {}
+
+    # Count unclassified separately — generator skips them.
+    unclassified_count = sum(
+        1 for p in positions if classify(p.ticker, classifications) is None
+    )
+    source_counts: dict[str, int] = defaultdict(int)
+
+    for contrib in _per_position_contributions(
+        positions, classifications, db=db,
+        non_investable_account_ids=non_investable_account_ids,
+    ):
+        if contrib.ac_bucket != asset_class:
+            continue
+        if l2 is not None and contrib.reg_bucket != l2 and contrib.sc_bucket != l2:
+            continue
+
+        p = contrib.position
+        key = (p.account_id, p.ticker)
+        if key not in rows:
+            rows[key] = {
+                "account_id": p.account_id,
+                "ticker": p.ticker,
+                "contributing_value": 0.0,
+                "is_partial": contrib.is_partial,
+                "classification_source": contrib.entry.source,
+            }
+        rows[key]["contributing_value"] += contrib.dollars
+        if contrib.is_partial:
+            rows[key]["is_partial"] = True
+
+    slice_total = sum(r["contributing_value"] for r in rows.values())
+    acc_names = account_names or {}
+
+    result_positions: list[SlicePosition] = []
+    for row in sorted(rows.values(), key=lambda r: r["contributing_value"], reverse=True):
+        source = row["classification_source"]
+        source_counts[source] += 1
+        result_positions.append(
+            SlicePosition(
+                ticker=row["ticker"],
+                account_id=row["account_id"],
+                account_name=acc_names.get(row["account_id"], f"Account {row['account_id']}"),
+                contributing_value=row["contributing_value"],
+                share_of_slice=(row["contributing_value"] / slice_total) if slice_total > 0 else 0.0,
+                share_of_portfolio=(row["contributing_value"] / portfolio_total) if portfolio_total > 0 else 0.0,
+                is_partial=row["is_partial"],
+                classification_source=source,
+            )
+        )
+
+    return SlicePositionsResult(
+        total=slice_total,
+        portfolio_total=portfolio_total,
+        positions=result_positions,
+        source_counts=dict(source_counts),
+        unclassified_count=unclassified_count,
+    )
+
+
+# ---------------------------------------------------------------------------
+# aggregate — original single-pass algorithm, unchanged output contract
+# ---------------------------------------------------------------------------
 
 def aggregate(
     positions: list[Position],

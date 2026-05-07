@@ -103,6 +103,8 @@ Same pipeline handles paste (v0.1), text PDFs (v0.4: `pdfplumber` → text → p
 
 Walk each position → apply look-through if fund → sum effective weights across every dimension. Pure Python, CI-tested against fixture portfolios.
 
+`GET /api/allocation/positions/{asset_class}?l2={segment}` — drill-down endpoint returning per-(account, ticker) contributions to a given slice, using the same weight math as the allocation engine. Optional `l2` filters to a region/sub_class segment. Used by the dashboard donut drill panel.
+
 ---
 
 ## Privacy

@@ -188,6 +188,31 @@ export type AllocationResult = {
   drift_thresholds?: DriftThresholds;
 };
 
+export type PositionContribution = {
+  ticker: string;
+  account_id: number;
+  account_name: string;
+  contributing_value: number;
+  /** Fraction of the asset_class slice (or L2 sub-slice when l2 filter is set). */
+  share_of_slice: number;
+  /** Fraction of the total Investment Portfolio. */
+  share_of_portfolio: number;
+  /** True when fund look-through assigned a weight < 1 (multi-class fund). */
+  is_partial: boolean;
+  classification_source: string;
+};
+
+export type PositionContributionsResponse = {
+  asset_class: string;
+  l2: string | null;
+  /** Sum of contributing_value — reconciles with the donut slice total. */
+  total: number;
+  positions: PositionContribution[];
+  /** e.g. { yaml: 18, user: 6 } */
+  source_counts: Record<string, number>;
+  unclassified_count: number;
+};
+
 export type SnapshotEarliest = {
   taken_at: string;
   net_worth_usd: number;
@@ -427,6 +452,12 @@ export const api = {
   deleteAccount: (id: number) =>
     fetchJson<void>(`/api/accounts/${id}`, { method: 'DELETE' }),
   allocation: () => fetchJson<AllocationResult>('/api/allocation'),
+  allocationPositions: (assetClass: string, l2?: string) => {
+    const qs = l2 ? `?l2=${encodeURIComponent(l2)}` : '';
+    return fetchJson<PositionContributionsResponse>(
+      `/api/allocation/positions/${encodeURIComponent(assetClass)}${qs}`,
+    );
+  },
   getTargets: async (): Promise<TargetsPayload> => {
     if (typeof window === 'undefined') return { root: [], groups: {} };
     try {

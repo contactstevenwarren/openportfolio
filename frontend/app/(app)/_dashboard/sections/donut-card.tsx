@@ -10,6 +10,7 @@ import {
   Card,
   CardContent,
 } from "@/app/components/ui/card";
+import { Button } from "@/app/components/ui/button";
 import {
   ChartContainer,
   ChartTooltip,
@@ -25,6 +26,7 @@ import { useSandbox } from "@/app/lib/sandbox-context";
 import { humanize } from "@/app/lib/labels";
 import { Provenance } from "@/app/lib/provenance";
 import { ASSET_CLASS_COLOR, formatPct, formatUsd, type AssetClass } from "../mocks";
+import { DonutDrillPanel, type PanelScope } from "./donut-drill-panel";
 
 // API doesn't yet carry per-slice freshness; stub a static source so the
 // dotted-underline + hover tooltip show up everywhere a number is rendered.
@@ -175,9 +177,13 @@ function DonutBody({
   simulatedSlices: AllocationSlice[] | undefined;
 }) {
   const [zoomInto, setZoomInto] = React.useState<string | null>(null);
+  // Panel scope: which slice + optional L2 the side panel shows.
+  const [panelScope, setPanelScope] = React.useState<PanelScope | null>(null);
+  const [panelOpen, setPanelOpen] = React.useState(false);
+
   const isSimulating = simulatedSlices != null;
 
-  // Q5=C: simulating clears zoom and locks L1-only.
+  // Simulating clears zoom and locks L1-only.
   React.useEffect(() => {
     if (isSimulating && zoomInto !== null) setZoomInto(null);
   }, [isSimulating, zoomInto]);
@@ -193,7 +199,16 @@ function DonutBody({
     }
   }, [l1, zoomInto]);
 
-  // Esc exits zoom.
+  // Guard stale panel: if the panel's asset_class disappears from allocation,
+  // close the panel silently.
+  React.useEffect(() => {
+    if (panelScope && !l1.find((s) => s.name === panelScope.assetClass)) {
+      setPanelOpen(false);
+      setPanelScope(null);
+    }
+  }, [l1, panelScope]);
+
+  // Esc exits zoom (existing) — panel has its own ESC via SheetContent.
   React.useEffect(() => {
     if (!zoomedParent) return;
     const onKey = (e: KeyboardEvent) => {
@@ -203,6 +218,17 @@ function DonutBody({
     return () => window.removeEventListener("keydown", onKey);
   }, [zoomedParent]);
 
+  // Un-drilling fully (zoomInto → null) closes the panel.
+  const prevZoomRef = React.useRef<string | null>(zoomInto);
+  React.useEffect(() => {
+    const prev = prevZoomRef.current;
+    prevZoomRef.current = zoomInto;
+    if (prev !== null && zoomInto === null && panelOpen) {
+      setPanelOpen(false);
+      setPanelScope(null);
+    }
+  }, [zoomInto, panelOpen]);
+
   const parentCls = zoomedParent ? (NAME_TO_CLASS[zoomedParent.name] ?? "other") : undefined;
   const sourceSlices = zoomedParent ? meaningfulChildren(zoomedParent) : l1;
   const slices = toDisplaySlices(sourceSlices, {
@@ -211,12 +237,9 @@ function DonutBody({
   });
   const rings = computeRings(slices);
 
-  // Header description and focus link reflect zoom level.
   const description = zoomedParent
     ? `Inside ${humanize(zoomedParent.name)}`
     : "By asset class";
-  // Pass focus class only when zoomed, drillable, and has meaningful children to edit.
-  // Fixed Income and Real Estate are excluded until their L2 editor UX is enabled.
   const focusClass =
     zoomedParent &&
     zoomedParent.name !== "fixed_income" &&
@@ -225,25 +248,86 @@ function DonutBody({
       ? zoomedParent.name
       : null;
 
+  // Open the panel pointing at a given scope.
+  function openPanel(scope: PanelScope) {
+    setPanelScope(scope);
+    setPanelOpen(true);
+  }
+
   function handleSliceClick(name: string) {
-    if (isSimulating) return;
     if (zoomedParent) {
-      // Clicking a slice inside the drill does nothing further (L3 deferred).
+      // We're inside L2 — clicking an L2 slice opens the panel filtered to it.
+      openPanel({
+        assetClass: zoomedParent.name,
+        l2: name,
+        isSimulating,
+      });
       return;
     }
-    // At L1: drill if meaningful children exist, un-zoom if already zoomed.
+
+    // At L1 — sandbox mode: all clicks open panel directly (no drill).
+    if (isSimulating) {
+      const l1Slice = l1.find((s) => s.name === name);
+      if (l1Slice) {
+        openPanel({
+          assetClass: name,
+          targetPct: l1Slice.target_pct ?? null,
+          driftPct: l1Slice.drift_pct ?? null,
+          isSimulating: true,
+        });
+      }
+      return;
+    }
+
+    // At L1 (normal): determine if this class is drillable.
     if (name === zoomInto) {
       setZoomInto(null);
       return;
     }
-    // Fixed Income and Real Estate show multi-region data but their
-    // L2 UX is not enabled yet — skip drill for those classes.
-    if (name === "fixed_income" || name === "real_estate") return;
+    // Fixed Income and Real Estate — L2 drill is not yet enabled; open panel directly.
+    if (name === "fixed_income" || name === "real_estate") {
+      const l1Slice = l1.find((s) => s.name === name);
+      openPanel({
+        assetClass: name,
+        targetPct: l1Slice?.target_pct ?? null,
+        driftPct: l1Slice?.drift_pct ?? null,
+        isSimulating,
+      });
+      return;
+    }
     const l1Slice = l1.find((s) => s.name === name);
     if (l1Slice && meaningfulChildren(l1Slice).length > 1) {
+      // Drillable: zoom the donut; panel does not auto-open.
       setZoomInto(name);
+    } else {
+      // Non-drillable (cash, crypto, etc.): open panel directly.
+      openPanel({
+        assetClass: name,
+        targetPct: l1Slice?.target_pct ?? null,
+        driftPct: l1Slice?.drift_pct ?? null,
+        isSimulating,
+      });
     }
   }
+
+  // (Panel-donut L2 tracking removed: it fired immediately after openPanel set l2,
+  //  wiping the l2 filter before SWR could fetch. The correct behavior is to let
+  //  the panel hold whatever scope openPanel set; un-drilling fully already closes
+  //  the panel via the zoomInto→null effect above.)
+
+  // CTA: "View N {class/l2} holdings →"
+  // Determine what the CTA should say based on current drill state.
+  const ctaScope: PanelScope | null = React.useMemo(() => {
+    if (zoomedParent) {
+      return {
+        assetClass: zoomedParent.name,
+        targetPct: zoomedParent.target_pct ?? null,
+        driftPct: zoomedParent.drift_pct ?? null,
+        isSimulating,
+      };
+    }
+    return null;
+  }, [zoomedParent, isSimulating]);
 
   if (isLoading || (!data && !error)) {
     return (
@@ -281,6 +365,15 @@ function DonutBody({
 
   return (
     <>
+      <DonutDrillPanel
+        scope={panelScope}
+        open={panelOpen}
+        onClose={() => {
+          setPanelOpen(false);
+          // Don't clear panelScope so re-opening CTA uses same scope.
+        }}
+      />
+
       <DonutHeader description={description} focusClass={focusClass} />
       <div className="@container/donut-card">
         <div className="flex flex-col gap-6 @md/donut-card:flex-row @md/donut-card:items-center">
@@ -305,11 +398,12 @@ function DonutBody({
                   const drillable = !isSimulating && !zoomedParent && l1Slice != null &&
                     sliceName !== "fixed_income" && sliceName !== "real_estate" &&
                     meaningfulChildren(l1Slice).length > 1;
+                  const clickable = zoomedParent != null || drillable || !isSimulating;
                   return (
                     <Sector
                       {...props}
                       outerRadius={rings[index] ?? R_BASE}
-                      style={{ cursor: drillable ? "pointer" : "default" }}
+                      style={{ cursor: clickable ? "pointer" : "default" }}
                     />
                   );
                 }}
@@ -370,14 +464,12 @@ function DonutBody({
               <span className="w-14 text-right text-label text-muted-foreground">Drift</span>
             </div>
             {slices.map((s) => {
-              // At L1: clicking drills if there are meaningful children, or
-              // un-zooms if this slice is currently the zoomed parent.
-              // At L2: clicking the parent name in a breadcrumb would un-zoom
-              // but we don't render the parent row here — no-op.
               const l1Slice = !zoomedParent ? l1.find((ls) => ls.name === s.name) : undefined;
               const isDrillable = !isSimulating && l1Slice != null &&
                 s.name !== "fixed_income" && s.name !== "real_estate" &&
                 meaningfulChildren(l1Slice).length > 1;
+              // In L2 view: every slice is clickable (opens panel filtered to that L2).
+              const isClickable = zoomedParent != null || isDrillable || !isSimulating;
               return (
                 <div key={s.name}>
                   <button
@@ -386,7 +478,7 @@ function DonutBody({
                     aria-label={`${s.label}: ${formatUsd(s.value, { compact: true })}`}
                     className={
                       "grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
-                      (isDrillable ? "cursor-pointer" : "cursor-default")
+                      (isClickable ? "cursor-pointer" : "cursor-default")
                     }
                   >
                     <span className="flex min-w-0 items-center gap-2">
@@ -415,14 +507,17 @@ function DonutBody({
                 </div>
               );
             })}
-            {zoomedParent && (
-              <button
-                type="button"
-                onClick={() => setZoomInto(null)}
-                className="mt-1 px-2 py-1 text-left text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+
+            {/* CTA: replaces the old "← Back to all asset classes" button */}
+            {ctaScope && (
+              <Button
+                variant="accent"
+                size="xs"
+                onClick={() => openPanel(ctaScope)}
+                className="mt-2"
               >
-                ← Back to all asset classes
-              </button>
+                View {humanize(ctaScope.assetClass)} holdings →
+              </Button>
             )}
           </div>
         </div>
@@ -432,8 +527,6 @@ function DonutBody({
 }
 
 // Header is rendered inside DonutBody so it can reflect zoom state.
-// focusClass is set when the user is zoomed into a drillable asset class,
-// so Edit targets lands directly in the L2 editor for that class.
 function DonutHeader({ description, focusClass }: { description: string; focusClass: string | null }) {
   const targetsHref = focusClass ? `/targets?focus=${focusClass}` : "/targets";
   return (
