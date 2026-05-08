@@ -15,7 +15,7 @@ import { Provenance } from "@/app/lib/provenance";
 import { api, type AllocationResult } from "@/app/lib/api";
 import { useSandbox } from "@/app/lib/sandbox-context";
 import { formatPct, formatUsd, type DriftRow } from "../mocks";
-import { toAssetClass } from "./donut-card";
+import { toAssetClass } from "@/app/lib/allocation-display";
 
 const SCALE_MAX = 0.6;
 

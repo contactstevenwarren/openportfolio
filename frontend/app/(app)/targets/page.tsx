@@ -21,7 +21,10 @@ import {
   formatPct,
   type AssetClass,
 } from "@/app/(app)/_dashboard/mocks";
-import { toAssetClass, meaningfulChildren as meaningfulChildrenSlice } from "@/app/(app)/_dashboard/sections/donut-card";
+import {
+  meaningfulChildren as meaningfulChildrenSlice,
+  toAssetClass,
+} from "@/app/lib/allocation-display";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 

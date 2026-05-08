@@ -24,6 +24,12 @@ import {
 } from "@/app/lib/api";
 import { useSandbox } from "@/app/lib/sandbox-context";
 import { Provenance } from "@/app/lib/provenance";
+import {
+  CANONICAL_ORDER,
+  isDrillableL1,
+  meaningfulChildren,
+  toAssetClass,
+} from "@/app/lib/allocation-display";
 import { ASSET_CLASS_COLOR, formatPct, formatUsd, type AssetClass } from "../mocks";
 import { DonutDrillPanel, type PanelScope } from "./donut-drill-panel";
 
@@ -41,23 +47,6 @@ const INNER_RADIUS = 70;
 const DRIFT_FLOOR_PP = 1;
 const DRIFT_CEILING_PP = 10;
 
-// Canonical L1 order for legend / sort (matches backend TAXONOMY_L1_ORDER).
-const CANONICAL_ORDER = [
-  "Cash",
-  "Stocks",
-  "Bonds",
-  "Real Estate",
-  "Commodities",
-  "Crypto",
-  "Private",
-] as const satisfies readonly AssetClass[];
-
-const L1_NAMES = new Set<string>(CANONICAL_ORDER);
-
-export function toAssetClass(name: string): AssetClass {
-  return (L1_NAMES.has(name) ? name : "Private") as AssetClass;
-}
-
 type DisplaySlice = {
   name: string;
   cls: AssetClass;
@@ -69,14 +58,6 @@ type DisplaySlice = {
   driftBand: DriftBand | null;
   fill: string;
 };
-
-// Walk through single-child layers (e.g. one sub_class) so drilling collapses
-// to the meaningful slice list. The API tree is asset_class → sub_class.
-export function meaningfulChildren(slice: AllocationSlice): AllocationSlice[] {
-  const kids = slice.children ?? [];
-  if (kids.length === 1) return meaningfulChildren(kids[0]);
-  return kids;
-}
 
 // Generate a fill color for an L2 slice by mixing the parent's brand color
 // with white in oklab space. index=0 is the darkest (parent color);
@@ -236,12 +217,7 @@ function DonutBody({
     ? `Inside ${zoomedParent.name}`
     : "By asset class";
   const focusClass =
-    zoomedParent &&
-    zoomedParent.name !== "Bonds" &&
-    zoomedParent.name !== "Real Estate" &&
-    meaningfulChildren(zoomedParent).length > 1
-      ? zoomedParent.name
-      : null;
+    zoomedParent && isDrillableL1(zoomedParent) ? zoomedParent.name : null;
 
   // Open the panel pointing at a given scope.
   function openPanel(scope: PanelScope) {
@@ -279,19 +255,8 @@ function DonutBody({
       setZoomInto(null);
       return;
     }
-    // Bonds and Real Estate — L2 drill is not yet enabled; open panel directly.
-    if (name === "Bonds" || name === "Real Estate") {
-      const l1Slice = l1.find((s) => s.name === name);
-      openPanel({
-        assetClass: name,
-        targetPct: l1Slice?.target_pct ?? null,
-        driftPct: l1Slice?.drift_pct ?? null,
-        isSimulating,
-      });
-      return;
-    }
     const l1Slice = l1.find((s) => s.name === name);
-    if (l1Slice && meaningfulChildren(l1Slice).length > 1) {
+    if (l1Slice && isDrillableL1(l1Slice)) {
       // Drillable: zoom the donut; panel does not auto-open.
       setZoomInto(name);
     } else {
@@ -390,9 +355,11 @@ function DonutBody({
                   const { index = 0, ...props } = rawProps;
                   const sliceName = slices[index]?.name ?? "";
                   const l1Slice = !zoomedParent ? l1.find((s) => s.name === sliceName) : null;
-                  const drillable = !isSimulating && !zoomedParent && l1Slice != null &&
-                    sliceName !== "Bonds" && sliceName !== "Real Estate" &&
-                    meaningfulChildren(l1Slice).length > 1;
+                  const drillable =
+                    !isSimulating &&
+                    !zoomedParent &&
+                    l1Slice != null &&
+                    isDrillableL1(l1Slice);
                   const clickable = zoomedParent != null || drillable || !isSimulating;
                   return (
                     <Sector
@@ -460,11 +427,10 @@ function DonutBody({
             </div>
             {slices.map((s) => {
               const l1Slice = !zoomedParent ? l1.find((ls) => ls.name === s.name) : undefined;
-              const isDrillable = !isSimulating && l1Slice != null &&
-                s.name !== "Bonds" && s.name !== "Real Estate" &&
-                meaningfulChildren(l1Slice).length > 1;
+              const rowDrillable =
+                !isSimulating && l1Slice != null && isDrillableL1(l1Slice);
               // In L2 view: every slice is clickable (opens panel filtered to that L2).
-              const isClickable = zoomedParent != null || isDrillable || !isSimulating;
+              const isClickable = zoomedParent != null || rowDrillable || !isSimulating;
               return (
                 <div key={s.name}>
                   <button
@@ -483,7 +449,7 @@ function DonutBody({
                         style={{ backgroundColor: s.fill }}
                       />
                       <span className="truncate text-body-sm text-foreground">{s.label}</span>
-                      {isDrillable && (
+                      {rowDrillable && (
                         <span aria-hidden className="text-[10px] text-muted-foreground/50">›</span>
                       )}
                     </span>
