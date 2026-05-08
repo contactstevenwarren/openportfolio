@@ -1,3 +1,4 @@
+import logging
 import math
 import re
 from collections.abc import AsyncIterator
@@ -6,12 +7,11 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import Float as SAFloat
 from sqlalchemy import delete, func, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from . import models  # noqa: F401  -- register models with Base before create_all
+from . import models  # noqa: F401  -- register models with Base.metadata
 from .allocation import aggregate, meaningful_children, positions_for_slice
 from .auth import require_admin_token
 from .config import settings
@@ -21,10 +21,10 @@ from .classifications import (
     ClassificationEntry,
     load_classifications,
     load_user_classifications,
-    migrate_synthetic_positions,
     primary_asset_class,
 )
-from .db import Base, SessionLocal, engine, get_db
+from .db import get_db
+from . import db as db_pkg
 from .llm import classify_ticker, extract_positions
 from .pdf_text import PdfNoTextError, PdfTextTooLargeError, pdf_bytes_to_text
 from .scrub_digits import scrub_digit_runs
@@ -88,67 +88,22 @@ from .taxonomy import (
 _VALID_ASSET_CLASSES = {o.value for o in ASSET_CLASS_OPTIONS}
 
 
-def _migrate_classifications_bucket_model(eng: Engine) -> None:
-    """v0.1.6: flat classifications → bucket table; drop fund_holdings; wipe targets."""
-    inspector = inspect(eng)
-    tables = set(inspector.get_table_names())
-
-    if "fund_holdings" in tables:
-        with eng.begin() as conn:
-            conn.execute(text("DROP TABLE IF EXISTS fund_holdings"))
-
-    if "targets" in tables:
-        with eng.begin() as conn:
-            conn.execute(text("DELETE FROM targets"))
-
-    if "classifications" not in tables:
+def _ensure_alembic_if_nonempty_db(engine: Engine) -> None:
+    """Fail fast when SQLite has application tables but no Alembic revision row."""
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    if not tables:
         return
-
-    cols = {c["name"] for c in inspector.get_columns("classifications")}
-    if "asset_class" not in cols:
-        return
-
-    with eng.begin() as conn:
-        conn.execute(text("PRAGMA foreign_keys=OFF"))
-        conn.execute(text("DROP TABLE IF EXISTS classification_buckets"))
-        conn.execute(text("ALTER TABLE classifications RENAME TO classifications_legacy"))
-        conn.execute(
-            text(
-                "CREATE TABLE classifications ("
-                "ticker VARCHAR(64) NOT NULL PRIMARY KEY, "
-                "source VARCHAR(50) NOT NULL, "
-                "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL)"
-            )
+    if "alembic_version" not in tables:
+        logging.getLogger(__name__).error(
+            "Database has tables but no alembic_version (unsupported pre-cutoff schema). "
+            "Export via GET /api/export, reset the database file, run "
+            "`alembic upgrade head` from /app/backend, then restore. "
+            "See README.md — Database migrations."
         )
-        conn.execute(
-            text(
-                "INSERT INTO classifications (ticker, source, updated_at) "
-                "SELECT ticker, source, updated_at FROM classifications_legacy"
-            )
+        raise RuntimeError(
+            "missing alembic_version — see README Database migrations"
         )
-        conn.execute(
-            text(
-                "CREATE TABLE classification_buckets ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "ticker VARCHAR(64) NOT NULL "
-                "REFERENCES classifications(ticker) ON DELETE CASCADE, "
-                "sort_order INTEGER NOT NULL DEFAULT 0, "
-                "asset_class VARCHAR(50) NOT NULL, "
-                "sub_class VARCHAR(50), "
-                "weight FLOAT NOT NULL)"
-            )
-        )
-        conn.execute(
-            text(
-                "INSERT INTO classification_buckets "
-                "(ticker, sort_order, asset_class, sub_class, weight) "
-                "SELECT ticker, 0, asset_class, "
-                "COALESCE(NULLIF(TRIM(sub_class), ''), 'other'), 1.0 "
-                "FROM classifications_legacy"
-            )
-        )
-        conn.execute(text("DROP TABLE classifications_legacy"))
-        conn.execute(text("PRAGMA foreign_keys=ON"))
 
 
 def _taxonomy_from_locked() -> Taxonomy:
@@ -403,9 +358,7 @@ def _targets_get_payload(db: Session) -> dict[str, object]:
     root: list[dict[str, object]] = []
     groups: dict[str, list[dict[str, object]]] = {}
     for r in rows:
-        # Round-trip as int; the column is Integer now but a pre-migration
-        # read could still surface a float from an un-migrated legacy row.
-        pct = int(round(float(r.pct)))
+        pct = int(r.pct)
         if "." not in r.path:
             root.append({"path": r.path, "pct": pct})
         else:
@@ -414,125 +367,6 @@ def _targets_get_payload(db: Session) -> dict[str, object]:
     for _k, lst in groups.items():
         lst.sort(key=lambda x: str(x["path"]))
     return {"root": root, "groups": groups}
-
-
-def _migrate_sqlite_schema() -> None:
-    """Thin wrapper: delegates to _migrate_schema with the module-level engine.
-
-    Tests can call _migrate_schema(their_engine) directly to avoid touching
-    the production schema (decision #17).
-    """
-    _migrate_schema(engine)
-
-
-def _migrate_schema(eng: Engine) -> None:
-    """Additive column/table migrations. All steps are idempotent.
-
-    Called on startup via _migrate_sqlite_schema(). Tests call this
-    directly with a per-test engine to inspect migration behaviour
-    without affecting the production database.
-    """
-    inspector = inspect(eng)
-    tables = inspector.get_table_names()
-
-    # ── v0.1.5: provenance.entity_key ────────────────────────────────────────
-    if "provenance" in tables:
-        cols = {c["name"] for c in inspector.get_columns("provenance")}
-        if "entity_key" not in cols:
-            with eng.begin() as conn:
-                conn.execute(
-                    text("ALTER TABLE provenance ADD COLUMN entity_key VARCHAR(64)")
-                )
-                conn.execute(
-                    text(
-                        "CREATE INDEX IF NOT EXISTS ix_provenance_entity_key "
-                        "ON provenance(entity_key)"
-                    )
-                )
-
-    # ── v0.1.5: positions.investable ─────────────────────────────────────────
-    if "positions" in tables:
-        cols = {c["name"] for c in inspector.get_columns("positions")}
-        if "investable" not in cols:
-            with eng.begin() as conn:
-                conn.execute(
-                    text(
-                        "ALTER TABLE positions ADD COLUMN investable BOOLEAN "
-                        "NOT NULL DEFAULT 1"
-                    )
-                )
-
-    # ── v0.2: targets.pct Float → Integer ───────────────────────────────────
-    _migrate_targets_pct_to_int(eng)
-
-    # ── accounts: institution_id + tax_treatment + staleness_threshold_days ───
-    if "accounts" in tables:
-        cols = {c["name"] for c in inspector.get_columns("accounts")}
-        with eng.begin() as conn:
-            if "institution_id" not in cols:
-                conn.execute(
-                    text("ALTER TABLE accounts ADD COLUMN institution_id INTEGER")
-                )
-            if "tax_treatment" not in cols:
-                conn.execute(
-                    text(
-                        "ALTER TABLE accounts ADD COLUMN tax_treatment VARCHAR(20) "
-                        "NOT NULL DEFAULT 'taxable'"
-                    )
-                )
-            if "staleness_threshold_days" not in cols:
-                conn.execute(
-                    text(
-                        "ALTER TABLE accounts ADD COLUMN staleness_threshold_days INTEGER "
-                        "NOT NULL DEFAULT 30"
-                    )
-                )
-            if "is_archived" not in cols:
-                conn.execute(
-                    text(
-                        "ALTER TABLE accounts ADD COLUMN is_archived BOOLEAN "
-                        "NOT NULL DEFAULT 0"
-                    )
-                )
-            if "is_investable" not in cols:
-                conn.execute(
-                    text(
-                        "ALTER TABLE accounts ADD COLUMN is_investable BOOLEAN "
-                        "NOT NULL DEFAULT 1"
-                    )
-                )
-        # One-shot: migrate legacy type='hsa' rows to type='brokerage' + tax_treatment='hsa'.
-        # Idempotent: WHERE type='hsa' matches nothing after first run.
-        with eng.begin() as conn:
-            conn.execute(
-                text(
-                    "UPDATE accounts SET type='brokerage', tax_treatment='hsa' "
-                    "WHERE type='hsa'"
-                )
-            )
-        # Do not bulk-overwrite staleness_threshold_days on startup. The old loop
-        # compared only to the schema default (30), so any account type whose default
-        # differs from 30 (bank, crypto, etc.) would reset user-visible values on
-        # every deploy/restart—including users who explicitly chose 30 days. Per-type
-        # defaults belong at create time (frontend + POST body), not in recurring SQL.
-
-    # ── institutions: case-insensitive unique index ───────────────────────────
-    # create_all handles table creation on fresh installs; this ensures the
-    # unique index exists on DBs that predate the model declaration.
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ux_institutions_name_lower "
-                "ON institutions(lower(name))"
-            )
-        )
-
-    _migrate_classifications_bucket_model(eng)
-
-    # ── institutions: seed well-known US institutions ─────────────────────────
-    # Idempotent: INSERT OR IGNORE skips any row whose lower(name) already
-    # matches the unique index. Safe to run every startup.
-    _seed_institutions(eng)
 
 
 _WELL_KNOWN_INSTITUTIONS = [
@@ -568,56 +402,10 @@ def _seed_institutions(eng: Engine) -> None:
             )
 
 
-def _migrate_targets_pct_to_int(eng: Engine) -> None:
-    """v0.2 fix: Target.pct flipped from Float to Integer.
-
-    SQLite can't change a column's type in place, so when we find a
-    legacy Float ``pct`` we copy rows out, drop the table, let
-    ``create_all`` recreate it with the new Integer schema, and write
-    the rows back with rounded integer pct. Idempotent: an already-
-    Integer column is a no-op.
-    """
-    inspector = inspect(eng)
-    if "targets" not in inspector.get_table_names():
-        return
-    pct_col = next(
-        (c for c in inspector.get_columns("targets") if c["name"] == "pct"),
-        None,
-    )
-    if pct_col is None or not isinstance(pct_col["type"], SAFloat):
-        return
-    with eng.begin() as conn:
-        legacy = conn.execute(
-            text("SELECT path, pct, updated_at FROM targets")
-        ).all()
-        conn.execute(text("DROP TABLE targets"))
-    Target.__table__.create(bind=eng)
-    if not legacy:
-        return
-    with eng.begin() as conn:
-        for path, pct, updated_at in legacy:
-            conn.execute(
-                text(
-                    "INSERT INTO targets (path, pct, updated_at) "
-                    "VALUES (:path, :pct, :updated_at)"
-                ),
-                {
-                    "path": path,
-                    "pct": int(round(float(pct))),
-                    "updated_at": updated_at,
-                },
-            )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    Base.metadata.create_all(bind=engine)
-    _migrate_sqlite_schema()
-    # Convert legacy synthetic-ticker positions to per-ticker
-    # Classification rows so ``classify()`` can drop its prefix fallback.
-    # Idempotent: rows with a Classification are skipped on re-run.
-    with SessionLocal() as db:
-        migrate_synthetic_positions(db)
+    _ensure_alembic_if_nonempty_db(db_pkg.engine)
+    _seed_institutions(db_pkg.engine)
     yield
 
 

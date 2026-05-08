@@ -40,6 +40,8 @@ fund_holdings(...) — v0.1 M4 look-through cache
 
 Schema is **locked at the table level**; new columns and tables are **extensions**, not redesigns.
 
+**Migrations:** Schema changes use Alembic (`backend/alembic/`). Containers run `alembic upgrade head` before starting the API; legacy imperative ALTER logic was removed from application code. Databases below the current minimum schema (bucket-model classifications, integer target percentages, etc.) require export + fresh DB / manual intervention — see README **Database migrations**.
+
 ---
 
 ## LLM extraction — verification required

@@ -106,6 +106,23 @@ Health check: `GET /health` → `{"ok": true}`.
 
 ---
 
+## Database migrations
+
+The SQLite file is evolved with **[Alembic](https://alembic.sqlalchemy.org/)** (`backend/alembic/`). Production and dev entrypoints run `alembic upgrade head` **before** uvicorn starts.
+
+**Minimum supported schema:** bucket-model classifications (`classification_buckets` + `classifications` without legacy flat columns), integer `targets.pct`, and the columns declared in [`backend/app/models.py`](backend/app/models.py). Older on-disk databases are not migrated by imperative startup code anymore.
+
+**If you have an unsupported legacy file:** call `GET /api/export`, replace the DB file (or delete it for a fresh start), run migrations (`alembic upgrade head` with `DATABASE_URL` pointing at that file), then re-import if you saved an export.
+
+Useful commands (from repo root, app container):
+
+```bash
+docker compose exec app sh -c 'cd /app/backend && uv run alembic current'
+docker compose exec app sh -c 'cd /app/backend && uv run alembic upgrade head'
+```
+
+---
+
 ## Configuration
 
 All env vars (set via `fly secrets set ...` in prod, `.env` locally):

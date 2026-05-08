@@ -7,7 +7,8 @@ multi-slice funds. DB rows in ``classifications`` +
 (``source='user'``).
 
 ``classify()`` resolves merged YAML + user dict. Synthetic ``PREFIX:suffix``
-positions are migrated on startup via ``migrate_synthetic_positions``.
+tickers must have an explicit YAML or user classification row (no prefix
+fallback).
 """
 
 from __future__ import annotations
@@ -59,23 +60,6 @@ class ClassificationEntry:
             buckets=tuple(BucketEntry(a, s, w) for a, s, w in merged),
             source=source,
         )
-
-
-# Legacy prefix→classification used ONLY by ``migrate_synthetic_positions``.
-# Values use the locked plain-English taxonomy (see ``app.taxonomy``).
-_LEGACY_SYNTHETIC_PREFIXES: dict[str, tuple[str, str | None]] = {
-    "REALESTATE": ("Real Estate", "Primary Residence"),
-    "GOLD": ("Commodities", "Gold"),
-    "SILVER": ("Commodities", "Silver"),
-    "CRYPTO": ("Crypto", "Other Crypto"),
-    "PRIVATE": ("Private", "Private Equity"),
-    "HSA_CASH": ("Cash", "Cash & Savings"),
-    "CASH": ("Cash", "Cash & Savings"),
-    "TREASURY": ("Bonds", "US Treasury"),
-    "TIPS": ("Bonds", "US Treasury"),
-    "CD": ("Cash", "CDs"),
-    "ESPP": ("Stocks", "US Stocks"),
-}
 
 
 def _entry_buckets(attrs: dict, ticker: str) -> tuple[BucketEntry, ...]:
@@ -180,44 +164,6 @@ def load_user_classifications(db: Session) -> dict[str, ClassificationEntry]:
             source=r.source,
         )
     return out
-
-
-def migrate_synthetic_positions(db: Session) -> int:
-    """Convert ``PREFIX:suffix`` positions into per-ticker user Classification + buckets."""
-    from .models import Classification as DbClassification
-    from .models import ClassificationBucket as DbBucket
-    from .models import Position
-
-    created = 0
-    seen: set[str] = set()
-    positions = db.query(Position).filter(Position.ticker.contains(":")).all()
-    for p in positions:
-        if p.ticker in seen:
-            continue
-        seen.add(p.ticker)
-        if db.get(DbClassification, p.ticker) is not None:
-            continue
-        prefix = p.ticker.split(":", 1)[0].upper()
-        legacy = _LEGACY_SYNTHETIC_PREFIXES.get(prefix)
-        if legacy is None:
-            continue
-        ac, sc = legacy
-        row = DbClassification(ticker=p.ticker, source="user")
-        db.add(row)
-        db.flush()
-        db.add(
-            DbBucket(
-                ticker=p.ticker,
-                sort_order=0,
-                asset_class=ac,
-                sub_class=sc,
-                weight=1.0,
-            )
-        )
-        created += 1
-    if created:
-        db.commit()
-    return created
 
 
 def primary_asset_class(entry: ClassificationEntry) -> str:

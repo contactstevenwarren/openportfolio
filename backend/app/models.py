@@ -33,7 +33,7 @@ class Account(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     label: Mapped[str] = mapped_column(String(100))
     # type = "brokerage" | "real_estate" | "crypto" | "private" | "bank" | ...
-    # Note: "hsa" type migrated to type="brokerage" + tax_treatment="hsa" on startup.
+    # Legacy rows with type="hsa" → type="brokerage" + tax_treatment="hsa" (manual SQL if needed).
     type: Mapped[str] = mapped_column(String(50))
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

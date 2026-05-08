@@ -3,10 +3,8 @@
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.main import _migrate_schema
 from app.models import Account, Classification, ClassificationBucket, Institution, Position
 
 
@@ -281,25 +279,6 @@ def test_valid_tax_treatments_on_brokerage(
         assert r.json()["tax_treatment"] == treatment
 
 
-# --- HSA migration ---------------------------------------------------------
-
-
-def test_hsa_migration_converts_type(test_db: Session) -> None:
-    """_migrate_schema converts type='hsa' rows to type='brokerage'+tax_treatment='hsa'."""
-    # Insert a legacy HSA row directly bypassing ORM validation
-    test_db.execute(
-        text("INSERT INTO accounts (label, type, currency) VALUES ('Old HSA', 'hsa', 'USD')")
-    )
-    test_db.commit()
-
-    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
-
-    test_db.expire_all()
-    account = test_db.query(Account).filter_by(label="Old HSA").one()
-    assert account.type == "brokerage"
-    assert account.tax_treatment == "hsa"
-
-
 def test_archive_round_trip(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
@@ -335,22 +314,6 @@ def test_archive_round_trip(
     )
     assert r2.status_code == 200
     assert r2.json()["is_archived"] is False
-
-
-def test_hsa_migration_is_idempotent(test_db: Session) -> None:
-    """Running _migrate_schema twice leaves the row unchanged on the second run."""
-    test_db.execute(
-        text("INSERT INTO accounts (label, type, currency) VALUES ('HSA Again', 'hsa', 'USD')")
-    )
-    test_db.commit()
-
-    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
-    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
-
-    test_db.expire_all()
-    account = test_db.query(Account).filter_by(label="HSA Again").one()
-    assert account.type == "brokerage"
-    assert account.tax_treatment == "hsa"
 
 
 # --- atomic asset account creation (PR 1A) --------------------------------
@@ -719,24 +682,3 @@ def test_non_investable_account_excluded_from_allocation_total(
     assert abs(allocation["total"] - 100_000.0) < 1.0
     # Net Worth should include both: $600k
     assert abs(allocation["net_worth"] - 600_000.0) < 1.0
-
-
-def test_migrate_schema_adds_is_investable_column(test_db: Session) -> None:
-    """_migrate_schema adds accounts.is_investable on legacy DBs that lack it."""
-    with test_db.bind.begin() as conn:  # type: ignore[union-attr]
-        conn.execute(text("ALTER TABLE accounts RENAME TO accounts_bak"))
-        conn.execute(
-            text(
-                "CREATE TABLE accounts ("
-                "id INTEGER PRIMARY KEY, label VARCHAR(100), type VARCHAR(50), "
-                "currency VARCHAR(3), created_at DATETIME, institution_id INTEGER, "
-                "tax_treatment VARCHAR(20) NOT NULL DEFAULT 'taxable', "
-                "staleness_threshold_days INTEGER NOT NULL DEFAULT 30, "
-                "is_archived BOOLEAN NOT NULL DEFAULT 0"
-                ")"
-            )
-        )
-    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
-    with test_db.bind.begin() as conn:  # type: ignore[union-attr]
-        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(accounts)"))}
-    assert "is_investable" in cols

@@ -3,6 +3,7 @@ name = "openportfolio-backend"
 version = "0.0.1"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.13.0",
     "fastapi>=0.115.0",
     "python-multipart>=0.0.9",
     "pdfplumber>=0.11.0",

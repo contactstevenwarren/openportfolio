@@ -1,29 +1,21 @@
-"""Unit tests for the classifications YAML loader + v0.1.5 M4 migration.
+"""Unit tests for the classifications YAML loader.
 
 Locks the 10-ticker seed set for M2 and the shape of each entry; later
-phases are additive. Also covers ``migrate_synthetic_positions`` which
-converts legacy ``PREFIX:suffix`` positions to per-ticker Classification
-rows so the v0.1 prefix fallback can be deleted.
+phases are additive.
 """
 
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import yaml
-from sqlalchemy.orm import Session
 
 from app.classifications import (
     DEFAULT_PATH,
     ClassificationEntry,
     classify,
     load_classifications,
-    migrate_synthetic_positions,
     primary_asset_class,
 )
-from app.models import Account, Classification, ClassificationBucket, Position
-from tests.db_helpers import seed_user_classification
-
 from app.taxonomy import TAXONOMY
 
 EXPECTED_SEED = {"VTI", "VXUS", "BND", "VNQ", "GLD", "BTC", "SPY", "QQQ", "AAPL", "CASH"}
@@ -125,83 +117,3 @@ def test_classify_no_longer_splits_on_colon() -> None:
     # ticker is just a plain ticker now; classification must come from
     # YAML or a user DB row (or be None = unclassified).
     assert classify("REALESTATE:123Main", {}) is None
-
-
-# ---- migrate_synthetic_positions (v0.1.5 M4 one-shot) -------------------
-
-
-def _seed_position(db: Session, ticker: str) -> None:
-    account = db.query(Account).first()
-    if account is None:
-        account = Account(label="Test", type="brokerage")
-        db.add(account)
-        db.commit()
-    db.add(
-        Position(
-            account_id=account.id,
-            ticker=ticker,
-            shares=1.0,
-            market_value=1000.0,
-            as_of=datetime.now(UTC),
-            source="paste",
-        )
-    )
-    db.commit()
-
-
-def test_migration_converts_synthetic_positions(test_db: Session) -> None:
-    _seed_position(test_db, "REALESTATE:123Main")
-    _seed_position(test_db, "GOLD:bar-1")
-    _seed_position(test_db, "CRYPTO:solana")
-
-    created = migrate_synthetic_positions(test_db)
-    assert created == 3
-
-    house = test_db.get(Classification, "REALESTATE:123Main")
-    assert house is not None
-    assert house.source == "user"
-    hb = test_db.query(ClassificationBucket).filter_by(ticker="REALESTATE:123Main").one()
-    assert hb.asset_class == "Real Estate"
-
-    gold = test_db.get(Classification, "GOLD:bar-1")
-    assert gold is not None
-    gb = test_db.query(ClassificationBucket).filter_by(ticker="GOLD:bar-1").one()
-    assert gb.sub_class == "Gold"
-
-    crypto = test_db.get(Classification, "CRYPTO:solana")
-    assert crypto is not None
-    cb = test_db.query(ClassificationBucket).filter_by(ticker="CRYPTO:solana").one()
-    assert cb.asset_class == "Crypto"
-    _seed_position(test_db, "CASH:ally")
-    assert migrate_synthetic_positions(test_db) == 1
-    # Second run finds the row, skips it.
-    assert migrate_synthetic_positions(test_db) == 0
-
-
-def test_migration_ignores_plain_tickers(test_db: Session) -> None:
-    _seed_position(test_db, "VTI")
-    _seed_position(test_db, "BND")
-    assert migrate_synthetic_positions(test_db) == 0
-    assert test_db.get(Classification, "VTI") is None
-
-
-def test_migration_ignores_unknown_prefixes(test_db: Session) -> None:
-    # UNKNOWN isn't in the legacy prefix table -- leave it alone. The
-    # ticker will surface on the allocation page as unclassified.
-    _seed_position(test_db, "UNKNOWN:foo")
-    assert migrate_synthetic_positions(test_db) == 0
-    assert test_db.get(Classification, "UNKNOWN:foo") is None
-
-
-def test_migration_preserves_existing_user_row(test_db: Session) -> None:
-    # If the user already created a Classification for a synthetic
-    # ticker (e.g. via /classifications), the migration leaves it alone.
-    _seed_position(test_db, "REALESTATE:house")
-    seed_user_classification(test_db, "REALESTATE:house", "Real Estate", "Rental Property")
-    test_db.commit()
-
-    assert migrate_synthetic_positions(test_db) == 0
-    row = test_db.get(Classification, "REALESTATE:house")
-    assert row is not None
-    b = test_db.query(ClassificationBucket).filter_by(ticker="REALESTATE:house").one()
-    assert b.sub_class == "Rental Property"  # user value preserved
