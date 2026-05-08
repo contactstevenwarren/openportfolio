@@ -1,12 +1,6 @@
-export type AssetClass =
-  | "cash"
-  | "us-equity"
-  | "intl-equity"
-  | "fixed-income"
-  | "real-estate"
-  | "crypto"
-  | "alts"
-  | "other";
+import type { AssetClass } from "@/app/lib/api";
+
+export type { AssetClass };
 
 export type Freshness = {
   source: string;
@@ -66,17 +60,17 @@ export const mockNetWorth = {
 
 export const mockAllocation: AllocationSlice[] = [
   {
-    class: "us-equity",
-    label: "US equity",
-    value: 398274,
-    pct: 0.47,
-    targetPct: 0.5,
-    gap: -0.03,
+    class: "Stocks",
+    label: "Stocks",
+    value: 516909,
+    pct: 0.61,
+    targetPct: 0.65,
+    gap: -0.04,
     freshness: PRICE_FRESH,
   },
   {
-    class: "fixed-income",
-    label: "Fixed income",
+    class: "Bonds",
+    label: "Bonds",
     value: 152531,
     pct: 0.18,
     targetPct: 0.15,
@@ -84,17 +78,8 @@ export const mockAllocation: AllocationSlice[] = [
     freshness: PRICE_FRESH,
   },
   {
-    class: "intl-equity",
-    label: "Intl equity",
-    value: 118635,
-    pct: 0.14,
-    targetPct: 0.15,
-    gap: -0.01,
-    freshness: PRICE_FRESH,
-  },
-  {
-    class: "real-estate",
-    label: "Real estate",
+    class: "Real Estate",
+    label: "Real Estate",
     value: 110161,
     pct: 0.13,
     targetPct: 0.1,
@@ -102,7 +87,7 @@ export const mockAllocation: AllocationSlice[] = [
     freshness: USER_FRESH,
   },
   {
-    class: "cash",
+    class: "Cash",
     label: "Cash",
     value: 67791,
     pct: 0.08,
@@ -114,44 +99,36 @@ export const mockAllocation: AllocationSlice[] = [
 
 export const mockDriftRows: DriftRow[] = [
   {
-    class: "fixed-income",
-    label: "Fixed income",
+    class: "Bonds",
+    label: "Bonds",
     actualPct: 0.18,
     targetPct: 0.15,
     gap: 0.03,
     deltaUsd: -25422,
   },
   {
-    class: "real-estate",
-    label: "Real estate",
+    class: "Real Estate",
+    label: "Real Estate",
     actualPct: 0.13,
     targetPct: 0.1,
     gap: 0.03,
     deltaUsd: -25422,
   },
   {
-    class: "us-equity",
-    label: "US equity",
-    actualPct: 0.47,
-    targetPct: 0.5,
-    gap: -0.03,
+    class: "Stocks",
+    label: "Stocks",
+    actualPct: 0.61,
+    targetPct: 0.65,
+    gap: -0.04,
     deltaUsd: 25422,
   },
   {
-    class: "cash",
+    class: "Cash",
     label: "Cash",
     actualPct: 0.08,
     targetPct: 0.1,
     gap: -0.02,
     deltaUsd: 16948,
-  },
-  {
-    class: "intl-equity",
-    label: "Intl equity",
-    actualPct: 0.14,
-    targetPct: 0.15,
-    gap: -0.01,
-    deltaUsd: 8474,
   },
 ];
 
@@ -214,14 +191,14 @@ export const mockAccounts: Account[] = [
     id: "acct-gold",
     label: "Gold (physical)",
     institution: "Manual",
-    type: "Alts",
+    type: "Commodities",
     value: 25791,
     pctOfNw: 0.030,
     freshness: USER_STALE_32D,
   },
 ];
 
-const INVESTABLE_TYPES = new Set(["Taxable", "IRA", "401(k)", "HSA", "Alts"]);
+const INVESTABLE_TYPES = new Set(["Taxable", "IRA", "401(k)", "HSA", "Commodities"]);
 const investableTotal = mockAccounts
   .filter((a) => INVESTABLE_TYPES.has(a.type))
   .reduce((sum, a) => sum + a.value, 0);
@@ -234,17 +211,14 @@ export const mockInvestable = {
 };
 
 
-// NOTE: us-equity and intl-equity share --viz-equity (v0.1.6 dashboard donut redesign
-// collapsed these to the single backend 'equity' class). alts → --viz-alts alias.
 export const ASSET_CLASS_COLOR: Record<AssetClass, string> = {
-  cash: "var(--viz-cash)",
-  "us-equity": "var(--viz-equity)",
-  "intl-equity": "var(--viz-equity)",
-  "fixed-income": "var(--viz-fixed-income)",
-  "real-estate": "var(--viz-real-estate)",
-  crypto: "var(--viz-crypto)",
-  alts: "var(--viz-alts)",
-  other: "var(--viz-other)",
+  Cash: "var(--viz-cash)",
+  Stocks: "var(--viz-stocks)",
+  Bonds: "var(--viz-bonds)",
+  "Real Estate": "var(--viz-real-estate)",
+  Commodities: "var(--viz-commodities)",
+  Crypto: "var(--viz-crypto)",
+  Private: "var(--viz-private)",
 };
 
 export function formatUsd(value: number, opts: { compact?: boolean; signed?: boolean } = {}) {

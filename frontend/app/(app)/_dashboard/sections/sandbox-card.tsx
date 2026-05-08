@@ -14,7 +14,6 @@ import {
   CardTitle,
 } from "@/app/components/ui/card";
 import { api, type AllocationResult } from "@/app/lib/api";
-import { humanize } from "@/app/lib/labels";
 import { useSandbox } from "@/app/lib/sandbox-context";
 import { formatPct, formatUsd } from "../mocks";
 
@@ -215,7 +214,7 @@ function SandboxCardInner() {
     .filter((s) => s.value > 0)
     .map((s) => ({
       name: s.name,
-      label: humanize(s.name),
+      label: s.name,
       value: s.value,
       pct: s.pct,
       targetPct: s.target_pct ?? 0,
@@ -236,7 +235,7 @@ function SandboxCardInner() {
       .filter((s) => s.value > 0)
       .map((s) => ({
         name: s.name,
-        label: humanize(s.name),
+        label: s.name,
         value: s.value,
         pct: s.pct,
         targetPct: s.target_pct ?? 0,

@@ -8,11 +8,11 @@ import type { Account, AllocationResult, DriftBand, SnapshotEarliest } from "@/a
 import { api } from "@/app/lib/api";
 import { formatPct, formatUsd } from "@/app/(app)/_dashboard/mocks";
 
-// ── Routes (TODO: swap when modern pages ship) ────────────────────────────────
+// ── Dashboard CTAs ────────────────────────────────────────────────────────────
 
 const REBALANCE_HREF = "/?tab=rebalance";
 const TARGETS_HREF = "/targets";
-const POSITIONS_HREF = "/legacy/positions";
+const POSITIONS_HREF = "/accounts";
 
 // ── Drift-status helpers (inlined from drift-status-card.tsx) ─────────────────
 

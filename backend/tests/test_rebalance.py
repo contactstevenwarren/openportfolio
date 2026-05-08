@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.allocation import aggregate
 from app.classifications import ClassificationEntry
-from app.models import Account, Classification, Position, Target
+from app.models import Account, Position, Target
 from app.rebalance import compute_new_money, compute_rebalance
+from tests.db_helpers import seed_user_classification
 
 TOLERANCE = 1.0
 ACT = 3.0
@@ -27,26 +28,23 @@ def _pos(ticker: str, mv: float) -> Position:
 
 def _classes() -> dict[str, ClassificationEntry]:
     return {
-        "E1": ClassificationEntry(
-            ticker="E1", asset_class="equity", sub_class="us_large_cap", region="US"
+        "E1": ClassificationEntry.from_flat(
+            ticker="E1", asset_class="Stocks", sub_class="US Stocks"
         ),
-        "E2": ClassificationEntry(
+        "E2": ClassificationEntry.from_flat(
             ticker="E2",
-            asset_class="equity",
-            sub_class="intl_developed",
-            region="intl_developed",
+            asset_class="Stocks",
+            sub_class="International Developed",
         ),
-        "B1": ClassificationEntry(
+        "B1": ClassificationEntry.from_flat(
             ticker="B1",
-            asset_class="fixed_income",
-            sub_class="us_aggregate",
-            region="US",
+            asset_class="Bonds",
+            sub_class="US Treasury",
         ),
-        "C1": ClassificationEntry(
+        "C1": ClassificationEntry.from_flat(
             ticker="C1",
-            asset_class="cash",
-            sub_class="cash",
-            region="US",
+            asset_class="Cash",
+            sub_class="Cash & Savings",
         ),
     }
 
@@ -59,7 +57,7 @@ def test_no_root_targets_empty_moves() -> None:
         [_pos("E1", 60_000.0), _pos("B1", 40_000.0)], _classes()
     )
     out = compute_rebalance(
-        result, {"equity.US": 100.0}, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT
+        result, {"Stocks.US Stocks": 100.0}, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT
     )
     assert out.moves == []
     assert out.total == result.total
@@ -71,18 +69,18 @@ def test_l1_only_sums_to_zero() -> None:
         [_pos("E1", 60_000.0), _pos("B1", 30_000.0), _pos("C1", 10_000.0)],
         _classes(),
     )
-    targets = {"equity": 50.0, "fixed_income": 40.0, "cash": 10.0}
+    targets = {"Stocks": 50.0, "Bonds": 40.0, "Cash": 10.0}
     out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     assert len(out.moves) == 3
     assert abs(sum(m.delta_usd for m in out.moves)) < 1e-6
     by = {m.path: m for m in out.moves}
     # equity 60% actual vs 50% target -> sell
-    assert by["equity"].direction == "sell"
-    assert by["equity"].delta_usd < 0
-    # fixed_income 30% actual vs 40% -> buy
-    assert by["fixed_income"].direction == "buy"
-    assert by["fixed_income"].delta_usd > 0
-    assert by["cash"].direction == "hold"
+    assert by["Stocks"].direction == "sell"
+    assert by["Stocks"].delta_usd < 0
+    # Bonds 30% actual vs 40% -> buy
+    assert by["Bonds"].direction == "buy"
+    assert by["Bonds"].delta_usd > 0
+    assert by["Cash"].direction == "hold"
 
 
 def test_l1_plus_l2_equity() -> None:
@@ -95,13 +93,13 @@ def test_l1_plus_l2_equity() -> None:
         _classes(),
     )
     targets = {
-        "equity": 50.0,
-        "fixed_income": 50.0,
-        "equity.US": 40.0,
-        "equity.intl_developed": 60.0,
+        "Stocks": 50.0,
+        "Bonds": 50.0,
+        "Stocks.US Stocks": 40.0,
+        "Stocks.International Developed": 60.0,
     }
     out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
-    eq = next(m for m in out.moves if m.path == "equity")
+    eq = next(m for m in out.moves if m.path == "Stocks")
     assert len(eq.children) == 2
     # L2 decomposes the parent L1 dollar move (sell ~10k from equity) across
     # buckets: only US is overweight within equity vs L2 targets, so the
@@ -109,8 +107,8 @@ def test_l1_plus_l2_equity() -> None:
     assert abs(sum(c.delta_usd for c in eq.children) - eq.delta_usd) < 1e-6
     for c in eq.children:
         assert abs(c.parent_total_usd - 60_000.0) < 1e-6
-    us = next(c for c in eq.children if c.path == "equity.US")
-    intl = next(c for c in eq.children if c.path == "equity.intl_developed")
+    us = next(c for c in eq.children if c.path == "Stocks.US Stocks")
+    intl = next(c for c in eq.children if c.path == "Stocks.International Developed")
     assert abs(us.delta_usd - eq.delta_usd) < 1e-6
     assert us.direction == "sell"
     assert abs(intl.delta_usd) < 1e-6
@@ -128,21 +126,21 @@ def test_full_l2_decompose_buy_splits_by_shortfall() -> None:
         _classes(),
     )
     # Total 100k; equity 60k (US 10k = 16.67%, intl 50k = 83.33%).
-    # Targets equity 50% / FI 50%; equity.US 40%, equity.intl_developed 60%.
+    # Targets equity 50% / FI 50%; Stocks.US Stocks 40%, Stocks.International Developed 60%.
     # L1 equity: target 50% -> need -10k from... actual 60% vs 50% -> sell 10k.
     # Wait we need a BUY into equity. equity actual 60%, target 70% -> buy +10k.
     targets = {
-        "equity": 70.0,
-        "fixed_income": 30.0,
-        "equity.US": 40.0,
-        "equity.intl_developed": 60.0,
+        "Stocks": 70.0,
+        "Bonds": 30.0,
+        "Stocks.US Stocks": 40.0,
+        "Stocks.International Developed": 60.0,
     }
     out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
-    eq = next(m for m in out.moves if m.path == "equity")
+    eq = next(m for m in out.moves if m.path == "Stocks")
     assert eq.delta_usd > 0
     assert abs(sum(c.delta_usd for c in eq.children) - eq.delta_usd) < 1e-6
-    us = next(c for c in eq.children if c.path == "equity.US")
-    intl = next(c for c in eq.children if c.path == "equity.intl_developed")
+    us = next(c for c in eq.children if c.path == "Stocks.US Stocks")
+    intl = next(c for c in eq.children if c.path == "Stocks.International Developed")
     # US is more under its within-equity target vs intl -> US should get more of the buy.
     assert us.delta_usd > intl.delta_usd
     assert us.direction == "buy"
@@ -154,9 +152,9 @@ def test_hold_band() -> None:
     result = aggregate(
         [_pos("E1", 50_500.0), _pos("B1", 49_500.0)], _classes()
     )
-    targets = {"equity": 50.0, "fixed_income": 50.0}
+    targets = {"Stocks": 50.0, "Bonds": 50.0}
     out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
-    eq = next(m for m in out.moves if m.path == "equity")
+    eq = next(m for m in out.moves if m.path == "Stocks")
     # drift -0.5% -> within hold band
     assert eq.direction == "hold"
     # but the dollar delta is small-non-zero (sign may be negative)
@@ -176,40 +174,40 @@ def test_full_trigger_holds_ok_band_actions_watch_plus() -> None:
     from app.schemas import AllocationResult, AllocationSlice
 
     # Synthetic $100k portfolio with mixed-band drift signature:
-    # equity +6 (act), real_estate -5 (watch), cash -4 (watch),
-    # fixed_income +3 (watch), private -0.5 (ok), commodity +0.5 (ok).
+    # equity +6 (act), Real Estate -5 (watch), cash -4 (watch),
+    # Bonds +3 (watch), private -0.5 (ok), Commodities +0.5 (ok).
     # ok-band drifts net to 0 -> watch+ deltas self-fund.
     result = AllocationResult(
         total=100_000.0,
         by_asset_class=[
-            AllocationSlice(name="equity", value=50_000.0, pct=50.0, children=[]),
-            AllocationSlice(name="real_estate", value=30_000.0, pct=30.0, children=[]),
-            AllocationSlice(name="cash", value=14_000.0, pct=14.0, children=[]),
-            AllocationSlice(name="fixed_income", value=5_000.0, pct=5.0, children=[]),
-            AllocationSlice(name="private", value=500.0, pct=0.5, children=[]),
-            AllocationSlice(name="commodity", value=500.0, pct=0.5, children=[]),
+            AllocationSlice(name="Stocks", value=50_000.0, pct=50.0, children=[]),
+            AllocationSlice(name="Real Estate", value=30_000.0, pct=30.0, children=[]),
+            AllocationSlice(name="Cash", value=14_000.0, pct=14.0, children=[]),
+            AllocationSlice(name="Bonds", value=5_000.0, pct=5.0, children=[]),
+            AllocationSlice(name="Private", value=500.0, pct=0.5, children=[]),
+            AllocationSlice(name="Commodities", value=500.0, pct=0.5, children=[]),
         ],
         unclassified_tickers=[],
     )
     targets = {
-        "equity": 56.0,
-        "real_estate": 25.0,
-        "cash": 10.0,
-        "fixed_income": 8.0,
-        "private": 0.0,
-        "commodity": 1.0,
+        "Stocks": 56.0,
+        "Real Estate": 25.0,
+        "Cash": 10.0,
+        "Bonds": 8.0,
+        "Private": 0.0,
+        "Commodities": 1.0,
     }
     out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     by = {m.path: m for m in out.moves}
 
     # Trigger fires (equity +6 is in act band). Watch+ classes action;
     # ok-band classes hold even though the trigger fired.
-    assert by["equity"].direction == "buy"          # +6 pp (act)
-    assert by["real_estate"].direction == "sell"    # -5 pp (watch)
-    assert by["cash"].direction == "sell"           # -4 pp (watch)
-    assert by["fixed_income"].direction == "buy"    # +3 pp (watch)
-    assert by["private"].direction == "hold"        # -0.5 pp (ok)
-    assert by["commodity"].direction == "hold"      # +0.5 pp (ok)
+    assert by["Stocks"].direction == "buy"          # +6 pp (act)
+    assert by["Real Estate"].direction == "sell"    # -5 pp (watch)
+    assert by["Cash"].direction == "sell"           # -4 pp (watch)
+    assert by["Bonds"].direction == "buy"    # +3 pp (watch)
+    assert by["Private"].direction == "hold"        # -0.5 pp (ok)
+    assert by["Commodities"].direction == "hold"      # +0.5 pp (ok)
 
     # ok-band drifts net to zero so watch+ moves self-fund: sells == buys.
     sells = sum(-m.delta_usd for m in out.moves if m.direction == "sell")
@@ -224,7 +222,7 @@ def test_full_no_trigger_all_hold() -> None:
     result = aggregate(
         [_pos("E1", 50_500.0), _pos("B1", 49_500.0)], _classes()
     )
-    targets = {"equity": 50.0, "fixed_income": 50.0}
+    targets = {"Stocks": 50.0, "Bonds": 50.0}
     out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
     for m in out.moves:
         assert m.direction == "hold"
@@ -244,18 +242,18 @@ def test_full_l1_hold_band_skips_l2_decompose() -> None:
         ],
         _classes(),
     )
-    eq_slice = next(s for s in result.by_asset_class if s.name == "equity")
+    eq_slice = next(s for s in result.by_asset_class if s.name == "Stocks")
     assert abs(eq_slice.pct - 60.5) < 1e-6
     assert abs(result.total - 100_000.0) < 1e-6
 
     targets = {
-        "equity": 60.0,
-        "fixed_income": 40.0,
-        "equity.US": 40.0,
-        "equity.intl_developed": 60.0,
+        "Stocks": 60.0,
+        "Bonds": 40.0,
+        "Stocks.US Stocks": 40.0,
+        "Stocks.International Developed": 60.0,
     }
     out = compute_rebalance(result, targets, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT)
-    eq = next(m for m in out.moves if m.path == "equity")
+    eq = next(m for m in out.moves if m.path == "Stocks")
     assert abs(60.0 - eq_slice.pct) <= TOLERANCE  # |target - actual_pct| within hold band
     assert eq.direction == "hold"
     assert abs(eq.delta_usd - (-500.0)) < 1e-6
@@ -272,7 +270,7 @@ def test_new_money_gaps_exceed_contribution() -> None:
         [_pos("E1", 20_000.0), _pos("B1", 20_000.0), _pos("C1", 60_000.0)],
         _classes(),
     )
-    targets = {"equity": 50.0, "fixed_income": 40.0, "cash": 10.0}
+    targets = {"Stocks": 50.0, "Bonds": 40.0, "Cash": 10.0}
     out = compute_new_money(
         result, targets, contribution_usd=5_000.0, drift_tolerance_pct=TOLERANCE
     )
@@ -282,7 +280,7 @@ def test_new_money_gaps_exceed_contribution() -> None:
     for m in out.moves:
         assert m.delta_usd >= 0.0  # no sells
     # Cash is over target -> gets 0 (gap=0).
-    cash = next(m for m in out.moves if m.path == "cash")
+    cash = next(m for m in out.moves if m.path == "Cash")
     assert cash.delta_usd == 0.0
 
 
@@ -300,8 +298,8 @@ def test_new_money_contribution_exceeds_gaps_excess_to_under_target_only() -> No
     result = AllocationResult(
         total=100.0,
         by_asset_class=[
-            AllocationSlice(name="equity", value=90.0, pct=90.0, children=[]),
-            AllocationSlice(name="fixed_income", value=10.0, pct=10.0, children=[]),
+            AllocationSlice(name="Stocks", value=90.0, pct=90.0, children=[]),
+            AllocationSlice(name="Bonds", value=10.0, pct=10.0, children=[]),
         ],
         unclassified_tickers=[],
     )
@@ -312,19 +310,19 @@ def test_new_money_contribution_exceeds_gaps_excess_to_under_target_only() -> No
     # under. FI gets 32 + 8 = 40. eq gets 0.
     out = compute_new_money(
         result,
-        {"equity": 20.0, "fixed_income": 30.0},
+        {"Stocks": 20.0, "Bonds": 30.0},
         contribution_usd=40.0,
         drift_tolerance_pct=TOLERANCE,
     )
     by = {m.path: m for m in out.moves}
-    assert by["equity"].delta_usd == 0.0
-    assert abs(by["fixed_income"].delta_usd - 40.0) < 1e-6
+    assert by["Stocks"].delta_usd == 0.0
+    assert abs(by["Bonds"].delta_usd - 40.0) < 1e-6
     assert abs(sum(m.delta_usd for m in out.moves) - 40.0) < 1e-6
 
 
 def test_new_money_l2_hierarchical() -> None:
     # Equity 60k (US 20k, intl 40k), FI 40k. Total 100k.
-    # Targets: equity 50, FI 50, equity.US 60, equity.intl_developed 40.
+    # Targets: equity 50, FI 50, Stocks.US Stocks 60, Stocks.International Developed 40.
     # Contribution $10k -> new_total 110k.
     # L1 desired: equity 55k (gap 0 since current 60>55), FI 55k (gap 15k).
     # gaps total 15k. contrib 10k < 15 -> gap-proportional.
@@ -339,23 +337,23 @@ def test_new_money_l2_hierarchical() -> None:
         _classes(),
     )
     targets = {
-        "equity": 50.0,
-        "fixed_income": 50.0,
-        "equity.US": 60.0,
-        "equity.intl_developed": 40.0,
+        "Stocks": 50.0,
+        "Bonds": 50.0,
+        "Stocks.US Stocks": 60.0,
+        "Stocks.International Developed": 40.0,
     }
     out = compute_new_money(
         result, targets, contribution_usd=10_000.0, drift_tolerance_pct=TOLERANCE
     )
-    eq = next(m for m in out.moves if m.path == "equity")
-    fi = next(m for m in out.moves if m.path == "fixed_income")
+    eq = next(m for m in out.moves if m.path == "Stocks")
+    fi = next(m for m in out.moves if m.path == "Bonds")
     assert eq.delta_usd == 0.0
     assert abs(fi.delta_usd - 10_000.0) < 1e-6
     assert eq.children == []  # no L2 recursion when L1 buy is 0
 
     # Now a case where equity gets L1 buy > 0 so children appear.
-    # Reshape: equity 30k, FI 70k. Targets eq 50, FI 50, equity.US 60,
-    # equity.intl_developed 40. Contrib $10k -> new_total 110.
+    # Reshape: equity 30k, FI 70k. Targets eq 50, FI 50, Stocks.US Stocks 60,
+    # Stocks.International Developed 40. Contrib $10k -> new_total 110.
     # desired eq 55, FI 55 -> gaps 25, 0 -> 25 > 10 -> gap-proportional.
     # eq gets all $10k, FI gets 0. L2: eq.US current 20k (actual 66.67%),
     # eq.intl current 10k (33.33%). new_parent = 30+10 = 40.
@@ -372,11 +370,11 @@ def test_new_money_l2_hierarchical() -> None:
     out2 = compute_new_money(
         result2, targets, contribution_usd=10_000.0, drift_tolerance_pct=TOLERANCE
     )
-    eq2 = next(m for m in out2.moves if m.path == "equity")
+    eq2 = next(m for m in out2.moves if m.path == "Stocks")
     assert abs(eq2.delta_usd - 10_000.0) < 1e-6
     assert abs(sum(c.delta_usd for c in eq2.children) - eq2.delta_usd) < 1e-6
-    us = next(c for c in eq2.children if c.path == "equity.US")
-    intl = next(c for c in eq2.children if c.path == "equity.intl_developed")
+    us = next(c for c in eq2.children if c.path == "Stocks.US Stocks")
+    intl = next(c for c in eq2.children if c.path == "Stocks.International Developed")
     assert abs(us.delta_usd - 4_000.0) < 1e-6
     assert abs(intl.delta_usd - 6_000.0) < 1e-6
 
@@ -387,7 +385,7 @@ def test_new_money_invalid_amount() -> None:
     import pytest
 
     result = aggregate([_pos("E1", 100.0)], _classes())
-    targets = {"equity": 100.0}
+    targets = {"Stocks": 100.0}
     for bad in (-1.0, 0.0, float("nan"), float("inf"), float("-inf")):
         with pytest.raises(ValueError):
             compute_new_money(
@@ -398,7 +396,7 @@ def test_new_money_invalid_amount() -> None:
 def test_zero_total_empty_moves() -> None:
     result = aggregate([], _classes())
     out = compute_rebalance(
-        result, {"equity": 100.0}, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT
+        result, {"Stocks": 100.0}, drift_tolerance_pct=TOLERANCE, drift_act_pct=ACT
     )
     assert out.moves == []
     assert out.total == 0.0
@@ -444,24 +442,8 @@ def test_rebalance_stale_l2_returns_409(
     account = Account(label="T", type="brokerage")
     test_db.add(account)
     test_db.commit()
-    test_db.add_all(
-        [
-            Classification(
-                ticker="EUS",
-                asset_class="equity",
-                sub_class="us_large_cap",
-                region="US",
-                source="user",
-            ),
-            Classification(
-                ticker="EINT",
-                asset_class="equity",
-                sub_class="intl_developed",
-                region="intl_developed",
-                source="user",
-            ),
-        ]
-    )
+    seed_user_classification(test_db, "EUS", "Stocks", "US Stocks")
+    seed_user_classification(test_db, "EINT", "Stocks", "International Developed")
     test_db.add_all(
         [
             _position(account.id, "EUS", 50_000.0),
@@ -471,11 +453,11 @@ def test_rebalance_stale_l2_returns_409(
     test_db.commit()
 
     put_body = {
-        "root": [{"path": "equity", "pct": 100}],
+        "root": [{"path": "Stocks", "pct": 100}],
         "groups": {
-            "equity": [
-                {"path": "equity.US", "pct": 50},
-                {"path": "equity.intl_developed", "pct": 50},
+            "Stocks": [
+                {"path": "Stocks.US Stocks", "pct": 50},
+                {"path": "Stocks.International Developed", "pct": 50},
             ]
         },
     }
@@ -483,15 +465,7 @@ def test_rebalance_stale_l2_returns_409(
     assert pr.status_code == 200
 
     # Add a new emerging-markets position -> stale L2 targets.
-    test_db.add(
-        Classification(
-            ticker="EEM",
-            asset_class="equity",
-            sub_class="emerging",
-            region="emerging",
-            source="user",
-        )
-    )
+    seed_user_classification(test_db, "EEM", "Stocks", "International Emerging")
     test_db.add(_position(account.id, "EEM", 20_000.0))
     test_db.commit()
 
@@ -499,8 +473,8 @@ def test_rebalance_stale_l2_returns_409(
     assert r.status_code == 409
     detail = r.json()["detail"]
     assert detail["error"] == "stale_targets"
-    assert detail["asset_class"] == "equity"
-    assert "equity.emerging" in detail["missing_paths"]
+    assert detail["asset_class"] == "Stocks"
+    assert "Stocks.International Emerging" in detail["missing_paths"]
 
 
 def test_rebalance_full_returns_tree(
@@ -509,31 +483,9 @@ def test_rebalance_full_returns_tree(
     account = Account(label="T", type="brokerage")
     test_db.add(account)
     test_db.commit()
-    test_db.add_all(
-        [
-            Classification(
-                ticker="EUS",
-                asset_class="equity",
-                sub_class="us_large_cap",
-                region="US",
-                source="user",
-            ),
-            Classification(
-                ticker="EINT",
-                asset_class="equity",
-                sub_class="intl_developed",
-                region="intl_developed",
-                source="user",
-            ),
-            Classification(
-                ticker="BND",
-                asset_class="fixed_income",
-                sub_class="us_aggregate",
-                region="US",
-                source="user",
-            ),
-        ]
-    )
+    seed_user_classification(test_db, "EUS", "Stocks", "US Stocks")
+    seed_user_classification(test_db, "EINT", "Stocks", "International Developed")
+    seed_user_classification(test_db, "BND", "Bonds", "US Treasury")
     test_db.add_all(
         [
             _position(account.id, "EUS", 30_000.0),
@@ -547,13 +499,13 @@ def test_rebalance_full_returns_tree(
         headers=auth_headers,
         json={
             "root": [
-                {"path": "equity", "pct": 50},
-                {"path": "fixed_income", "pct": 50},
+                {"path": "Stocks", "pct": 50},
+                {"path": "Bonds", "pct": 50},
             ],
             "groups": {
-                "equity": [
-                    {"path": "equity.US", "pct": 40},
-                    {"path": "equity.intl_developed", "pct": 60},
+                "Stocks": [
+                    {"path": "Stocks.US Stocks", "pct": 40},
+                    {"path": "Stocks.International Developed", "pct": 60},
                 ]
             },
         },
@@ -566,13 +518,13 @@ def test_rebalance_full_returns_tree(
     assert body["mode"] == "full"
     assert body["total"] == 100_000.0
     paths = {m["path"] for m in body["moves"]}
-    assert paths == {"equity", "fixed_income"}
-    eq = next(m for m in body["moves"] if m["path"] == "equity")
+    assert paths == {"Stocks", "Bonds"}
+    eq = next(m for m in body["moves"] if m["path"] == "Stocks")
     # equity 60% actual vs 50% target -> sell 10k
     assert eq["direction"] == "sell"
     assert abs(eq["delta_usd"] - (-10_000.0)) < 1e-6
     child_paths = {c["path"] for c in eq["children"]}
-    assert child_paths == {"equity.US", "equity.intl_developed"}
+    assert child_paths == {"Stocks.US Stocks", "Stocks.International Developed"}
     assert abs(sum(c["delta_usd"] for c in eq["children"]) - eq["delta_usd"]) < 1e-6
 
 
@@ -584,7 +536,7 @@ def test_new_money_missing_amount_422(
     test_db.commit()
     test_db.add(_position(account.id, "VTI", 10_000.0))
     test_db.commit()
-    test_db.add(Target(path="equity", pct=100))
+    test_db.add(Target(path="Stocks", pct=100))
     test_db.commit()
 
     r = client.get("/api/rebalance?mode=new_money", headers=auth_headers)
@@ -599,7 +551,7 @@ def test_new_money_bad_amount_422(
     test_db.commit()
     test_db.add(_position(account.id, "VTI", 10_000.0))
     test_db.commit()
-    test_db.add(Target(path="equity", pct=100))
+    test_db.add(Target(path="Stocks", pct=100))
     test_db.commit()
 
     for bad in ("0", "-5", "nan", "inf"):
@@ -615,24 +567,8 @@ def test_new_money_happy_path(
     account = Account(label="T", type="brokerage")
     test_db.add(account)
     test_db.commit()
-    test_db.add_all(
-        [
-            Classification(
-                ticker="EUS",
-                asset_class="equity",
-                sub_class="us_large_cap",
-                region="US",
-                source="user",
-            ),
-            Classification(
-                ticker="BND",
-                asset_class="fixed_income",
-                sub_class="us_aggregate",
-                region="US",
-                source="user",
-            ),
-        ]
-    )
+    seed_user_classification(test_db, "EUS", "Stocks", "US Stocks")
+    seed_user_classification(test_db, "BND", "Bonds", "US Treasury")
     test_db.add_all(
         [
             _position(account.id, "EUS", 40_000.0),
@@ -645,8 +581,8 @@ def test_new_money_happy_path(
         headers=auth_headers,
         json={
             "root": [
-                {"path": "equity", "pct": 60},
-                {"path": "fixed_income", "pct": 40},
+                {"path": "Stocks", "pct": 60},
+                {"path": "Bonds", "pct": 40},
             ],
             "groups": {},
         },
@@ -668,38 +604,16 @@ def test_new_money_happy_path(
 def test_rebalance_endpoint_excludes_non_investable_positions(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
-    # A non-investable real_estate position (e.g. primary residence) must
+    # A non-investable Real Estate position (e.g. primary residence) must
     # not appear in the rebalance moves and must not contribute to the
     # Investment Portfolio total -- otherwise rebalance would suggest
     # selling the user's home.
     account = Account(label="T", type="brokerage")
     test_db.add(account)
     test_db.commit()
-    test_db.add_all(
-        [
-            Classification(
-                ticker="EUS",
-                asset_class="equity",
-                sub_class="us_large_cap",
-                region="US",
-                source="user",
-            ),
-            Classification(
-                ticker="B1",
-                asset_class="fixed_income",
-                sub_class="us_aggregate",
-                region="US",
-                source="user",
-            ),
-            Classification(
-                ticker="HOUSE",
-                asset_class="real_estate",
-                sub_class="direct",
-                region="US",
-                source="user",
-            ),
-        ]
-    )
+    seed_user_classification(test_db, "EUS", "Stocks", "US Stocks")
+    seed_user_classification(test_db, "B1", "Bonds", "US Corporate")
+    seed_user_classification(test_db, "HOUSE", "Real Estate", "Primary Residence")
     test_db.add_all(
         [
             _position(account.id, "EUS", 60_000.0),
@@ -724,8 +638,8 @@ def test_rebalance_endpoint_excludes_non_investable_positions(
         headers=auth_headers,
         json={
             "root": [
-                {"path": "equity", "pct": 60},
-                {"path": "fixed_income", "pct": 40},
+                {"path": "Stocks", "pct": 60},
+                {"path": "Bonds", "pct": 40},
             ],
             "groups": {},
         },
@@ -737,5 +651,5 @@ def test_rebalance_endpoint_excludes_non_investable_positions(
     body = r.json()
     assert body["total"] == 100_000.0  # 60k + 40k, condo excluded
     paths = {m["path"] for m in body["moves"]}
-    assert "real_estate" not in paths
-    assert paths == {"equity", "fixed_income"}
+    assert "Real Estate" not in paths
+    assert paths == {"Stocks", "Bonds"}

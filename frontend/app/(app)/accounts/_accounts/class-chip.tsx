@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import useSWR from "swr";
 import { mutate } from "swr";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -8,8 +9,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/app/components/ui/popover";
-import { api } from "@/app/lib/api";
-import type { AssetClass } from "@/app/lib/api";
+import {
+  api,
+  classificationDominantBucket,
+  type AssetClass,
+} from "@/app/lib/api";
 import { ASSET_CLASS_ORDER, ASSET_CLASS_LABEL } from "./mocks";
 
 type ClassChipProps = {
@@ -17,7 +21,6 @@ type ClassChipProps = {
   assetClass: string | null;
   source: "yaml" | "user" | null;
   accountId: number;
-  // TODO G3: pass accounts prop to determine cross-account ticker count
   accountCountForTicker: number;
 };
 
@@ -25,26 +28,36 @@ export function ClassChip({
   ticker,
   assetClass,
   source,
-  accountId,
+  accountId: _accountId,
   accountCountForTicker,
 }: ClassChipProps) {
   const [open, setOpen] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string>(assetClass ?? "");
   const [subClass, setSubClass] = useState("");
-  const [sector, setSector] = useState("");
-  const [region, setRegion] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function handleOpenChange(next: boolean) {
-    if (next) {
-      // Reset form to current values when opening
+  const { data: classifications } = useSWR(
+    open ? "/api/classifications" : null,
+    api.classifications,
+    { revalidateOnFocus: false },
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const row = classifications?.find((c) => c.ticker === ticker);
+    if (row) {
+      const d = classificationDominantBucket(row);
+      setSelectedClass(d.asset_class);
+      setSubClass(d.sub_class ?? "");
+    } else {
       setSelectedClass(assetClass ?? "");
       setSubClass("");
-      setSector("");
-      setRegion("");
-      setError(null);
     }
+    setError(null);
+  }, [open, classifications, ticker, assetClass]);
+
+  function handleOpenChange(next: boolean) {
     setOpen(next);
   }
 
@@ -56,14 +69,18 @@ export function ClassChip({
         await api.deleteClassification(ticker);
       } else {
         await api.patchClassification(ticker, {
-          asset_class: selectedClass,
-          sub_class: subClass || null,
-          sector: sector || null,
-          region: region || null,
+          buckets: [
+            {
+              asset_class: selectedClass,
+              sub_class: subClass.trim() || null,
+              weight: 1,
+            },
+          ],
         });
       }
       await mutate("/api/classifications");
       await mutate("/api/accounts");
+      await mutate("/api/allocation");
       setOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save.");
@@ -79,6 +96,7 @@ export function ClassChip({
       await api.deleteClassification(ticker);
       await mutate("/api/classifications");
       await mutate("/api/accounts");
+      await mutate("/api/allocation");
       setOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to reset.");
@@ -111,9 +129,10 @@ export function ClassChip({
           </p>
         )}
 
-        {/* Asset class select */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-foreground">{ticker} — Asset class</label>
+          <label className="text-xs font-medium text-foreground">
+            {ticker} — Asset class
+          </label>
           <select
             value={selectedClass}
             onChange={(e) => setSelectedClass(e.target.value)}
@@ -133,50 +152,29 @@ export function ClassChip({
           )}
         </div>
 
-        {/* Advanced fields */}
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground transition-colors select-none">
-            Advanced
+            Sub-class
           </summary>
-          <div className="flex flex-col gap-2 mt-2">
-            <div className="flex flex-col gap-1">
-              <label className="font-medium text-foreground">Sub-class</label>
-              <input
-                type="text"
-                value={subClass}
-                onChange={(e) => setSubClass(e.target.value)}
-                placeholder="e.g. large_cap"
-                className="w-full rounded-md border border-input bg-background px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="font-medium text-foreground">Sector</label>
-              <input
-                type="text"
-                value={sector}
-                onChange={(e) => setSector(e.target.value)}
-                placeholder="e.g. technology"
-                className="w-full rounded-md border border-input bg-background px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="font-medium text-foreground">Region</label>
-              <select
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <option value="">—</option>
-                <option value="us">US</option>
-                <option value="intl_developed">Intl. Developed</option>
-                <option value="intl_emerging">Intl. Emerging</option>
-                <option value="global">Global</option>
-              </select>
-            </div>
+          <div className="mt-2">
+            <label className="font-medium text-foreground">Sub-class (optional)</label>
+            <input
+              type="text"
+              value={subClass}
+              onChange={(e) => setSubClass(e.target.value)}
+              placeholder="e.g. us_large_cap"
+              className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <p className="mt-1 text-muted-foreground">
+              Saved as a single 100% bucket. For multi-bucket funds, use{" "}
+              <a href="/classifications" className="underline underline-offset-2">
+                Classifications
+              </a>
+              .
+            </p>
           </div>
         </details>
 
-        {/* Footer */}
         <div className="flex items-center justify-between gap-2 pt-1 border-t border-border">
           {source === "user" && (
             <Button

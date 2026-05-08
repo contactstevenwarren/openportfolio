@@ -170,7 +170,7 @@ export function HealthCard() {
                 </p>
                 {unclassified.length > 0 && (
                   <Link
-                    href="/legacy/classifications"
+                    href="/classifications"
                     className="text-body-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:underline"
                   >
                     Fix <span aria-hidden>&rarr;</span>

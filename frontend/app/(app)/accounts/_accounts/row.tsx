@@ -25,6 +25,7 @@ import {
 } from "@/app/components/ui/tooltip";
 import { cn } from "@/app/lib/utils";
 import type { Account, Institution, ClassificationRow } from "@/app/lib/api";
+import { classificationPrimaryAssetClass } from "@/app/lib/api";
 import { api } from "@/app/lib/api";
 import {
   type AccountKind,
@@ -538,7 +539,7 @@ export function Row({
   const visiblePositions = unclassifiedFilter
     ? positions.filter((pos) => {
         const row = classMap.get(pos.ticker);
-        return !row || row.asset_class == null;
+        return !row || !classificationPrimaryAssetClass(row);
       })
     : positions;
 
@@ -906,7 +907,9 @@ export function Row({
                                   {/* TODO(G3): derive cross-account ticker count once accounts prop is threaded to Row */}
                                   <ClassChip
                                     ticker={pos.ticker}
-                                    assetClass={classRow?.asset_class ?? null}
+                                    assetClass={
+                                      classRow ? classificationPrimaryAssetClass(classRow) : null
+                                    }
                                     source={classRow?.source ?? null}
                                     accountId={account.id}
                                     accountCountForTicker={0}
@@ -951,7 +954,9 @@ export function Row({
                                 // TODO(G3): derive cross-account ticker count once accounts prop is threaded to Row
                                 <ClassChip
                                   ticker={pos.ticker}
-                                  assetClass={classRow?.asset_class ?? null}
+                                  assetClass={
+                                    classRow ? classificationPrimaryAssetClass(classRow) : null
+                                  }
                                   source={classRow?.source ?? null}
                                   accountId={account.id}
                                   accountCountForTicker={0}

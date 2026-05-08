@@ -3,11 +3,9 @@
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.main import _migrate_schema
-from app.models import Account, Classification, Institution, Position
+from app.models import Account, Classification, ClassificationBucket, Institution, Position
 
 
 def test_list_requires_admin_token(client: TestClient) -> None:
@@ -163,8 +161,28 @@ def test_list_returns_enriched_shape(
 
     now = datetime.now(UTC)
     # Two classified positions + one unclassified
-    test_db.add(Classification(ticker="VTI", asset_class="equity", source="user"))
-    test_db.add(Classification(ticker="BND", asset_class="fixed_income", source="user"))
+    vti_c = Classification(ticker="VTI", source="user")
+    bnd_c = Classification(ticker="BND", source="user")
+    test_db.add_all([vti_c, bnd_c])
+    test_db.flush()
+    test_db.add_all(
+        [
+            ClassificationBucket(
+                ticker="VTI",
+                sort_order=0,
+                asset_class="Stocks",
+                sub_class="US Stocks",
+                weight=1.0,
+            ),
+            ClassificationBucket(
+                ticker="BND",
+                sort_order=0,
+                asset_class="Bonds",
+                sub_class="US Treasury",
+                weight=1.0,
+            ),
+        ]
+    )
     test_db.commit()
 
     test_db.add(Position(account_id=account.id, ticker="VTI", shares=10, market_value=2000.0, as_of=now, source="paste"))
@@ -192,8 +210,8 @@ def test_list_returns_enriched_shape(
 
     # class_breakdown: only non-zero asset classes
     breakdown_classes = {b["asset_class"] for b in row["class_breakdown"]}
-    assert "equity" in breakdown_classes
-    assert "fixed_income" in breakdown_classes
+    assert "Stocks" in breakdown_classes
+    assert "Bonds" in breakdown_classes
     # All values positive
     for b in row["class_breakdown"]:
         assert b["value"] > 0
@@ -261,25 +279,6 @@ def test_valid_tax_treatments_on_brokerage(
         assert r.json()["tax_treatment"] == treatment
 
 
-# --- HSA migration ---------------------------------------------------------
-
-
-def test_hsa_migration_converts_type(test_db: Session) -> None:
-    """_migrate_schema converts type='hsa' rows to type='brokerage'+tax_treatment='hsa'."""
-    # Insert a legacy HSA row directly bypassing ORM validation
-    test_db.execute(
-        text("INSERT INTO accounts (label, type, currency) VALUES ('Old HSA', 'hsa', 'USD')")
-    )
-    test_db.commit()
-
-    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
-
-    test_db.expire_all()
-    account = test_db.query(Account).filter_by(label="Old HSA").one()
-    assert account.type == "brokerage"
-    assert account.tax_treatment == "hsa"
-
-
 def test_archive_round_trip(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
@@ -317,22 +316,6 @@ def test_archive_round_trip(
     assert r2.json()["is_archived"] is False
 
 
-def test_hsa_migration_is_idempotent(test_db: Session) -> None:
-    """Running _migrate_schema twice leaves the row unchanged on the second run."""
-    test_db.execute(
-        text("INSERT INTO accounts (label, type, currency) VALUES ('HSA Again', 'hsa', 'USD')")
-    )
-    test_db.commit()
-
-    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
-    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
-
-    test_db.expire_all()
-    account = test_db.query(Account).filter_by(label="HSA Again").one()
-    assert account.type == "brokerage"
-    assert account.tax_treatment == "hsa"
-
-
 # --- atomic asset account creation (PR 1A) --------------------------------
 
 
@@ -366,7 +349,8 @@ def test_create_real_estate_account_with_position(
     classifications = client.get("/api/classifications", headers=auth_headers).json()
     cls_row = next((c for c in classifications if c["ticker"] == "my-home"), None)
     assert cls_row is not None
-    assert cls_row["asset_class"] == "real_estate"
+    assert cls_row["buckets"][0]["asset_class"] == "Real Estate"
+    assert cls_row["buckets"][0]["sub_class"] == "Primary Residence"
     assert cls_row["source"] == "user"
 
 
@@ -698,24 +682,3 @@ def test_non_investable_account_excluded_from_allocation_total(
     assert abs(allocation["total"] - 100_000.0) < 1.0
     # Net Worth should include both: $600k
     assert abs(allocation["net_worth"] - 600_000.0) < 1.0
-
-
-def test_migrate_schema_adds_is_investable_column(test_db: Session) -> None:
-    """_migrate_schema adds accounts.is_investable on legacy DBs that lack it."""
-    with test_db.bind.begin() as conn:  # type: ignore[union-attr]
-        conn.execute(text("ALTER TABLE accounts RENAME TO accounts_bak"))
-        conn.execute(
-            text(
-                "CREATE TABLE accounts ("
-                "id INTEGER PRIMARY KEY, label VARCHAR(100), type VARCHAR(50), "
-                "currency VARCHAR(3), created_at DATETIME, institution_id INTEGER, "
-                "tax_treatment VARCHAR(20) NOT NULL DEFAULT 'taxable', "
-                "staleness_threshold_days INTEGER NOT NULL DEFAULT 30, "
-                "is_archived BOOLEAN NOT NULL DEFAULT 0"
-                ")"
-            )
-        )
-    _migrate_schema(test_db.bind)  # type: ignore[arg-type]
-    with test_db.bind.begin() as conn:  # type: ignore[union-attr]
-        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(accounts)"))}
-    assert "is_investable" in cols

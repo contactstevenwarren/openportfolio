@@ -57,7 +57,7 @@ shadcn semantic names are used directly. The accent-color rule is enforced by ma
 | `--destructive` | `#dc2626` | `#f87171` | |
 | `--success`, `--warning` | `#16a34a` / `#d97706` | `#4ade80` / `#fbbf24` | Status |
 | `--*-soft` (success/warning/destructive) | per `brand.md` | per `brand.md` | Pill backgrounds |
-| `--viz-cash`, `--viz-us-equity`, `--viz-intl-equity`, `--viz-fixed-income`, `--viz-real-estate`, `--viz-crypto`, `--viz-alts`, `--viz-other` | per `brand.md` | per `brand.md` | 8-category data viz |
+| `--viz-cash`, `--viz-stocks`, `--viz-bonds`, `--viz-real-estate`, `--viz-commodities`, `--viz-crypto`, `--viz-private` | per `brand.md` | per `brand.md` | L1 data viz |
 | `--chart-1..5` | = first 5 of viz | = first 5 of viz | shadcn `<Chart>` palette |
 
 Sidebar tokens (`--sidebar`, `--sidebar-foreground`, etc.) alias the corresponding semantic tokens; no separate sidebar palette.
@@ -104,12 +104,7 @@ frontend/
 │   ├── lib/
 │   │   ├── utils.ts               # cn() helper (shadcn)
 │   │   └── api.ts, drill.ts, ...  # shared domain helpers
-│   ├── hooks/                     # shadcn-generated hooks (use-mobile)
-│   └── legacy/                    # Pre-redesign routes
-│       ├── layout.tsx             # Plain nav, points to /legacy/*
-│       ├── page.tsx               # Index of legacy routes
-│       ├── components/            # Legacy-only components (PositionExtractReview)
-│       └── {targets,accounts,classifications,positions,paste,manual}/
+│   └── hooks/                     # shadcn-generated hooks (use-mobile)
 ├── .storybook/
 │   ├── main.ts                    # @storybook/nextjs-vite + addon-themes
 │   ├── preview.ts                 # Imports globals.css, theme decorator
@@ -120,16 +115,14 @@ frontend/
 └── package.json
 ```
 
-## Routing & coexistence with legacy
+## Routing
 
-- **`/`** — new home, dashboard with allocation and account widgets.
-- **`/accounts`** — account list page (UI-only mock pass; real API wiring deferred). Components live in `(app)/accounts/_accounts/`. The `_accounts/` prefix marks the folder as a private module — not a routable segment.
-- **`/brand`** — refactored brand identity showcase (uses shadcn primitives + Recharts donut).
-- **`/legacy/*`** — pre-redesign data-entry routes (forms only; the legacy dashboard was deleted). Visual quality not maintained.
+- **`/`** — dashboard (allocation, drift, rebalance tab, account widgets).
+- **`/accounts`** — account list and per-account import/update flows. Components live in `(app)/accounts/_accounts/`. The `_accounts/` prefix marks the folder as a private module — not a routable segment.
+- **`/targets`**, **`/classifications`**, **`/liabilities`**, **`/settings`** — other `(app)` routes sharing sidebar chrome.
+- **`/brand`** — brand identity showcase (shadcn primitives + Recharts donut).
 
-The `(app)` route group shares the sidebar-and-header chrome between `/` and `/brand`. The `legacy/` folder has its own thin nav-only layout. Both groups inherit the root `app/layout.tsx` (which provides Tailwind globals, fonts, and the ThemeProvider).
-
-When the new app reaches feature parity with legacy, `app/legacy/` will be deleted in a follow-up PR.
+The `(app)` route group uses `app/layout.tsx` (Tailwind globals, fonts, ThemeProvider) plus sidebar + header.
 
 ## Charts
 
@@ -186,9 +179,8 @@ This split is documented in `brand.md`. The rationale: lucide is the de-facto ch
 ## Open questions / future work
 
 - **Storybook deployment.** Currently local-only. Static export at `storybook-static/` could deploy to Fly.io or Chromatic when team grows beyond solo.
-- **Legacy deletion.** Targeted for the PR after `/` reaches feature parity with the legacy dashboard. ~7 files + the `app/legacy/` folder.
 - **`<HeroNumber>` primitive.** Enforces AAA contrast and JetBrains Mono Medium styling. Add when first dashboard page lands.
-- **Brand donut drill-down.** When real allocation data is wired up, port the legacy drill-down behavior into the Recharts donut with the brand's specified motion (300ms ease-out, fade-not-rotate).
+- **Brand donut drill-down.** Allocation donut uses Recharts with drill/panel behavior; refine motion with `var(--duration-slow)` / `var(--ease-out)` per `brand.md`.
 - **`/accounts` real data wiring.** Replace `_accounts/mocks.ts` with SWR calls to `/api/accounts` + `/api/positions`. Requires backend schema migration: `Institution` table, `is_archived` / `is_manual` / `staleness_threshold_days` / `tax_treatment` / `account_type` columns on `Account`, per-account `Snapshot` with FK to `Position` rows.
 - **`<Provenance>` primitive.** Full provenance coverage on `/accounts` (every balance, position value, asset-class total). Currently only balance and last-updated carry a `Tooltip`; the architecture hard rule requires all user-visible numbers.
 - **`<HeroNumber>` primitive.** Also needed on `/accounts` header NW figure (currently TODO-flagged at AA contrast).

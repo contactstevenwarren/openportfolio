@@ -12,7 +12,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.llm import TickerClassificationResult
-from app.models import Account, Classification, Position, Provenance
+from app.models import Account, Classification, ClassificationBucket, Position, Provenance
+
+from tests.db_helpers import seed_user_classification
 
 
 def _position(test_db: Session, ticker: str) -> None:
@@ -45,7 +47,12 @@ def test_endpoints_require_admin_token(client: TestClient) -> None:
         == 401
     )
     assert (
-        client.patch("/api/classifications/VTI", json={"asset_class": "equity"}).status_code
+        client.patch(
+            "/api/classifications/VTI",
+            json={
+                "buckets": [{"asset_class": "Stocks", "sub_class": "US Stocks", "weight": 1.0}]
+            },
+        ).status_code
         == 401
     )
     assert client.delete("/api/classifications/VTI").status_code == 401
@@ -59,17 +66,18 @@ def test_taxonomy_returns_friendly_labels(
 ) -> None:
     body = client.get("/api/classifications/taxonomy", headers=auth_headers).json()
     by_value = {o["value"]: o["label"] for o in body["asset_classes"]}
-    assert by_value["fixed_income"] == "Fixed Income"
-    assert by_value["real_estate"] == "Real Estate"
-    # Sanity: every roadmap asset class is present.
+    # Locked taxonomy: value and label are the same plain-English string.
+    for o in body["asset_classes"]:
+        assert o["label"] == o["value"]
+    assert by_value["Bonds"] == "Bonds"
     assert set(by_value) >= {
-        "equity",
-        "fixed_income",
-        "real_estate",
-        "commodity",
-        "crypto",
-        "cash",
-        "private",
+        "Stocks",
+        "Bonds",
+        "Real Estate",
+        "Commodities",
+        "Crypto",
+        "Cash",
+        "Private",
     }
 
 
@@ -90,22 +98,14 @@ def test_list_includes_yaml_baseline(
 def test_list_shows_user_row_as_override(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
-    # BND is yaml-backed as us_aggregate; user reclassifies to us_treasury.
-    test_db.add(
-        Classification(
-            ticker="BND",
-            asset_class="fixed_income",
-            sub_class="us_treasury",
-            region="US",
-            source="user",
-        )
-    )
+    # BND is yaml-backed (Treasury + Corporate); user overrides to a single bucket.
+    seed_user_classification(test_db, "BND", "Bonds", "US Corporate")
     test_db.commit()
 
     rows = client.get("/api/classifications", headers=auth_headers).json()
     bnd = next(r for r in rows if r["ticker"] == "BND")
     assert bnd["source"] == "user"
-    assert bnd["sub_class"] == "us_treasury"
+    assert bnd["buckets"][0]["sub_class"] == "US Corporate"
     assert bnd["overrides_yaml"] is True
     # And there's only one BND row (the yaml one is suppressed when
     # user overrides it).
@@ -115,60 +115,42 @@ def test_list_shows_user_row_as_override(
 def test_list_exposes_full_breakdown_for_auto_split_funds(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    # VT has a multi-region + multi-sub_class + multi-sector lookthrough.
-    # The endpoint exposes every dimension, weight-sorted, so the UI
-    # tooltip can render the same decomposition the allocation engine uses.
+    # VT is multi-bucket in the seed; list exposes weighted (asset_class, sub_class) rows.
     rows = client.get("/api/classifications", headers=auth_headers).json()
     vt = next(r for r in rows if r["ticker"] == "VT")
     assert vt["has_breakdown"] is True
-    br = vt["breakdown"]
-    assert br is not None
-
-    region_buckets = {b["bucket"] for b in br["region"]}
-    assert {"US", "intl_developed", "intl_emerging"} <= region_buckets
-
-    # Each dimension is sorted by weight descending -- the UI depends
-    # on this so the tooltip doesn't need to re-sort.
-    for dim in ("region", "sub_class", "sector"):
-        weights = [b["weight"] for b in br[dim]]
-        assert weights == sorted(weights, reverse=True), dim
+    subs = {b["sub_class"] for b in vt["buckets"]}
+    assert {"US Stocks", "International Developed", "International Emerging"} <= subs
+    weights = [b["weight"] for b in vt["buckets"]]
+    assert abs(sum(weights) - 1.0) < 1e-6
 
 
 def test_list_single_bucket_fund_still_carries_breakdown(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    # BND is 100% us_aggregate / 100% US -> has_breakdown=True and the
-    # tooltip data is present (one bucket per dimension, not empty).
+    # VTI is a single-bucket stock in the seed.
     rows = client.get("/api/classifications", headers=auth_headers).json()
-    bnd = next(r for r in rows if r["ticker"] == "BND")
-    assert bnd["has_breakdown"] is True
-    assert bnd["breakdown"] is not None
-    assert [b["bucket"] for b in bnd["breakdown"]["region"]] == ["US"]
-    assert [b["bucket"] for b in bnd["breakdown"]["sub_class"]] == ["us_aggregate"]
+    vti = next(r for r in rows if r["ticker"] == "VTI")
+    assert vti["has_breakdown"] is False
+    assert len(vti["buckets"]) == 1
+    assert vti["buckets"][0]["sub_class"] == "US Stocks"
 
 
 def test_list_has_no_breakdown_for_individual_stocks(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    # AAPL is a single stock with no lookthrough entry.
+    # AAPL is a single-bucket stock in the seed.
     rows = client.get("/api/classifications", headers=auth_headers).json()
     aapl = next(r for r in rows if r["ticker"] == "AAPL")
     assert aapl["has_breakdown"] is False
-    assert aapl["breakdown"] is None
+    assert len(aapl["buckets"]) == 1
 
 
 def test_list_new_user_ticker_is_not_an_override(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
     # User-invented ticker with no YAML baseline -- overrides_yaml=False.
-    test_db.add(
-        Classification(
-            ticker="wine-bottle-2019",
-            asset_class="commodity",
-            sub_class="wine",
-            source="user",
-        )
-    )
+    seed_user_classification(test_db, "wine-bottle-2019", "Commodities", "Other Commodities")
     test_db.commit()
 
     rows = client.get("/api/classifications", headers=auth_headers).json()
@@ -186,16 +168,16 @@ def test_patch_creates_user_override(
     r = client.patch(
         "/api/classifications/BND",
         json={
-            "asset_class": "fixed_income",
-            "sub_class": "us_treasury",
-            "region": "US",
+            "buckets": [
+                {"asset_class": "Bonds", "sub_class": "US Treasury", "weight": 1.0}
+            ],
         },
         headers=auth_headers,
     )
     assert r.status_code == 200
     body = r.json()
     assert body["source"] == "user"
-    assert body["sub_class"] == "us_treasury"
+    assert body["buckets"][0]["sub_class"] == "US Treasury"
     assert body["overrides_yaml"] is True
 
     # Row persisted.
@@ -210,9 +192,9 @@ def test_patch_writes_provenance_per_field(
     client.patch(
         "/api/classifications/BND",
         json={
-            "asset_class": "fixed_income",
-            "sub_class": "us_treasury",
-            "region": "US",
+            "buckets": [
+                {"asset_class": "Bonds", "sub_class": "US Treasury", "weight": 1.0}
+            ],
         },
         headers=auth_headers,
     )
@@ -224,8 +206,7 @@ def test_patch_writes_provenance_per_field(
         .all()
     )
     fields = {p.field for p in prov}
-    # Every writable field gets a provenance row (full-shape PATCH).
-    assert fields == {"asset_class", "sub_class", "sector", "region"}
+    assert fields == {"buckets"}
     for p in prov:
         assert p.source == "user"
 
@@ -233,26 +214,26 @@ def test_patch_writes_provenance_per_field(
 def test_patch_updates_existing_user_row(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
-    test_db.add(
-        Classification(
-            ticker="BND",
-            asset_class="fixed_income",
-            sub_class="us_aggregate",
-            source="user",
-        )
-    )
+    seed_user_classification(test_db, "BND", "Bonds", "US Corporate")
     test_db.commit()
 
     client.patch(
         "/api/classifications/BND",
-        json={"asset_class": "fixed_income", "sub_class": "us_treasury"},
+        json={
+            "buckets": [
+                {"asset_class": "Bonds", "sub_class": "US Treasury", "weight": 1.0}
+            ],
+        },
         headers=auth_headers,
     )
 
     test_db.expire_all()
-    row = test_db.get(Classification, "BND")
-    assert row is not None
-    assert row.sub_class == "us_treasury"
+    b = (
+        test_db.query(ClassificationBucket)
+        .filter(ClassificationBucket.ticker == "BND")
+        .one()
+    )
+    assert b.sub_class == "US Treasury"
 
 
 def test_patch_rejects_invalid_asset_class(
@@ -260,7 +241,9 @@ def test_patch_rejects_invalid_asset_class(
 ) -> None:
     r = client.patch(
         "/api/classifications/BND",
-        json={"asset_class": "nonsense"},
+        json={
+            "buckets": [{"asset_class": "nonsense", "sub_class": "US Treasury", "weight": 1.0}]
+        },
         headers=auth_headers,
     )
     assert r.status_code == 422
@@ -273,14 +256,7 @@ def test_delete_reverts_yaml_ticker_to_baseline(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
     # User override on a YAML-backed ticker -> delete reverts cleanly.
-    test_db.add(
-        Classification(
-            ticker="BND",
-            asset_class="fixed_income",
-            sub_class="us_treasury",
-            source="user",
-        )
-    )
+    seed_user_classification(test_db, "BND", "Bonds", "US Corporate")
     test_db.commit()
 
     r = client.delete("/api/classifications/BND", headers=auth_headers)
@@ -289,21 +265,15 @@ def test_delete_reverts_yaml_ticker_to_baseline(
     rows = client.get("/api/classifications", headers=auth_headers).json()
     bnd = next(r for r in rows if r["ticker"] == "BND")
     assert bnd["source"] == "yaml"
-    assert bnd["sub_class"] == "us_aggregate"  # back to YAML baseline
+    subs = {b["sub_class"] for b in bnd["buckets"]}
+    assert subs == {"US Treasury", "US Corporate"}
 
 
 def test_delete_blocked_when_positions_would_orphan(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
     # User-invented ticker + a held position -> delete blocked.
-    test_db.add(
-        Classification(
-            ticker="wine-bottle-2019",
-            asset_class="commodity",
-            sub_class="wine",
-            source="user",
-        )
-    )
+    seed_user_classification(test_db, "wine-bottle-2019", "Commodities", "Other Commodities")
     test_db.commit()
     _position(test_db, "wine-bottle-2019")
 
@@ -320,14 +290,7 @@ def test_delete_blocked_when_positions_would_orphan(
 def test_delete_allowed_for_user_ticker_without_positions(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
-    test_db.add(
-        Classification(
-            ticker="orphan",
-            asset_class="commodity",
-            sub_class="other",
-            source="user",
-        )
-    )
+    seed_user_classification(test_db, "orphan", "Commodities", "Other Commodities")
     test_db.commit()
 
     r = client.delete("/api/classifications/orphan", headers=auth_headers)
@@ -361,14 +324,14 @@ def test_suggest_returns_existing_yaml_row(
     assert len(rows) == 1
     assert rows[0]["ticker"] == "VTI"
     assert rows[0]["source"] == "existing"
-    assert rows[0]["asset_class"] == "equity"
+    assert rows[0]["asset_class"] == "Stocks"
 
 
 def test_suggest_calls_llm_for_unknown_ticker(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
     fake = TickerClassificationResult(
-        asset_class="equity",
+        asset_class="Stocks",
         confidence=0.82,
         reasoning="Large-cap US equity ETF.",
         model="azure/test-deployment",
@@ -382,7 +345,7 @@ def test_suggest_calls_llm_for_unknown_ticker(
     assert r.status_code == 200
     row = r.json()[0]
     assert row["source"] == "llm"
-    assert row["asset_class"] == "equity"
+    assert row["asset_class"] == "Stocks"
     assert row["confidence"] == 0.82
     assert row["reasoning"] == "Large-cap US equity ETF."
 

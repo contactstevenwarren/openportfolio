@@ -217,9 +217,9 @@ export function bandFromAbs(
   return 'urgent';
 }
 
-// Backend contract: root rows use bare asset-class paths ("equity"); group
-// rows use bare asset-class keys ("equity") with dotted leaf paths
-// ("equity.US"). <leaf> is exactly slice.name.
+// Backend contract: root rows use bare L1 asset-class paths ("Stocks"); group
+// rows use the same L1 keys with dotted leaf paths ("Stocks.US Stocks").
+// <leaf> is exactly slice.name.
 export function rowPath(drill: Drill, sliceName: string): string {
   return drill ? `${drill.assetClass}.${sliceName}` : sliceName;
 }

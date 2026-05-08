@@ -28,13 +28,13 @@ export type ExtractionResult = {
 };
 
 export type AssetClass =
-  | 'cash'
-  | 'equity'
-  | 'fixed_income'
-  | 'real_estate'
-  | 'commodity'
-  | 'crypto'
-  | 'private';
+  | 'Stocks'
+  | 'Bonds'
+  | 'Real Estate'
+  | 'Commodities'
+  | 'Crypto'
+  | 'Cash'
+  | 'Private';
 
 export type AccountClassBreakdown = {
   asset_class: AssetClass;
@@ -69,8 +69,6 @@ export type Account = {
 export type InlineClassification = {
   asset_class: string;
   sub_class?: string | null;
-  sector?: string | null;
-  region?: string | null;
   /** false = paste/market ticker (no suffix; skip DB row if exists / YAML match) */
   auto_suffix?: boolean;
   suggestion_confidence?: number | null;
@@ -116,16 +114,6 @@ export type AllocationSlice = {
   target_pct?: number | null;
   drift_pct?: number | null;
   drift_band?: DriftBand;
-};
-
-// Deprecated on the hero in v0.1.6 (donut redesign). Shape is still on the
-// response for backward compat with any external tooling.
-export type FiveNumberSummary = {
-  net_worth: number;
-  cash_pct: number;
-  us_equity_pct: number;
-  intl_equity_pct: number;
-  alts_pct: number;
 };
 
 export type DriftThresholds = {
@@ -178,7 +166,6 @@ export type AllocationResult = {
   net_worth: number;
   by_asset_class: AllocationSlice[];
   unclassified_tickers: string[];
-  summary?: FiveNumberSummary;
   // Per-ticker classification provenance: "yaml" | "user" | "prefix".
   // Drives sunburst hover tooltip provenance labels.
   classification_sources: Record<string, string>;
@@ -219,42 +206,43 @@ export type SnapshotEarliest = {
   total_usd: number | null;
 };
 
-export type BreakdownBucket = {
-  bucket: string;
+/** One weighted (asset_class × sub_class) bucket — matches backend schema. */
+export type ClassificationBucketPayload = {
+  asset_class: string;
+  sub_class?: string | null;
   weight: number;
-};
-
-export type FundBreakdown = {
-  region: BreakdownBucket[];
-  sub_class: BreakdownBucket[];
-  sector: BreakdownBucket[];
 };
 
 export type ClassificationRow = {
   ticker: string;
-  asset_class: string;
-  sub_class: string | null;
-  sector: string | null;
-  region: string | null;
+  buckets: ClassificationBucketPayload[];
   source: 'yaml' | 'user';
   overrides_yaml: boolean;
-  // True when a look-through breakdown exists for this ticker (VT, VTI, ...).
-  // The UI replaces the misleading single-bucket sub_class/sector/region
-  // cells with an "Auto-split" label so users understand the engine
-  // isn't treating VT as "Global" at allocation time.
+  /** True when len(buckets) > 1 (marginal weights in the seed). */
   has_breakdown: boolean;
-  // Full look-through composition, mirroring data/lookthrough.yaml.
-  // Each dimension is weight-sorted descending; empty dimensions stay
-  // as empty arrays. Null when the ticker has no lookthrough entry.
-  breakdown: FundBreakdown | null;
 };
 
 export type ClassificationPatch = {
-  asset_class: string;
-  sub_class?: string | null;
-  sector?: string | null;
-  region?: string | null;
+  buckets: ClassificationBucketPayload[];
 };
+
+/** Dominant asset_class for chip labels and account tooling (matches backend primary). */
+export function classificationPrimaryAssetClass(
+  row: ClassificationRow | null | undefined,
+): string | null {
+  if (!row?.buckets?.length) return null;
+  if (row.buckets.length === 1) return row.buckets[0].asset_class;
+  return [...row.buckets].sort((a, b) => b.weight - a.weight)[0].asset_class;
+}
+
+/** Heaviest bucket (for defaulting sub_class in simple editors). */
+export function classificationDominantBucket(
+  row: ClassificationRow,
+): ClassificationBucketPayload {
+  const bs = row.buckets;
+  if (bs.length === 1) return bs[0];
+  return [...bs].sort((a, b) => b.weight - a.weight)[0];
+}
 
 export type TaxonomyOption = {
   value: string;
@@ -263,6 +251,8 @@ export type TaxonomyOption = {
 
 export type Taxonomy = {
   asset_classes: TaxonomyOption[];
+  /** Known sub_class values per asset_class from the seed (UI hints). */
+  sub_classes_by_class: Record<string, TaxonomyOption[]>;
 };
 
 export type ClassificationSuggestItem = {
@@ -270,8 +260,6 @@ export type ClassificationSuggestItem = {
   source: 'existing' | 'llm' | 'none';
   asset_class?: string | null;
   sub_class?: string | null;
-  sector?: string | null;
-  region?: string | null;
   confidence?: number | null;
   reasoning?: string | null;
 };

@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import Account, Classification, Position, Target
+from app.models import Account, Position, Target
+from tests.db_helpers import seed_user_classification
 
 
 def _position(account_id: int, ticker: str, market_value: float) -> Position:
@@ -45,19 +46,24 @@ def test_put_round_trip_root_only(
 
     body = {
         "root": [
-            {"path": "equity", "pct": 55.0},
-            {"path": "fixed_income", "pct": 45.0},
+            {"path": "Stocks", "pct": 55.0},
+            {"path": "Bonds", "pct": 45.0},
         ],
         "groups": {},
     }
     pr = client.put("/api/targets", headers=auth_headers, json=body)
     assert pr.status_code == 200
-    assert pr.json()["root"] == body["root"]
+    root_out = pr.json()["root"]
+    assert sorted(root_out, key=lambda r: r["path"]) == sorted(
+        body["root"], key=lambda r: r["path"]
+    )
     assert test_db.query(Target).count() == 2
 
     gr = client.get("/api/targets", headers=auth_headers)
     assert gr.status_code == 200
-    assert gr.json()["root"] == body["root"]
+    assert sorted(gr.json()["root"], key=lambda r: r["path"]) == sorted(
+        body["root"], key=lambda r: r["path"]
+    )
 
 
 def test_put_rejects_bad_sum(
@@ -76,8 +82,8 @@ def test_put_rejects_bad_sum(
 
     body = {
         "root": [
-            {"path": "equity", "pct": 50.0},
-            {"path": "fixed_income", "pct": 40.0},
+            {"path": "Stocks", "pct": 50.0},
+            {"path": "Bonds", "pct": 40.0},
         ],
         "groups": {},
     }
@@ -97,7 +103,7 @@ def test_put_clear_targets(
     client.put(
         "/api/targets",
         headers=auth_headers,
-        json={"root": [{"path": "equity", "pct": 100.0}], "groups": {}},
+        json={"root": [{"path": "Stocks", "pct": 100.0}], "groups": {}},
     )
     assert test_db.query(Target).count() == 1
 
@@ -109,30 +115,14 @@ def test_put_clear_targets(
     assert test_db.query(Target).count() == 0
 
 
-def test_put_equity_group_requires_all_regions(
+def test_put_equity_group_requires_all_sub_classes(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
     account = Account(label="T", type="brokerage")
     test_db.add(account)
     test_db.commit()
-    test_db.add_all(
-        [
-            Classification(
-                ticker="EUS",
-                asset_class="equity",
-                sub_class="us_large_cap",
-                region="US",
-                source="user",
-            ),
-            Classification(
-                ticker="EINT",
-                asset_class="equity",
-                sub_class="intl_developed",
-                region="intl_developed",
-                source="user",
-            ),
-        ]
-    )
+    seed_user_classification(test_db, "EUS", "Stocks", "US Stocks")
+    seed_user_classification(test_db, "EINT", "Stocks", "International Developed")
     test_db.add_all(
         [
             _position(account.id, "EUS", 50_000.0),
@@ -143,16 +133,16 @@ def test_put_equity_group_requires_all_regions(
 
     bad = {
         "root": [],
-        "groups": {"equity": [{"path": "equity.US", "pct": 100.0}]},
+        "groups": {"Stocks": [{"path": "Stocks.US Stocks", "pct": 100.0}]},
     }
     assert client.put("/api/targets", headers=auth_headers, json=bad).status_code == 422
 
     ok = {
         "root": [],
         "groups": {
-            "equity": [
-                {"path": "equity.US", "pct": 50.0},
-                {"path": "equity.intl_developed", "pct": 50.0},
+            "Stocks": [
+                {"path": "Stocks.US Stocks", "pct": 50.0},
+                {"path": "Stocks.International Developed", "pct": 50.0},
             ]
         },
     }
@@ -162,7 +152,7 @@ def test_put_equity_group_requires_all_regions(
 def test_put_rejects_targets_when_portfolio_empty(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    body = {"root": [{"path": "equity", "pct": 100.0}], "groups": {}}
+    body = {"root": [{"path": "Stocks", "pct": 100.0}], "groups": {}}
     r = client.put("/api/targets", headers=auth_headers, json=body)
     assert r.status_code == 422
 
@@ -180,9 +170,9 @@ def test_put_duplicate_path(
     body2 = {
         "root": [],
         "groups": {
-            "equity": [
-                {"path": "equity.US", "pct": 50.0},
-                {"path": "equity.US", "pct": 50.0},
+            "Stocks": [
+                {"path": "Stocks.US Stocks", "pct": 50.0},
+                {"path": "Stocks.US Stocks", "pct": 50.0},
             ]
         },
     }
@@ -207,8 +197,8 @@ def test_allocation_includes_drift_fields(
         headers=auth_headers,
         json={
             "root": [
-                {"path": "equity", "pct": 55.0},
-                {"path": "fixed_income", "pct": 45.0},
+                {"path": "Stocks", "pct": 55.0},
+                {"path": "Bonds", "pct": 45.0},
             ],
             "groups": {},
         },
@@ -221,8 +211,8 @@ def test_allocation_includes_drift_fields(
     # at the boundary of watch (tolerance < |d| <= act).
     assert body["max_drift_band"] == "watch"
     by = {s["name"]: s for s in body["by_asset_class"]}
-    assert by["equity"]["target_pct"] == 55.0
-    assert abs(by["equity"]["drift_pct"] - 5.0) < 1e-3
+    assert by["Stocks"]["target_pct"] == 55.0
+    assert abs(by["Stocks"]["drift_pct"] - 5.0) < 1e-3
 
 
 def test_allocation_includes_drift_thresholds(
@@ -253,7 +243,7 @@ def test_put_rejects_fractional_pct(
     test_db.commit()
 
     body = {
-        "root": [{"path": "equity", "pct": 53.8}],
+        "root": [{"path": "Stocks", "pct": 53.8}],
         "groups": {},
     }
     r = client.put("/api/targets", headers=auth_headers, json=body)
@@ -277,8 +267,8 @@ def test_put_accepts_integer_boundaries(
 
     body = {
         "root": [
-            {"path": "equity", "pct": 30},
-            {"path": "fixed_income", "pct": 70},
+            {"path": "Stocks", "pct": 30},
+            {"path": "Bonds", "pct": 70},
         ],
         "groups": {},
     }
@@ -303,8 +293,8 @@ def test_put_aspirational_target_unfunded_class(
 
     body = {
         "root": [
-            {"path": "equity", "pct": 90},
-            {"path": "crypto", "pct": 10},
+            {"path": "Stocks", "pct": 90},
+            {"path": "Crypto", "pct": 10},
         ],
         "groups": {},
     }
@@ -313,8 +303,8 @@ def test_put_aspirational_target_unfunded_class(
 
     gr = client.get("/api/targets", headers=auth_headers)
     root_by_path = {r["path"]: r["pct"] for r in gr.json()["root"]}
-    assert root_by_path["crypto"] == 10
-    assert root_by_path["equity"] == 90
+    assert root_by_path["Crypto"] == 10
+    assert root_by_path["Stocks"] == 90
 
 
 def test_put_group_targets_sum_to_100_of_parent(
@@ -324,24 +314,8 @@ def test_put_group_targets_sum_to_100_of_parent(
     account = Account(label="T", type="brokerage")
     test_db.add(account)
     test_db.commit()
-    test_db.add_all(
-        [
-            Classification(
-                ticker="EUS",
-                asset_class="equity",
-                sub_class="us_large_cap",
-                region="US",
-                source="user",
-            ),
-            Classification(
-                ticker="EINT",
-                asset_class="equity",
-                sub_class="intl_developed",
-                region="intl_developed",
-                source="user",
-            ),
-        ]
-    )
+    seed_user_classification(test_db, "EUS", "Stocks", "US Stocks")
+    seed_user_classification(test_db, "EINT", "Stocks", "International Developed")
     test_db.add_all(
         [
             _position(account.id, "EUS", 30_000.0),
@@ -354,9 +328,9 @@ def test_put_group_targets_sum_to_100_of_parent(
     ok = {
         "root": [],
         "groups": {
-            "equity": [
-                {"path": "equity.US", "pct": 60},
-                {"path": "equity.intl_developed", "pct": 40},
+            "Stocks": [
+                {"path": "Stocks.US Stocks", "pct": 60},
+                {"path": "Stocks.International Developed", "pct": 40},
             ]
         },
     }
@@ -365,44 +339,24 @@ def test_put_group_targets_sum_to_100_of_parent(
     bad = {
         "root": [],
         "groups": {
-            "equity": [
-                {"path": "equity.US", "pct": 30},
-                {"path": "equity.intl_developed", "pct": 20},
+            "Stocks": [
+                {"path": "Stocks.US Stocks", "pct": 30},
+                {"path": "Stocks.International Developed", "pct": 20},
             ]
         },
     }
     assert client.put("/api/targets", headers=auth_headers, json=bad).status_code == 422
 
 
-def test_put_fi_group_requires_all_regions(
+def test_put_fi_group_requires_all_sub_classes(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
-    """Multi-region FI portfolio: group targets must cover all regions.
-
-    When FI has positions in both US and intl_developed, meaningful_children()
-    returns those two region slices. The validator requires both paths.
-    """
+    """Multi-bucket FI portfolio: group targets must cover every funded sub_class."""
     account = Account(label="T", type="brokerage")
     test_db.add(account)
     test_db.commit()
-    test_db.add_all(
-        [
-            Classification(
-                ticker="BUS",
-                asset_class="fixed_income",
-                sub_class="us_aggregate",
-                region="US",
-                source="user",
-            ),
-            Classification(
-                ticker="BINT",
-                asset_class="fixed_income",
-                sub_class="intl_aggregate",
-                region="intl_developed",
-                source="user",
-            ),
-        ]
-    )
+    seed_user_classification(test_db, "BUS", "Bonds", "US Treasury")
+    seed_user_classification(test_db, "BINT", "Bonds", "International Bonds")
     test_db.add_all(
         [
             _position(account.id, "BUS", 60_000.0),
@@ -411,22 +365,22 @@ def test_put_fi_group_requires_all_regions(
     )
     test_db.commit()
 
-    # Missing intl_developed → should fail.
+    # Missing intl slice → should fail.
     bad = {
         "root": [],
         "groups": {
-            "fixed_income": [{"path": "fixed_income.US", "pct": 100}]
+            "Bonds": [{"path": "Bonds.US Treasury", "pct": 100}]
         },
     }
     assert client.put("/api/targets", headers=auth_headers, json=bad).status_code == 422
 
-    # Both regions covered, sum to 100 → should succeed.
+    # Both sub_class slices covered, sum to 100 → should succeed.
     ok = {
         "root": [],
         "groups": {
-            "fixed_income": [
-                {"path": "fixed_income.US", "pct": 60},
-                {"path": "fixed_income.intl_developed", "pct": 40},
+            "Bonds": [
+                {"path": "Bonds.US Treasury", "pct": 60},
+                {"path": "Bonds.International Bonds", "pct": 40},
             ]
         },
     }

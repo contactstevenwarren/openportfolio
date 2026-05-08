@@ -29,13 +29,12 @@ const semantic: Array<{ name: string; cssVar: string; use: string }> = [
 
 const viz = [
   "viz-cash",
-  "viz-us-equity",
-  "viz-intl-equity",
-  "viz-fixed-income",
+  "viz-stocks",
+  "viz-bonds",
   "viz-real-estate",
+  "viz-commodities",
   "viz-crypto",
-  "viz-alts",
-  "viz-other",
+  "viz-private",
 ];
 
 function Swatch({ name, cssVar, use }: { name: string; cssVar: string; use?: string }) {

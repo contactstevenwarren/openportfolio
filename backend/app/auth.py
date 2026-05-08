@@ -7,12 +7,17 @@ and we compare it against the ADMIN_TOKEN env var in constant time.
 
 import hmac
 
-from fastapi import Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import APIKeyHeader
 
 from .config import settings
 
+# Declares the security scheme so FastAPI generates an OpenAPI
+# securitySchemes entry and Swagger UI shows an "Authorize" button.
+_api_key_header = APIKeyHeader(name="X-Admin-Token", auto_error=False)
 
-def require_admin_token(x_admin_token: str | None = Header(default=None)) -> None:
+
+def require_admin_token(x_admin_token: str | None = Depends(_api_key_header)) -> None:
     # Refuse if the server wasn't configured with a token, so a missing
     # secret can't accidentally disable auth.
     if not settings.admin_token:

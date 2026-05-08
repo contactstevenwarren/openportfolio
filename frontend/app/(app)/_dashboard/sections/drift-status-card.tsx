@@ -13,12 +13,10 @@ import {
 } from "@/app/components/ui/card";
 import { api, type AllocationResult, type DriftBand } from "@/app/lib/api";
 
-// Modern dashboard routes for rebalance / targets do not exist yet — only the
-// legacy pages. Leaving these pointed at /legacy/... until the modern routes
-// land. TODO(routes): swap when /(app)/rebalance and /(app)/targets ship.
-const REBALANCE_HREF = "/legacy/rebalance";
-const TARGETS_HREF = "/legacy/targets";
-const POSITIONS_HREF = "/legacy/positions";
+// Dashboard routes: rebalance tab on home, targets editor, positions via accounts.
+const REBALANCE_HREF = "/?tab=rebalance";
+const TARGETS_HREF = "/targets";
+const POSITIONS_HREF = "/accounts";
 
 type StateKind =
   | "loading"

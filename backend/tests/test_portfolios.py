@@ -1,24 +1,19 @@
 """Integration tests locking the math for 3 reference portfolios.
 
 Each portfolio exercises a slice of the M4 pipeline:
-  - all-VTI: single-fund look-through → region/sub_class breakdown
-  - 60/40:   mixed fund classes → asset-class split drives 5-number
-  - real-world: mix of direct + fund + manual → unclassified=0 and
-    alts math works
+  - all-VTI: YAML buckets → sub_class breakdown under Stocks
+  - 60/40:   mixed fund classes → asset-class split
+  - real-world: mix of direct + fund + manual → unclassified=0
 
-yfinance is mocked via ``autouse`` so tests never hit the network; the
-YAML fallback is authoritative. If the YAML changes and these tests drift,
-update both intentionally.
+The bundled file ``data/classifications.yaml`` is authoritative; if it
+changes and these tests drift, update expectations intentionally.
 """
 
 from datetime import UTC, datetime
 
 from app.allocation import aggregate
-from app.classifications import load_classifications
+from app.classifications import ClassificationEntry, load_classifications
 from app.models import Position
-
-# yfinance stays off in v0.1 by default (see config.lookthrough_yfinance_enabled);
-# the YAML fallback is authoritative, and these tests pin its math.
 
 
 def _pos(ticker: str, market_value: float, cost_basis: float | None = None) -> Position:
@@ -36,40 +31,26 @@ def _pos(ticker: str, market_value: float, cost_basis: float | None = None) -> P
 # ---- Portfolio 1: all-VTI -------------------------------------------------
 
 
-def test_all_vti_total_and_summary() -> None:
+def test_all_vti_total() -> None:
     positions = [_pos("VTI", 100000.0)]
     result = aggregate(positions, load_classifications())
 
     assert result.total == 100000.0
     assert len(result.by_asset_class) == 1
     equity = result.by_asset_class[0]
-    assert equity.name == "equity"
+    assert equity.name == "Stocks"
     assert equity.pct == 100.0
 
-    assert result.summary is not None
-    assert result.summary.us_equity_pct == 100.0
-    assert result.summary.intl_equity_pct == 0.0
-    assert result.summary.cash_pct == 0.0
-    assert result.summary.alts_pct == 0.0
 
-
-def test_all_vti_sub_class_ring_from_lookthrough() -> None:
+def test_all_vti_sub_class_ring_from_seed_buckets() -> None:
     positions = [_pos("VTI", 100000.0)]
     result = aggregate(positions, load_classifications())
 
     equity = result.by_asset_class[0]
-    # Ring 2 (region) = US for VTI; Ring 3 (sub_class) fans out across
-    # us_large_cap / us_mid_cap / us_small_cap from the lookthrough YAML.
-    # us_large_cap dominates at ~72% so the tree must reflect that.
-    assert equity.children, "ring 2 missing"
-    ring3_large_cap = 0.0
-    for ring2 in equity.children:
-        for ring3 in ring2.children:
-            if ring3.name == "us_large_cap":
-                ring3_large_cap += ring3.value
-    assert 65_000 < ring3_large_cap < 80_000, (
-        f"us_large_cap allocation off: {ring3_large_cap}"
-    )
+    # VTI is a single US Stocks bucket in the seed.
+    by_sub = {c.name: c.value for c in equity.children}
+    assert "US Stocks" in by_sub
+    assert abs(by_sub["US Stocks"] - 100_000.0) < 1.0
 
 
 # ---- Portfolio 2: classic 60/40 (VTI + BND) -------------------------------
@@ -81,14 +62,8 @@ def test_60_40() -> None:
 
     assert result.total == 100_000.0
     by_name = {s.name: s for s in result.by_asset_class}
-    assert by_name["equity"].pct == 60.0
-    assert by_name["fixed_income"].pct == 40.0
-
-    assert result.summary is not None
-    assert result.summary.us_equity_pct == 60.0
-    assert result.summary.intl_equity_pct == 0.0
-    assert result.summary.cash_pct == 0.0
-    assert result.summary.alts_pct == 0.0
+    assert by_name["Stocks"].pct == 60.0
+    assert by_name["Bonds"].pct == 40.0
 
 
 def test_60_40_pct_sums_to_100() -> None:
@@ -107,8 +82,6 @@ def test_real_world_mix() -> None:
     row (written by /manual at commit time). For this aggregation test
     we pass the classifications explicitly.
     """
-    from app.classifications import ClassificationEntry
-
     positions = [
         _pos("VTI", 150_000.0),            # US equity fund
         _pos("VXUS", 50_000.0),            # intl equity fund
@@ -122,18 +95,22 @@ def test_real_world_mix() -> None:
     ]
     classifications = {
         **load_classifications(),
-        "home": ClassificationEntry(
-            ticker="home", asset_class="real_estate", sub_class="direct",
-            region="US", source="user",
+        "home": ClassificationEntry.from_flat(
+            ticker="home",
+            asset_class="Real Estate",
+            sub_class="Primary Residence",
+            source="user",
         ),
-        "bars": ClassificationEntry(
-            ticker="bars", asset_class="commodity", sub_class="gold", source="user",
+        "bars": ClassificationEntry.from_flat(
+            ticker="bars", asset_class="Commodities", sub_class="Gold", source="user"
         ),
-        "solana": ClassificationEntry(
-            ticker="solana", asset_class="crypto", sub_class="other", source="user",
+        "solana": ClassificationEntry.from_flat(
+            ticker="solana", asset_class="Crypto", sub_class="Other Crypto", source="user"
         ),
-        "hsa-fidelity": ClassificationEntry(
-            ticker="hsa-fidelity", asset_class="cash", sub_class="hsa_cash",
+        "hsa-fidelity": ClassificationEntry.from_flat(
+            ticker="hsa-fidelity",
+            asset_class="Cash",
+            sub_class="Cash & Savings",
             source="user",
         ),
     }
@@ -146,53 +123,20 @@ def test_real_world_mix() -> None:
     # Asset classes present.
     names = {s.name for s in result.by_asset_class}
     assert names >= {
-        "equity",
-        "fixed_income",
-        "real_estate",
-        "commodity",
-        "crypto",
-        "cash",
+        "Stocks",
+        "Bonds",
+        "Real Estate",
+        "Commodities",
+        "Crypto",
+        "Cash",
     }
 
-    summary = result.summary
-    assert summary is not None
-    # US equity = VTI 150k * 100% + AAPL 20k * 100% = 170k
-    assert abs(summary.us_equity_pct - (170_000.0 / expected_total * 100)) < 0.01
-    # Intl equity = VXUS 50k * 100%
-    assert abs(summary.intl_equity_pct - (50_000.0 / expected_total * 100)) < 0.01
-    # Cash = CASH 25k + HSA_CASH 3k
-    assert abs(summary.cash_pct - (28_000.0 / expected_total * 100)) < 0.01
-    # Alts = real estate 400k + gold 10k + crypto 5k = 415k
-    assert abs(summary.alts_pct - (415_000.0 / expected_total * 100)) < 0.01
-
-    # Equity sector_breakdown: VTI + VXUS pull from lookthrough.yaml,
-    # AAPL contributes 100% to its classifications.yaml sector (tech).
-    # Sector names must come from the equity tickers' sector data, and
-    # the rollup must sum back to the equity slice value.
-    equity = next(s for s in result.by_asset_class if s.name == "equity")
-    assert equity.sector_breakdown, "expected non-empty equity sector_breakdown"
-    expected_sectors = {
-        "technology",
-        "financials",
-        "consumer_discretionary",
-        "healthcare",
-        "industrials",
-        "communication_services",
-        "consumer_staples",
-        "energy",
-        "real_estate",
-        "utilities",
-        "materials",
-    }
-    sector_names = {s.name for s in equity.sector_breakdown}
-    assert sector_names <= expected_sectors, (
-        f"unexpected sectors: {sector_names - expected_sectors}"
-    )
-    sector_sum = sum(s.value for s in equity.sector_breakdown)
-    assert abs(sector_sum - equity.value) < 0.01
+    # Sector rollup removed in the bucket model; list stays API-compatible (empty).
+    equity = next(s for s in result.by_asset_class if s.name == "Stocks")
+    assert equity.sector_breakdown == []
 
 
-def test_real_world_ring_nesting_is_three_deep() -> None:
+def test_real_world_ring_nesting_is_two_deep() -> None:
     positions = [
         _pos("VTI", 150_000.0),
         _pos("BND", 40_000.0),
@@ -200,20 +144,17 @@ def test_real_world_ring_nesting_is_three_deep() -> None:
     ]
     result = aggregate(positions, load_classifications())
 
-    # Ring 1 (asset_class) must have ring 2 children with ring 3 leaves
-    # for at least equity.
-    equity = next(s for s in result.by_asset_class if s.name == "equity")
-    assert equity.children, "ring 2 missing for equity"
-    assert all(ring2.children for ring2 in equity.children), "ring 3 missing under equity"
+    # 2-ring sunburst: asset_class → sub_class (no nested region ring).
+    equity = next(s for s in result.by_asset_class if s.name == "Stocks")
+    assert equity.children, "sub_class ring missing for equity"
+    assert all(len(c.children) == 0 for c in equity.children)
 
 
 def test_vxus_splits_into_intl_developed_and_emerging() -> None:
     positions = [_pos("VXUS", 100_000.0)]
     result = aggregate(positions, load_classifications())
 
-    summary = result.summary
-    assert summary is not None
-    # VXUS is 100% intl equity (split ~75/25 between developed and
-    # emerging in the YAML); either way it all counts as intl.
-    assert summary.intl_equity_pct == 100.0
-    assert summary.us_equity_pct == 0.0
+    stocks = next(s for s in result.by_asset_class if s.name == "Stocks")
+    assert stocks.pct == 100.0
+    by_sub = {c.name: c.value for c in stocks.children}
+    assert "International Developed" in by_sub or "International Emerging" in by_sub

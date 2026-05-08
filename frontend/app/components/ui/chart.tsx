@@ -12,6 +12,11 @@ const THEMES = { light: "", dark: ".dark" } as const
 const INITIAL_DIMENSION = { width: 320, height: 200 } as const
 type TooltipNameType = number | string
 
+/** CSS custom property names cannot contain spaces; keep in sync with any `var(--color-…)` uses. */
+function chartColorVarSegment(key: string): string {
+  return key.replace(/\s+/g, "-")
+}
+
 export type ChartConfig = Record<
   string,
   {
@@ -102,7 +107,7 @@ ${colorConfig
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ??
       itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
+    return color ? `  --color-${chartColorVarSegment(key)}: ${color};` : null
   })
   .join("\n")}
 }

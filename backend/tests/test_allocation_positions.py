@@ -1,18 +1,6 @@
-"""Tests for the allocation drill-down feature (feat/donut-drill-down).
-
-Covers:
-  1. _per_position_contributions generator yields tuples summing to aggregate() totals.
-  2. positions_for_slice total equals aggregate() slice value (L1 and L2).
-  3. Fund look-through: ETF contribution = market_value * weight; is_partial=True.
-  4. Direct ticker: full market_value contribution; is_partial=False.
-  5. User override suppresses look-through.
-  6. Endpoint: unknown class → 404; unknown l2 → 400; empty class → 200 + [].
-  7. /api/allocation regression: byte-equal output before/after the refactor is
-     validated implicitly by running all existing test_allocation tests unchanged.
-"""
+"""Tests for allocation drill-down (positions_for_slice + aggregate parity)."""
 
 from datetime import UTC, datetime
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,14 +11,8 @@ from app.allocation import (
     aggregate,
     positions_for_slice,
 )
-from app.classifications import ClassificationEntry, load_classifications
-from app.lookthrough import Breakdown
-from app.models import Account, Position
-
-
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
+from app.classifications import BucketEntry, ClassificationEntry, load_classifications
+from app.models import Account, Classification, ClassificationBucket, Position
 
 
 def _pos(
@@ -51,17 +33,12 @@ def _pos(
     )
 
 
-def _cls(**kwargs) -> dict[str, ClassificationEntry]:
-    """Build a classifications dict from keyword args: ticker=asset_class."""
-    return {
-        ticker: ClassificationEntry(ticker=ticker, asset_class=ac)
-        for ticker, ac in kwargs.items()
-    }
+def _one(ticker: str, ac: str, sc: str | None = None, *, source: str = "yaml") -> ClassificationEntry:
+    return ClassificationEntry.from_flat(ticker=ticker, asset_class=ac, sub_class=sc, source=source)
 
 
-# ---------------------------------------------------------------------------
-# 1. Generator sums match aggregate() totals
-# ---------------------------------------------------------------------------
+def _cls(**kwargs: str) -> dict[str, ClassificationEntry]:
+    return {ticker: _one(ticker, ac) for ticker, ac in kwargs.items()}
 
 
 def test_generator_sums_match_aggregate_totals() -> None:
@@ -70,12 +47,12 @@ def test_generator_sums_match_aggregate_totals() -> None:
         _pos("BND", 30000.0),
         _pos("GLD", 10000.0),
     ]
-    classifications = _cls(VTI="equity", BND="fixed_income", GLD="commodity")
+    classifications = _cls(VTI="Stocks", BND="Bonds", GLD="Commodities")
 
     result = aggregate(positions, classifications)
 
-    # Sum generator dollars by ac_bucket.
     from collections import defaultdict
+
     gen_totals: dict[str, float] = defaultdict(float)
     for contrib in _per_position_contributions(positions, classifications):
         gen_totals[contrib.ac_bucket] += contrib.dollars
@@ -87,25 +64,20 @@ def test_generator_sums_match_aggregate_totals() -> None:
             )
 
 
-def test_generator_sums_with_fund_lookthrough() -> None:
-    """VTI has look-through data (equity 100%) so should map 1:1 to equity."""
+def test_generator_sums_with_seed_vti() -> None:
     positions = [_pos("VTI", 50000.0)]
     classifications = load_classifications()
 
     result = aggregate(positions, classifications)
-    equity = next(s for s in result.by_asset_class if s.name == "equity")
+    equity = next(s for s in result.by_asset_class if s.name == "Stocks")
 
     from collections import defaultdict
+
     gen_totals: dict[str, float] = defaultdict(float)
     for contrib in _per_position_contributions(positions, classifications):
         gen_totals[contrib.ac_bucket] += contrib.dollars
 
-    assert abs(gen_totals["equity"] - equity.value) < 0.01
-
-
-# ---------------------------------------------------------------------------
-# 2. positions_for_slice total equals aggregate() slice value
-# ---------------------------------------------------------------------------
+    assert abs(gen_totals["Stocks"] - equity.value) < 0.01
 
 
 def test_positions_for_slice_total_matches_aggregate_l1() -> None:
@@ -114,13 +86,15 @@ def test_positions_for_slice_total_matches_aggregate_l1() -> None:
         _pos("BND", 30000.0, account_id=1),
         _pos("GLD", 10000.0, account_id=1),
     ]
-    classifications = _cls(VTI="equity", BND="fixed_income", GLD="commodity")
+    classifications = _cls(VTI="Stocks", BND="Bonds", GLD="Commodities")
 
     result = aggregate(positions, classifications)
-    equity_slice = next(s for s in result.by_asset_class if s.name == "equity")
+    equity_slice = next(s for s in result.by_asset_class if s.name == "Stocks")
 
     sr = positions_for_slice(
-        positions, classifications, asset_class="equity",
+        positions,
+        classifications,
+        asset_class="Stocks",
         portfolio_total=result.total,
     )
 
@@ -130,43 +104,42 @@ def test_positions_for_slice_total_matches_aggregate_l1() -> None:
 
 
 def test_positions_for_slice_total_matches_aggregate_l2() -> None:
-    """For equity drilled to 'US', contribution total matches the US region slice."""
     positions = [
         _pos("MYSTOCK", 40000.0, account_id=1),
         _pos("INTLSTOCK", 20000.0, account_id=1),
     ]
     classifications = {
-        "MYSTOCK": ClassificationEntry(
-            ticker="MYSTOCK", asset_class="equity", region="US"
-        ),
-        "INTLSTOCK": ClassificationEntry(
-            ticker="INTLSTOCK", asset_class="equity", region="intl_developed"
-        ),
+        "MYSTOCK": _one("MYSTOCK", "Stocks", "US Stocks"),
+        "INTLSTOCK": _one("INTLSTOCK", "Stocks", "International Developed"),
     }
 
     result = aggregate(positions, classifications)
-    equity_slice = next(s for s in result.by_asset_class if s.name == "equity")
-    us_region = next((c for c in equity_slice.children if c.name == "US"), None)
-    assert us_region is not None
+    equity_slice = next(s for s in result.by_asset_class if s.name == "Stocks")
+    us_sc = next((c for c in equity_slice.children if c.name == "US Stocks"), None)
+    assert us_sc is not None
 
     sr = positions_for_slice(
-        positions, classifications, asset_class="equity", l2="US",
+        positions,
+        classifications,
+        asset_class="Stocks",
+        l2="US Stocks",
         portfolio_total=result.total,
     )
 
-    assert abs(sr.total - us_region.value) < 1.0
+    assert abs(sr.total - us_sc.value) < 1.0
 
 
 def test_positions_for_slice_multiple_accounts_same_ticker() -> None:
-    """Same ticker in two accounts appears as two separate rows."""
     positions = [
         _pos("VTI", 30000.0, account_id=1),
         _pos("VTI", 20000.0, account_id=2),
     ]
-    classifications = _cls(VTI="equity")
+    classifications = _cls(VTI="Stocks")
 
     sr = positions_for_slice(
-        positions, classifications, asset_class="equity",
+        positions,
+        classifications,
+        asset_class="Stocks",
         portfolio_total=50000.0,
         account_names={1: "Schwab", 2: "Fidelity"},
     )
@@ -177,35 +150,34 @@ def test_positions_for_slice_multiple_accounts_same_ticker() -> None:
     assert abs(sr.total - 50000.0) < 1e-6
 
 
-# ---------------------------------------------------------------------------
-# 3. Fund look-through: is_partial + weighted contribution
-# ---------------------------------------------------------------------------
-
-
-def test_fund_lookthrough_partial_and_weighted() -> None:
-    """A 60/40 multi-class fund yields partial contributions per class."""
-    fake_breakdown = Breakdown(
-        ticker="MYFUND",
-        asset_class={"equity": 0.6, "fixed_income": 0.4},
-        sub_class={},
-        sector={},
-        region={},
-        source="yaml",
-    )
+def test_multi_bucket_partial_and_weighted() -> None:
     positions = [_pos("MYFUND", 100000.0, account_id=1)]
+    w_t = 0.4 * 0.67
+    w_c = 0.4 * 0.33
     classifications = {
-        "MYFUND": ClassificationEntry(ticker="MYFUND", asset_class="equity")
+        "MYFUND": ClassificationEntry(
+            ticker="MYFUND",
+            buckets=(
+                BucketEntry("Stocks", "US Stocks", 0.6),
+                BucketEntry("Bonds", "US Treasury", w_t),
+                BucketEntry("Bonds", "US Corporate", w_c),
+            ),
+            source="yaml",
+        )
     }
 
-    with patch("app.allocation.get_breakdown", return_value=fake_breakdown):
-        sr_equity = positions_for_slice(
-            positions, classifications, asset_class="equity",
-            portfolio_total=100000.0,
-        )
-        sr_fi = positions_for_slice(
-            positions, classifications, asset_class="fixed_income",
-            portfolio_total=100000.0,
-        )
+    sr_equity = positions_for_slice(
+        positions,
+        classifications,
+        asset_class="Stocks",
+        portfolio_total=100000.0,
+    )
+    sr_fi = positions_for_slice(
+        positions,
+        classifications,
+        asset_class="Bonds",
+        portfolio_total=100000.0,
+    )
 
     assert len(sr_equity.positions) == 1
     assert abs(sr_equity.positions[0].contributing_value - 60000.0) < 1.0
@@ -215,26 +187,17 @@ def test_fund_lookthrough_partial_and_weighted() -> None:
     assert abs(sr_fi.positions[0].contributing_value - 40000.0) < 1.0
     assert sr_fi.positions[0].is_partial is True
 
-    # Combined totals sum to the position's full market value.
     assert abs(sr_equity.total + sr_fi.total - 100000.0) < 1.0
-
-
-# ---------------------------------------------------------------------------
-# 4. Direct ticker: full market_value, is_partial=False
-# ---------------------------------------------------------------------------
 
 
 def test_direct_ticker_full_value_not_partial() -> None:
     positions = [_pos("VTI", 50000.0, account_id=1)]
-    # Override to suppress look-through (source="user" means no get_breakdown).
-    classifications = {
-        "VTI": ClassificationEntry(
-            ticker="VTI", asset_class="equity", region="US", source="user"
-        )
-    }
+    classifications = {"VTI": _one("VTI", "Stocks", "US Stocks", source="user")}
 
     sr = positions_for_slice(
-        positions, classifications, asset_class="equity",
+        positions,
+        classifications,
+        asset_class="Stocks",
         portfolio_total=50000.0,
     )
 
@@ -243,53 +206,42 @@ def test_direct_ticker_full_value_not_partial() -> None:
     assert sr.positions[0].is_partial is False
 
 
-# ---------------------------------------------------------------------------
-# 5. User override suppresses look-through
-# ---------------------------------------------------------------------------
-
-
-def test_user_override_suppresses_lookthrough() -> None:
-    """User-classified VTI should not use the YAML breakdown."""
-    called = []
-
-    def fake_breakdown(ticker, db=None):
-        called.append(ticker)
-        return None
-
+def test_user_source_on_slice_row() -> None:
     positions = [_pos("VTI", 40000.0, account_id=1)]
-    classifications = {
-        "VTI": ClassificationEntry(
-            ticker="VTI", asset_class="equity", source="user"
-        )
-    }
+    classifications = {"VTI": _one("VTI", "Stocks", "US Stocks", source="user")}
 
-    with patch("app.allocation.get_breakdown", side_effect=fake_breakdown):
-        sr = positions_for_slice(
-            positions, classifications, asset_class="equity",
-            portfolio_total=40000.0,
-        )
+    sr = positions_for_slice(
+        positions,
+        classifications,
+        asset_class="Stocks",
+        portfolio_total=40000.0,
+    )
 
-    assert "VTI" not in called
     assert len(sr.positions) == 1
     assert sr.positions[0].classification_source == "user"
 
 
-# ---------------------------------------------------------------------------
-# 6. Endpoint contract tests
-# ---------------------------------------------------------------------------
-
-
 def _seed_portfolio(db: Session, account: Account) -> None:
-    db.add_all([
-        Position(
-            account_id=account.id, ticker="VTI", shares=1.0,
-            market_value=60000.0, as_of=datetime.now(UTC), source="paste",
-        ),
-        Position(
-            account_id=account.id, ticker="BND", shares=1.0,
-            market_value=40000.0, as_of=datetime.now(UTC), source="paste",
-        ),
-    ])
+    db.add_all(
+        [
+            Position(
+                account_id=account.id,
+                ticker="VTI",
+                shares=1.0,
+                market_value=60000.0,
+                as_of=datetime.now(UTC),
+                source="paste",
+            ),
+            Position(
+                account_id=account.id,
+                ticker="BND",
+                shares=1.0,
+                market_value=40000.0,
+                as_of=datetime.now(UTC),
+                source="paste",
+            ),
+        ]
+    )
     db.commit()
 
 
@@ -308,9 +260,8 @@ def test_endpoint_unknown_l2_400(
     test_db.commit()
     _seed_portfolio(test_db, account)
 
-    # equity slice exists; "not_a_region" is not a valid L2.
     r = client.get(
-        "/api/allocation/positions/equity?l2=not_a_region",
+        "/api/allocation/positions/Stocks?l2=not_a_subclass",
         headers=auth_headers,
     )
     assert r.status_code == 400
@@ -319,11 +270,10 @@ def test_endpoint_unknown_l2_400(
 def test_endpoint_empty_class_returns_200_empty_list(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
-    # No positions in DB → equity slice has no data.
-    r = client.get("/api/allocation/positions/equity", headers=auth_headers)
+    r = client.get("/api/allocation/positions/Stocks", headers=auth_headers)
     assert r.status_code == 200
     body = r.json()
-    assert body["asset_class"] == "equity"
+    assert body["asset_class"] == "Stocks"
     assert body["positions"] == []
     assert body["total"] == 0.0
 
@@ -337,14 +287,13 @@ def test_endpoint_l1_sums_to_allocation_slice(
     _seed_portfolio(test_db, account)
 
     alloc = client.get("/api/allocation", headers=auth_headers).json()
-    equity_slice = next(s for s in alloc["by_asset_class"] if s["name"] == "equity")
+    equity_slice = next(s for s in alloc["by_asset_class"] if s["name"] == "Stocks")
 
-    drill = client.get("/api/allocation/positions/equity", headers=auth_headers).json()
+    drill = client.get("/api/allocation/positions/Stocks", headers=auth_headers).json()
 
-    assert drill["asset_class"] == "equity"
+    assert drill["asset_class"] == "Stocks"
     assert drill["l2"] is None
     assert len(drill["positions"]) >= 1
-    # Contributions must sum to within $1 of the slice value.
     contrib_sum = sum(p["contributing_value"] for p in drill["positions"])
     assert abs(contrib_sum - equity_slice["value"]) < 1.0
 
@@ -352,55 +301,70 @@ def test_endpoint_l1_sums_to_allocation_slice(
 def test_endpoint_l2_filter(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:
-    """Drill to a valid L2 segment returns only that segment's positions."""
-    from app.models import Classification as DbClassification
-
     account = Account(label="Test", type="brokerage")
     test_db.add(account)
     test_db.commit()
 
-    # Add two equity positions in different regions.
-    test_db.add_all([
-        Position(
-            account_id=account.id, ticker="MYUS", shares=1.0,
-            market_value=40000.0, as_of=datetime.now(UTC), source="paste",
-        ),
-        Position(
-            account_id=account.id, ticker="MYINTL", shares=1.0,
-            market_value=20000.0, as_of=datetime.now(UTC), source="paste",
-        ),
-    ])
-    test_db.add_all([
-        DbClassification(
-            ticker="MYUS", asset_class="equity", region="US", source="user"
-        ),
-        DbClassification(
-            ticker="MYINTL", asset_class="equity", region="intl_developed", source="user"
-        ),
-    ])
+    test_db.add_all(
+        [
+            Position(
+                account_id=account.id,
+                ticker="MYUS",
+                shares=1.0,
+                market_value=40000.0,
+                as_of=datetime.now(UTC),
+                source="paste",
+            ),
+            Position(
+                account_id=account.id,
+                ticker="MYINTL",
+                shares=1.0,
+                market_value=20000.0,
+                as_of=datetime.now(UTC),
+                source="paste",
+            ),
+        ]
+    )
+    c1 = Classification(ticker="MYUS", source="user")
+    c2 = Classification(ticker="MYINTL", source="user")
+    test_db.add_all([c1, c2])
+    test_db.flush()
+    test_db.add_all(
+        [
+            ClassificationBucket(
+                ticker="MYUS", sort_order=0, asset_class="Stocks", sub_class="US Stocks", weight=1.0
+            ),
+            ClassificationBucket(
+                ticker="MYINTL",
+                sort_order=0,
+                asset_class="Stocks",
+                sub_class="International Developed",
+                weight=1.0,
+            ),
+        ]
+    )
     test_db.commit()
 
     drill = client.get(
-        "/api/allocation/positions/equity?l2=US",
+        "/api/allocation/positions/Stocks?l2=US%20Stocks",
         headers=auth_headers,
     ).json()
 
-    assert drill["l2"] == "US"
+    assert drill["l2"] == "US Stocks"
     tickers = {p["ticker"] for p in drill["positions"]}
     assert "MYUS" in tickers
     assert "MYINTL" not in tickers
 
-    # Must be within $1 of the US region slice value.
     alloc = client.get("/api/allocation", headers=auth_headers).json()
-    equity = next(s for s in alloc["by_asset_class"] if s["name"] == "equity")
-    us_region = next((c for c in equity["children"] if c["name"] == "US"), None)
-    assert us_region is not None
+    equity = next(s for s in alloc["by_asset_class"] if s["name"] == "Stocks")
+    sub = next((c for c in equity["children"] if c["name"] == "US Stocks"), None)
+    assert sub is not None
     contrib_sum = sum(p["contributing_value"] for p in drill["positions"])
-    assert abs(contrib_sum - us_region["value"]) < 1.0
+    assert abs(contrib_sum - sub["value"]) < 1.0
 
 
 def test_endpoint_requires_auth(client: TestClient) -> None:
-    r = client.get("/api/allocation/positions/equity")
+    r = client.get("/api/allocation/positions/Stocks")
     assert r.status_code == 401
 
 
@@ -411,18 +375,28 @@ def test_endpoint_positions_sorted_by_value_desc(
     test_db.add(account)
     test_db.commit()
 
-    test_db.add_all([
-        Position(
-            account_id=account.id, ticker="VTI", shares=1.0,
-            market_value=60000.0, as_of=datetime.now(UTC), source="paste",
-        ),
-        Position(
-            account_id=account.id, ticker="VOO", shares=1.0,
-            market_value=20000.0, as_of=datetime.now(UTC), source="paste",
-        ),
-    ])
+    test_db.add_all(
+        [
+            Position(
+                account_id=account.id,
+                ticker="VTI",
+                shares=1.0,
+                market_value=60000.0,
+                as_of=datetime.now(UTC),
+                source="paste",
+            ),
+            Position(
+                account_id=account.id,
+                ticker="VOO",
+                shares=1.0,
+                market_value=20000.0,
+                as_of=datetime.now(UTC),
+                source="paste",
+            ),
+        ]
+    )
     test_db.commit()
 
-    drill = client.get("/api/allocation/positions/equity", headers=auth_headers).json()
+    drill = client.get("/api/allocation/positions/Stocks", headers=auth_headers).json()
     values = [p["contributing_value"] for p in drill["positions"]]
     assert values == sorted(values, reverse=True)

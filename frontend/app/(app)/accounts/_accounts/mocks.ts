@@ -6,38 +6,38 @@
 export type { Account, Institution, AssetClass, AccountClassBreakdown } from "@/app/lib/api";
 
 // ── Asset class lookup tables ──────────────────────────────────────────────────
-// Canonical order: brand.md Cash · Equity · Fixed income · Real estate · Commodity · Crypto · Private
+// Canonical order: Cash · Stocks · Bonds · Real Estate · Commodities · Crypto · Private (TAXONOMY_L1_ORDER)
 
 import type { AssetClass } from "@/app/lib/api";
 
 export const ASSET_CLASS_ORDER: AssetClass[] = [
-  "cash",
-  "equity",
-  "fixed_income",
-  "real_estate",
-  "commodity",
-  "crypto",
-  "private",
+  "Cash",
+  "Stocks",
+  "Bonds",
+  "Real Estate",
+  "Commodities",
+  "Crypto",
+  "Private",
 ];
 
 export const ASSET_CLASS_LABEL: Record<AssetClass, string> = {
-  cash: "Cash",
-  equity: "Equity",
-  fixed_income: "Fixed income",
-  real_estate: "Real estate",
-  commodity: "Commodity",
-  crypto: "Crypto",
-  private: "Private",
+  Cash: "Cash",
+  Stocks: "Stocks",
+  Bonds: "Bonds",
+  "Real Estate": "Real Estate",
+  Commodities: "Commodities",
+  Crypto: "Crypto",
+  Private: "Private",
 };
 
 export const ASSET_CLASS_COLOR: Record<AssetClass, string> = {
-  cash: "var(--viz-cash)",
-  equity: "var(--viz-equity)",
-  fixed_income: "var(--viz-fixed-income)",
-  real_estate: "var(--viz-real-estate)",
-  commodity: "var(--viz-commodity)",
-  crypto: "var(--viz-crypto)",
-  private: "var(--viz-private)",
+  Cash: "var(--viz-cash)",
+  Stocks: "var(--viz-stocks)",
+  Bonds: "var(--viz-bonds)",
+  "Real Estate": "var(--viz-real-estate)",
+  Commodities: "var(--viz-commodities)",
+  Crypto: "var(--viz-crypto)",
+  Private: "var(--viz-private)",
 };
 
 // ── AccountKind templates ──────────────────────────────────────────────────────

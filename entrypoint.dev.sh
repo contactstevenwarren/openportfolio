@@ -15,8 +15,10 @@ fi
 cd /app/frontend
 [ -f node_modules/.package-lock.json ] || npm ci --no-audit --no-fund
 
-# Start backend with auto-reload on Python file changes.
+# Apply SQLite migrations before serving (Alembic baseline + future revisions).
 cd /app/backend
+/venv/bin/alembic upgrade head
+
 /venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app &
 UVICORN_PID=$!
 

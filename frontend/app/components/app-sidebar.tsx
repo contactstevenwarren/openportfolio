@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Palette, Archive, Landmark, Settings, Target, TrendingDown } from "lucide-react";
+import { Home, Landmark, Settings, Target, TrendingDown, Tags } from "lucide-react";
 
 import * as React from "react";
 
@@ -25,11 +25,7 @@ const nav = [
   { href: "/accounts", label: "Accounts", icon: Landmark },
   { href: "/liabilities", label: "Liabilities", icon: TrendingDown },
   { href: "/targets", label: "Targets", icon: Target },
-  { href: "/brand", label: "Brand", icon: Palette },
-];
-
-const reference = [
-  { href: "/legacy", label: "Legacy", icon: Archive },
+  { href: "/classifications", label: "Classifications", icon: Tags },
 ];
 
 export function AppSidebar({
@@ -77,28 +73,6 @@ export function AppSidebar({
                   item.href === "/"
                     ? pathname === "/"
                     : pathname.startsWith(item.href);
-                return (
-                  <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton asChild isActive={active}>
-                      <Link href={item.href}>
-                        <Icon />
-                        <span>{item.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Reference</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {reference.map((item) => {
-                const Icon = item.icon;
-                const active = pathname.startsWith(item.href);
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton asChild isActive={active}>

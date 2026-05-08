@@ -3,7 +3,8 @@
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import Account, Classification, Position, Provenance
+from app.models import Account, Classification, ClassificationBucket, Position, Provenance
+from tests.db_helpers import seed_user_classification
 
 
 def _body(**overrides: object) -> dict[str, object]:
@@ -207,16 +208,21 @@ def test_manual_commit_writes_classification_row(
 ) -> None:
     r = client.post(
         "/api/positions/commit",
-        json=_manual_body("wine-bottle-2019", "commodity", "wine"),
+        json=_manual_body("wine-bottle-2019", "Commodities", "Other Commodities"),
         headers=auth_headers,
     )
     assert r.status_code == 201
 
     row = test_db.get(Classification, "wine-bottle-2019")
     assert row is not None
-    assert row.asset_class == "commodity"
-    assert row.sub_class == "wine"
     assert row.source == "user"
+    b0 = (
+        test_db.query(ClassificationBucket)
+        .filter(ClassificationBucket.ticker == "wine-bottle-2019")
+        .one()
+    )
+    assert b0.asset_class == "Commodities"
+    assert b0.sub_class == "Other Commodities"
 
 
 def test_manual_commit_auto_suffixes_on_collision(
@@ -224,21 +230,21 @@ def test_manual_commit_auto_suffixes_on_collision(
 ) -> None:
     first = client.post(
         "/api/positions/commit",
-        json=_manual_body("gold-bar", "commodity", "gold"),
+        json=_manual_body("gold-bar", "Commodities", "Gold"),
         headers=auth_headers,
     )
     assert first.json()["tickers"] == ["gold-bar"]
 
     second = client.post(
         "/api/positions/commit",
-        json=_manual_body("gold-bar", "commodity", "gold"),
+        json=_manual_body("gold-bar", "Commodities", "Gold"),
         headers=auth_headers,
     )
     assert second.json()["tickers"] == ["gold-bar-2"]
 
     third = client.post(
         "/api/positions/commit",
-        json=_manual_body("gold-bar", "commodity", "gold"),
+        json=_manual_body("gold-bar", "Commodities", "Gold"),
         headers=auth_headers,
     )
     assert third.json()["tickers"] == ["gold-bar-3"]
@@ -254,7 +260,7 @@ def test_manual_commit_writes_provenance_for_classification(
 ) -> None:
     client.post(
         "/api/positions/commit",
-        json=_manual_body("wine-bottle", "commodity", "wine"),
+        json=_manual_body("wine-bottle", "Commodities", "Other Commodities"),
         headers=auth_headers,
     )
 
@@ -265,7 +271,7 @@ def test_manual_commit_writes_provenance_for_classification(
         .all()
     )
     fields = {p.field for p in prov}
-    assert fields == {"asset_class", "sub_class", "sector", "region"}
+    assert fields == {"buckets"}
     for p in prov:
         assert p.source == "manual"
 
@@ -305,7 +311,7 @@ def test_paste_commit_with_classification_inserts_user_row_for_unknown_ticker(
                 "confidence": 0.95,
                 "source_span": "ZZUNKNOWN99 10",
                 "classification": {
-                    "asset_class": "equity",
+                    "asset_class": "Stocks",
                     "auto_suffix": False,
                     "suggestion_confidence": 0.8,
                     "suggestion_reasoning": "Test LLM line.",
@@ -318,8 +324,13 @@ def test_paste_commit_with_classification_inserts_user_row_for_unknown_ticker(
     assert r.json()["tickers"] == ["ZZUNKNOWN99"]
     row = test_db.get(Classification, "ZZUNKNOWN99")
     assert row is not None
-    assert row.asset_class == "equity"
     assert row.source == "user"
+    b0 = (
+        test_db.query(ClassificationBucket)
+        .filter(ClassificationBucket.ticker == "ZZUNKNOWN99")
+        .one()
+    )
+    assert b0.asset_class == "Stocks"
 
 
 def test_paste_commit_skips_classification_when_matches_yaml(
@@ -336,7 +347,7 @@ def test_paste_commit_skips_classification_when_matches_yaml(
                 "confidence": 0.95,
                 "source_span": "VTI",
                 "classification": {
-                    "asset_class": "equity",
+                    "asset_class": "Stocks",
                     "auto_suffix": False,
                 },
             }
@@ -354,16 +365,7 @@ def test_paste_commit_updates_user_classification_row(
     # and an existing user-owned row is present, the commit updates the row
     # to the suggested class. This prevents stale classifications after re-import
     # (see fix: prevent duplicate positions and stale classifications on import).
-    test_db.add(
-        Classification(
-            ticker="VTI",
-            asset_class="fixed_income",
-            sub_class=None,
-            sector=None,
-            region=None,
-            source="user",
-        )
-    )
+    seed_user_classification(test_db, "VTI", "Bonds", "US Corporate")
     test_db.commit()
 
     body = {
@@ -377,7 +379,7 @@ def test_paste_commit_updates_user_classification_row(
                 "confidence": 0.95,
                 "source_span": "VTI",
                 "classification": {
-                    "asset_class": "equity",
+                    "asset_class": "Stocks",
                     "auto_suffix": False,
                 },
             }
@@ -387,8 +389,8 @@ def test_paste_commit_updates_user_classification_row(
     assert r.status_code == 201
     row = test_db.get(Classification, "VTI")
     assert row is not None
-    # Row is updated to the suggested class, not skipped.
-    assert row.asset_class == "equity"
+    b0 = test_db.query(ClassificationBucket).filter(ClassificationBucket.ticker == "VTI").one()
+    assert b0.asset_class == "Stocks"
 
 
 # --- v0.1.5 M6: snapshot-on-commit ---------------------------------------
@@ -412,9 +414,8 @@ def test_commit_writes_snapshot_row(
 
     payload = json.loads(snap.payload_json)
     assert payload["total_usd"] == 29438.40
-    assert "equity" in payload["by_asset_class"]
+    assert "Stocks" in payload["by_asset_class"]
     assert payload["unclassified_count"] == 0
-    assert payload["summary"] is not None
 
 
 def test_each_commit_appends_a_snapshot(

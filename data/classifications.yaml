@@ -1,449 +1,372 @@
-# Seed classifications for OpenPortfolio v0.1.
+# OpenPortfolio ticker classifications (bucket model at load time).
 #
-# Source of truth for asset_class / sub_class / sector / region per ticker.
-# ~50 tickers covering the maintainer's plausible holdings; merged with user
-# overrides in M3+. The `classifications` DB table stays empty in v0.1 --
-# the loader reads this YAML directly.
+# Single source of truth: canonical ``asset_class`` / ``sub_class`` strings
+# (see ``app.taxonomy.TAXONOMY``). Use a flat row when the ticker maps to one
+# slice; use ``buckets`` when it splits across L2 weights.
 #
-# Field semantics:
-#   asset_class: equity | fixed_income | real_estate | commodity | crypto | cash | private
-#   sub_class:   finer category within asset_class (free-form)
-#   sector:      for equities; omit for non-equity
-#   region:      US | intl_developed | intl_emerging | global; omit where N/A
+# Synthetic tickers (REALESTATE:*, GOLD:*, etc.) resolve by prefix in
+# ``app/classifications.py``, not listed here.
 #
-# Synthetic tickers used by the /manual form (REALESTATE:*, GOLD:*, CRYPTO:*,
-# PRIVATE:*, HSA_CASH:*) are resolved by prefix in app/classifications.py,
-# not listed here.
-
-# ---- broad-market equity ETFs --------------------------------------------
 
 VTI:
-  asset_class: equity
-  sub_class: us_total_market
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 ITOT:
-  asset_class: equity
-  sub_class: us_total_market
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 SCHB:
-  asset_class: equity
-  sub_class: us_total_market
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 VOO:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 IVV:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 SPY:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 SCHX:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 VTV:
-  asset_class: equity
-  sub_class: us_large_cap_value
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 VUG:
-  asset_class: equity
-  sub_class: us_large_cap_growth
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 SCHD:
-  asset_class: equity
-  sub_class: us_dividend
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 VYM:
-  asset_class: equity
-  sub_class: us_dividend
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 QQQ:
-  asset_class: equity
-  sub_class: us_large_cap_growth
-  sector: technology
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 VB:
-  asset_class: equity
-  sub_class: us_small_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 IWM:
-  asset_class: equity
-  sub_class: us_small_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 VIOO:
-  asset_class: equity
-  sub_class: us_small_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 IJH:
-  asset_class: equity
-  sub_class: us_mid_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 IJR:
-  asset_class: equity
-  sub_class: us_small_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 SCHA:
-  asset_class: equity
-  sub_class: us_small_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 SCHG:
-  asset_class: equity
-  sub_class: us_large_cap_growth
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 SWPPX:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 FNDX:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 FNDA:
-  asset_class: equity
-  sub_class: us_small_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 PRF:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: diversified
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 PRFZ:
-  asset_class: equity
-  sub_class: us_small_cap
-  sector: diversified
-  region: US
-
-# ---- sector ETFs ----------------------------------------------------------
-
+  asset_class: Stocks
+  sub_class: US Stocks
 VGT:
-  asset_class: equity
-  sub_class: us_sector
-  sector: technology
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 XLK:
-  asset_class: equity
-  sub_class: us_sector
-  sector: technology
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 XLF:
-  asset_class: equity
-  sub_class: us_sector
-  sector: financials
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 XLE:
-  asset_class: equity
-  sub_class: us_sector
-  sector: energy
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 XLV:
-  asset_class: equity
-  sub_class: us_sector
-  sector: healthcare
-  region: US
-
-# ---- international equity -------------------------------------------------
-
+  asset_class: Stocks
+  sub_class: US Stocks
 VXUS:
-  asset_class: equity
-  sub_class: intl_total_market
-  sector: diversified
-  region: intl_developed
+  buckets:
+  - asset_class: Stocks
+    sub_class: International Developed
+    weight: 0.75
+  - asset_class: Stocks
+    sub_class: International Emerging
+    weight: 0.25
 VEA:
-  asset_class: equity
-  sub_class: intl_developed
-  sector: diversified
-  region: intl_developed
+  asset_class: Stocks
+  sub_class: International Developed
 IEFA:
-  asset_class: equity
-  sub_class: intl_developed
-  sector: diversified
-  region: intl_developed
+  asset_class: Stocks
+  sub_class: International Developed
 SCHF:
-  asset_class: equity
-  sub_class: intl_developed
-  sector: diversified
-  region: intl_developed
+  asset_class: Stocks
+  sub_class: International Developed
 VWO:
-  asset_class: equity
-  sub_class: intl_emerging
-  sector: diversified
-  region: intl_emerging
+  asset_class: Stocks
+  sub_class: International Emerging
 IEMG:
-  asset_class: equity
-  sub_class: intl_emerging
-  sector: diversified
-  region: intl_emerging
+  asset_class: Stocks
+  sub_class: International Emerging
 SCHE:
-  asset_class: equity
-  sub_class: intl_emerging
-  sector: diversified
-  region: intl_emerging
+  asset_class: Stocks
+  sub_class: International Emerging
 FNDE:
-  asset_class: equity
-  sub_class: intl_emerging
-  sector: diversified
-  region: intl_emerging
+  asset_class: Stocks
+  sub_class: International Emerging
 SWISX:
-  asset_class: equity
-  sub_class: intl_developed
-  sector: diversified
-  region: intl_developed
+  asset_class: Stocks
+  sub_class: International Developed
 FNDF:
-  asset_class: equity
-  sub_class: intl_developed
-  sector: diversified
-  region: intl_developed
+  asset_class: Stocks
+  sub_class: International Developed
 PXF:
-  asset_class: equity
-  sub_class: intl_developed
-  sector: diversified
-  region: intl_developed
+  asset_class: Stocks
+  sub_class: International Developed
 SCHC:
-  asset_class: equity
-  sub_class: intl_developed_small_cap
-  sector: diversified
-  region: intl_developed
+  asset_class: Stocks
+  sub_class: International Developed
 FNDC:
-  asset_class: equity
-  sub_class: intl_developed_small_cap
-  sector: diversified
-  region: intl_developed
+  asset_class: Stocks
+  sub_class: International Developed
 IXUS:
-  asset_class: equity
-  sub_class: intl_total_market
-  sector: diversified
-  region: intl_developed
+  buckets:
+  - asset_class: Stocks
+    sub_class: International Developed
+    weight: 0.75
+  - asset_class: Stocks
+    sub_class: International Emerging
+    weight: 0.25
 VT:
-  asset_class: equity
-  sub_class: world
-  sector: diversified
-  region: global
-
-# ---- individual US equities ----------------------------------------------
-
+  buckets:
+  - asset_class: Stocks
+    sub_class: International Developed
+    weight: 0.3
+  - asset_class: Stocks
+    sub_class: International Emerging
+    weight: 0.1
+  - asset_class: Stocks
+    sub_class: US Stocks
+    weight: 0.6
 AAPL:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: technology
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 MSFT:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: technology
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 GOOGL:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: technology
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 AMZN:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: consumer_discretionary
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 NVDA:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: technology
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 TSLA:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: consumer_discretionary
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 META:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: technology
-  region: US
+  asset_class: Stocks
+  sub_class: US Stocks
 BRK.B:
-  asset_class: equity
-  sub_class: us_large_cap
-  sector: financials
-  region: US
-
-# ---- fixed income ---------------------------------------------------------
-
+  asset_class: Stocks
+  sub_class: US Stocks
 BND:
-  asset_class: fixed_income
-  sub_class: us_aggregate
-  region: US
+  buckets:
+  - asset_class: Bonds
+    sub_class: US Corporate
+    weight: 0.33
+  - asset_class: Bonds
+    sub_class: US Treasury
+    weight: 0.67
 AGG:
-  asset_class: fixed_income
-  sub_class: us_aggregate
-  region: US
+  buckets:
+  - asset_class: Bonds
+    sub_class: US Corporate
+    weight: 0.33
+  - asset_class: Bonds
+    sub_class: US Treasury
+    weight: 0.67
 BNDX:
-  asset_class: fixed_income
-  sub_class: intl_aggregate
-  region: global
+  asset_class: Bonds
+  sub_class: International Bonds
 IEF:
-  asset_class: fixed_income
-  sub_class: us_treasury
-  region: US
+  asset_class: Bonds
+  sub_class: US Treasury
 TLT:
-  asset_class: fixed_income
-  sub_class: us_treasury_long
-  region: US
+  asset_class: Bonds
+  sub_class: US Treasury
 TIP:
-  asset_class: fixed_income
-  sub_class: us_tips
-  region: US
+  asset_class: Bonds
+  sub_class: US Treasury
 LQD:
-  asset_class: fixed_income
-  sub_class: us_corporate
-  region: US
+  asset_class: Bonds
+  sub_class: US Corporate
 VTEB:
-  asset_class: fixed_income
-  sub_class: us_municipal
-  region: US
+  asset_class: Bonds
+  sub_class: US Municipal
 CMF:
-  asset_class: fixed_income
-  sub_class: us_municipal
-  region: US
+  asset_class: Bonds
+  sub_class: US Municipal
 SWAGX:
-  asset_class: fixed_income
-  sub_class: us_aggregate
-  region: US
+  buckets:
+  - asset_class: Bonds
+    sub_class: US Corporate
+    weight: 0.33
+  - asset_class: Bonds
+    sub_class: US Treasury
+    weight: 0.67
 BIL:
-  asset_class: fixed_income
-  sub_class: us_treasury_short
-  region: US
+  asset_class: Bonds
+  sub_class: US Treasury
 EBND:
-  asset_class: fixed_income
-  sub_class: em_bonds
-  region: intl_emerging
-
-# ---- real estate ----------------------------------------------------------
-
+  asset_class: Bonds
+  sub_class: Emerging Markets Debt
 VNQ:
-  asset_class: real_estate
-  sub_class: us_reits
-  sector: real_estate
-  region: US
+  asset_class: Real Estate
+  sub_class: REITs
 VNQI:
-  asset_class: real_estate
-  sub_class: intl_reits
-  sector: real_estate
-  region: intl_developed
+  asset_class: Real Estate
+  sub_class: REITs
 USRT:
-  asset_class: real_estate
-  sub_class: us_reits
-  sector: real_estate
-  region: US
+  asset_class: Real Estate
+  sub_class: REITs
 SCHH:
-  asset_class: real_estate
-  sub_class: us_reits
-  sector: real_estate
-  region: US
+  asset_class: Real Estate
+  sub_class: REITs
 HAUZ:
-  asset_class: real_estate
-  sub_class: intl_reits
-  sector: real_estate
-  region: intl_developed
-
-# ---- commodities ----------------------------------------------------------
-
+  asset_class: Real Estate
+  sub_class: REITs
 GLD:
-  asset_class: commodity
-  sub_class: gold
+  asset_class: Commodities
+  sub_class: Gold
 IAU:
-  asset_class: commodity
-  sub_class: gold
+  asset_class: Commodities
+  sub_class: Gold
 SGOL:
-  asset_class: commodity
-  sub_class: gold
+  asset_class: Commodities
+  sub_class: Gold
 SLV:
-  asset_class: commodity
-  sub_class: silver
-
-# ---- crypto ---------------------------------------------------------------
-
+  asset_class: Commodities
+  sub_class: Silver
 BTC:
-  asset_class: crypto
-  sub_class: bitcoin
+  asset_class: Crypto
+  sub_class: Bitcoin
 BTC-USD:
-  asset_class: crypto
-  sub_class: bitcoin
+  asset_class: Crypto
+  sub_class: Bitcoin
 ETH:
-  asset_class: crypto
-  sub_class: ethereum
+  asset_class: Crypto
+  sub_class: Ethereum
 ETH-USD:
-  asset_class: crypto
-  sub_class: ethereum
+  asset_class: Crypto
+  sub_class: Ethereum
 IBIT:
-  asset_class: crypto
-  sub_class: bitcoin
+  asset_class: Crypto
+  sub_class: Bitcoin
 ADA:
-  asset_class: crypto
-  sub_class: other
+  asset_class: Crypto
+  sub_class: Other Crypto
 ICP:
-  asset_class: crypto
-  sub_class: other
-
-# ---- target-date funds (look-through in lookthrough.yaml) -----------------
-
+  asset_class: Crypto
+  sub_class: Other Crypto
 VTIVX:
-  asset_class: equity
-  sub_class: target_date
-  region: global
+  buckets:
+  - asset_class: Bonds
+    sub_class: International Bonds
+    weight: 0.003
+  - asset_class: Bonds
+    sub_class: US Corporate
+    weight: 0.00231
+  - asset_class: Bonds
+    sub_class: US Treasury
+    weight: 0.09469
+  - asset_class: Stocks
+    sub_class: International Developed
+    weight: 0.324
+  - asset_class: Stocks
+    sub_class: US Stocks
+    weight: 0.576
 VFFVX:
-  asset_class: equity
-  sub_class: target_date
-  region: global
+  buckets:
+  - asset_class: Bonds
+    sub_class: International Bonds
+    weight: 0.003
+  - asset_class: Bonds
+    sub_class: US Corporate
+    weight: 0.00231
+  - asset_class: Bonds
+    sub_class: US Treasury
+    weight: 0.09469
+  - asset_class: Stocks
+    sub_class: International Developed
+    weight: 0.324
+  - asset_class: Stocks
+    sub_class: US Stocks
+    weight: 0.576
 VLXVX:
-  asset_class: equity
-  sub_class: target_date
-  region: global
+  buckets:
+  - asset_class: Bonds
+    sub_class: International Bonds
+    weight: 0.003
+  - asset_class: Bonds
+    sub_class: US Corporate
+    weight: 0.00231
+  - asset_class: Bonds
+    sub_class: US Treasury
+    weight: 0.09469
+  - asset_class: Stocks
+    sub_class: International Developed
+    weight: 0.324
+  - asset_class: Stocks
+    sub_class: US Stocks
+    weight: 0.576
 VFIFX:
-  asset_class: equity
-  sub_class: target_date
-  region: global
-
-# ---- cash / money market --------------------------------------------------
-
+  buckets:
+  - asset_class: Bonds
+    sub_class: International Bonds
+    weight: 0.003
+  - asset_class: Bonds
+    sub_class: US Corporate
+    weight: 0.00231
+  - asset_class: Bonds
+    sub_class: US Treasury
+    weight: 0.09469
+  - asset_class: Stocks
+    sub_class: International Developed
+    weight: 0.324
+  - asset_class: Stocks
+    sub_class: US Stocks
+    weight: 0.576
 CASH:
-  asset_class: cash
-  sub_class: cash
+  asset_class: Cash
+  sub_class: Cash & Savings
 SPAXX:
-  asset_class: cash
-  sub_class: money_market
+  asset_class: Cash
+  sub_class: Money Market
 VMFXX:
-  asset_class: cash
-  sub_class: money_market
+  asset_class: Cash
+  sub_class: Money Market
 FDRXX:
-  asset_class: cash
-  sub_class: money_market
+  asset_class: Cash
+  sub_class: Money Market
 SNSXX:
-  asset_class: cash
-  sub_class: money_market
+  asset_class: Cash
+  sub_class: Money Market
 USD:
-  asset_class: cash
-  sub_class: cash
+  asset_class: Cash
+  sub_class: Cash & Savings
 USDT:
-  asset_class: cash
-  sub_class: stablecoin
+  asset_class: Cash
+  sub_class: Cash & Savings
