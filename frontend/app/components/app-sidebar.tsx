@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Palette, Landmark, Settings, Target, TrendingDown, Tags } from "lucide-react";
+import { Home, Landmark, Settings, Target, TrendingDown, Tags } from "lucide-react";
 
 import * as React from "react";
 
@@ -26,7 +26,6 @@ const nav = [
   { href: "/liabilities", label: "Liabilities", icon: TrendingDown },
   { href: "/targets", label: "Targets", icon: Target },
   { href: "/classifications", label: "Classifications", icon: Tags },
-  { href: "/brand", label: "Brand", icon: Palette },
 ];
 
 export function AppSidebar({
