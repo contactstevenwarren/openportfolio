@@ -1,4 +1,4 @@
-/** PRD v0.4: casefold, trim, collapse whitespace; equality or substring either way. */
+/** Account label matching: casefold, trim, collapse whitespace; equality or substring either way. */
 export function normalizeAccountLabel(s: string): string {
   return s
     .trim()
