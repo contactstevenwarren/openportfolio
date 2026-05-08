@@ -1,16 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, Suspense } from "react";
+// Classifications for symbols you hold come from the merged API list (YAML ∪ DB).
+// Tickers that are only unclassified may not appear here until classified elsewhere — separate flow.
+
+import { useEffect, useMemo, useState, Suspense } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { mutate } from "swr";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/app/components/ui/card";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import {
@@ -35,8 +32,6 @@ import {
 } from "@/app/lib/api";
 import { cn } from "@/app/lib/utils";
 
-type SourceFilter = "all" | "yaml" | "user";
-
 function formatBucketsBrief(r: ClassificationRow): string {
   if (r.buckets.length === 0) return "—";
   if (r.has_breakdown && r.source !== "user") {
@@ -60,15 +55,12 @@ function bucketSum(buckets: ClassificationBucketPayload[]): number {
 function ClassificationsPageInner() {
   const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
-  const [showOnlyHoldings, setShowOnlyHoldings] = useState(false);
   const [editTicker, setEditTicker] = useState<string | null>(null);
   const [editBuckets, setEditBuckets] = useState<ClassificationBucketPayload[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ kind: "ok" | "err"; message: string } | null>(
     null,
   );
-  const firstLoadRef = useRef(true);
 
   const { data: rows = [], error: rowsError } = useSWR<ClassificationRow[]>(
     "/api/classifications",
@@ -76,9 +68,11 @@ function ClassificationsPageInner() {
     { revalidateOnFocus: false },
   );
 
-  const { data: positions = [] } = useSWR<Position[]>("/api/positions", api.positions, {
-    revalidateOnFocus: false,
-  });
+  const { data: positions = [], isLoading: positionsLoading } = useSWR<Position[]>(
+    "/api/positions",
+    api.positions,
+    { revalidateOnFocus: false },
+  );
 
   const { data: taxonomy } = useSWR<Taxonomy>("/api/classifications/taxonomy", api.taxonomy, {
     revalidateOnFocus: false,
@@ -89,13 +83,6 @@ function ClassificationsPageInner() {
     if (t) setSearch(t);
   }, [searchParams]);
 
-  useEffect(() => {
-    if (firstLoadRef.current && positions.length > 0) {
-      firstLoadRef.current = false;
-      setShowOnlyHoldings(true);
-    }
-  }, [positions]);
-
   const positionCountByTicker = useMemo(() => {
     const m = new Map<string, number>();
     for (const p of positions) m.set(p.ticker, (m.get(p.ticker) ?? 0) + 1);
@@ -105,15 +92,13 @@ function ClassificationsPageInner() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
-      if (sourceFilter !== "all" && r.source !== sourceFilter) return false;
+      if ((positionCountByTicker.get(r.ticker) ?? 0) === 0) return false;
       if (q && !r.ticker.toLowerCase().includes(q)) return false;
-      if (showOnlyHoldings && (positionCountByTicker.get(r.ticker) ?? 0) === 0)
-        return false;
       return true;
     });
-  }, [rows, search, sourceFilter, showOnlyHoldings, positionCountByTicker]);
+  }, [rows, search, positionCountByTicker]);
 
-  const userRowCount = rows.filter((r) => r.source === "user").length;
+  const hasAnyPositions = positions.length > 0;
 
   function startEdit(row: ClassificationRow) {
     if (!taxonomy) return;
@@ -142,7 +127,7 @@ function ClassificationsPageInner() {
     setBusy(true);
     try {
       await api.patchClassification(editTicker, { buckets: editBuckets });
-      setStatus({ kind: "ok", message: `Saved override for ${editTicker}` });
+      setStatus({ kind: "ok", message: `Saved classification for ${editTicker}` });
       await mutate("/api/classifications");
       await mutate("/api/allocation");
       closeEdit();
@@ -161,7 +146,7 @@ function ClassificationsPageInner() {
     setBusy(true);
     try {
       await api.deleteClassification(row.ticker);
-      setStatus({ kind: "ok", message: `Reverted ${row.ticker} to seed baseline` });
+      setStatus({ kind: "ok", message: `Reverted ${row.ticker} to catalog baseline` });
       await mutate("/api/classifications");
       await mutate("/api/allocation");
     } catch (e) {
@@ -190,27 +175,35 @@ function ClassificationsPageInner() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1200px] px-4 py-8 lg:px-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-h3">Classifications</CardTitle>
-          <CardDescription>
-            Bundled seed weights per ticker, plus your overrides. Overrides drive the
-            allocation donut and targets math.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {rowsError && (
-            <p className="text-body-sm text-destructive">{rowsError.message}</p>
-          )}
+    <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-6 lg:px-6">
+      <header className="flex flex-col gap-1">
+        <p className="text-label uppercase tracking-wide text-muted-foreground">
+          Classifications
+        </p>
+        <h1 className="text-h2">Classifications</h1>
+        <p className="text-body-sm text-muted-foreground">
+          How each held symbol maps to asset classes and sub-classes. Edits apply
+          portfolio-wide and drive allocation and drift; every number stays traceable.
+        </p>
+      </header>
 
-          {rows.length > 0 && userRowCount === 0 && (
-            <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-body-sm text-muted-foreground">
-              Showing {rows.length} tickers from the project seed. Edit a row to store
-              an override in your database; overrides survive deploys.
-            </p>
-          )}
+      {rowsError && (
+        <p className="text-body-sm text-destructive">{rowsError.message}</p>
+      )}
 
+      {positionsLoading ? (
+        <p className="text-body-sm text-muted-foreground">Loading positions…</p>
+      ) : !hasAnyPositions ? (
+        <div className="rounded-md border border-border bg-muted/30 px-4 py-8 text-center">
+          <p className="text-body-sm text-muted-foreground">
+            No positions yet. Add holdings on Accounts, then classify them here.
+          </p>
+          <Button className="mt-4" variant="outline" asChild>
+            <Link href="/accounts">Go to Accounts</Link>
+          </Button>
+        </div>
+      ) : (
+        <>
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
               <span className="text-label text-muted-foreground">Search ticker</span>
@@ -221,28 +214,8 @@ function ClassificationsPageInner() {
                 className="w-56"
               />
             </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-label text-muted-foreground">Source</span>
-              <select
-                className="h-9 rounded-md border border-input bg-background px-2 text-body-sm"
-                value={sourceFilter}
-                onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}
-              >
-                <option value="all">All ({rows.length})</option>
-                <option value="user">Your overrides ({userRowCount})</option>
-                <option value="yaml">Seed only ({rows.length - userRowCount})</option>
-              </select>
-            </div>
-            <label className="flex cursor-pointer items-center gap-2 pb-1 text-body-sm">
-              <input
-                type="checkbox"
-                checked={showOnlyHoldings}
-                onChange={(e) => setShowOnlyHoldings(e.target.checked)}
-              />
-              Only my holdings
-            </label>
             <span className="ml-auto text-body-sm text-muted-foreground">
-              {filtered.length} shown
+              {filtered.length} held {filtered.length === 1 ? "symbol" : "symbols"}
             </span>
           </div>
 
@@ -260,102 +233,115 @@ function ClassificationsPageInner() {
             </p>
           )}
 
-          <div className="overflow-x-auto rounded-md border border-border">
-            <table className="w-full min-w-[640px] text-left text-body-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/40 text-label text-muted-foreground">
-                  <th className="px-3 py-2 font-medium">Ticker</th>
-                  <th className="px-3 py-2 font-medium">Routing</th>
-                  <th className="px-3 py-2 font-medium">Source</th>
-                  <th className="px-3 py-2 font-medium">Holdings</th>
-                  <th className="px-3 py-2 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r) => {
-                  const holdingCount = positionCountByTicker.get(r.ticker) ?? 0;
-                  return (
-                    <tr key={r.ticker} className="border-b border-border/60 last:border-0">
-                      <td className="px-3 py-2 font-mono text-xs">{r.ticker}</td>
-                      <td className="max-w-[420px] px-3 py-2 text-muted-foreground">
-                        <span className="line-clamp-2" title={formatBucketsBrief(r)}>
-                          {r.has_breakdown && r.source !== "user" ? (
-                            <span className="text-foreground">
-                              <span className="mr-1" aria-hidden>
-                                ◇
+          {hasAnyPositions && filtered.length === 0 && !rowsError && (
+            <p className="text-body-sm text-muted-foreground">
+              No matching held symbols{search.trim() ? ` for “${search.trim()}”` : ""}.
+              Try another search, or check the dashboard if a ticker is still unclassified.
+            </p>
+          )}
+
+          {filtered.length > 0 && (
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full min-w-[640px] text-left text-body-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/40">
+                    <th className="px-3 py-2 text-left text-label font-medium text-muted-foreground">
+                      Ticker
+                    </th>
+                    <th className="px-3 py-2 text-left text-label font-medium text-muted-foreground">
+                      Classification
+                    </th>
+                    <th className="px-3 py-2 text-right text-label font-medium text-muted-foreground">
+                      Positions
+                    </th>
+                    <th className="px-3 py-2 text-left text-label font-medium text-muted-foreground">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((r) => {
+                    const holdingCount = positionCountByTicker.get(r.ticker) ?? 0;
+                    return (
+                      <tr key={r.ticker} className="border-b border-border/60 last:border-0">
+                        <td className="px-3 py-2 text-mono-sm tabular-nums text-foreground">
+                          {r.ticker}
+                        </td>
+                        <td className="max-w-[min(420px,50vw)] px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {r.source === "user" && (
+                              <span className="shrink-0 rounded bg-warning-soft px-2 py-0.5 text-label text-warning">
+                                Adjusted
                               </span>
-                              Multi-bucket ({r.buckets.length}) —{" "}
-                              <span className="text-muted-foreground">
-                                {formatBucketsBrief(r)}
-                              </span>
+                            )}
+                            <span
+                              className="line-clamp-2 text-muted-foreground"
+                              title={formatBucketsBrief(r)}
+                            >
+                              {r.has_breakdown && r.source !== "user" ? (
+                                <span className="text-foreground">
+                                  <span className="mr-1 text-muted-foreground" aria-hidden>
+                                    ◇
+                                  </span>
+                                  Multi-bucket ({r.buckets.length}) —{" "}
+                                  <span className="text-muted-foreground">
+                                    {formatBucketsBrief(r)}
+                                  </span>
+                                </span>
+                              ) : (
+                                formatBucketsBrief(r)
+                              )}
                             </span>
-                          ) : (
-                            formatBucketsBrief(r)
-                          )}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        {r.source === "user" ? (
-                          <span className="rounded bg-warning-soft px-2 py-0.5 text-label text-warning">
-                            user{r.overrides_yaml ? " · overrides seed" : ""}
-                          </span>
-                        ) : (
-                          <span className="rounded bg-muted px-2 py-0.5 text-label text-muted-foreground">
-                            seed
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 tabular-nums">
-                        {holdingCount === 0 ? (
-                          <span className="text-muted-foreground">0</span>
-                        ) : (
-                          <span>{holdingCount}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-1">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={busy || !taxonomy}
-                            onClick={() => startEdit(r)}
-                          >
-                            Edit
-                          </Button>
-                          {r.source === "user" && r.overrides_yaml && (
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right text-mono-sm tabular-nums">
+                          {holdingCount}
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap gap-1">
                             <Button
                               type="button"
-                              variant="ghost"
+                              variant="outline"
                               size="sm"
-                              disabled={busy}
-                              onClick={() => revertToYaml(r)}
+                              disabled={busy || !taxonomy}
+                              onClick={() => startEdit(r)}
                             >
-                              Revert
+                              Edit
                             </Button>
-                          )}
-                          {r.source === "user" && !r.overrides_yaml && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive"
-                              disabled={busy}
-                              onClick={() => deleteUserTicker(r)}
-                            >
-                              Delete
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+                            {r.source === "user" && r.overrides_yaml && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={busy}
+                                onClick={() => revertToYaml(r)}
+                              >
+                                Revert
+                              </Button>
+                            )}
+                            {r.source === "user" && !r.overrides_yaml && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive"
+                                disabled={busy}
+                                onClick={() => deleteUserTicker(r)}
+                              >
+                                Delete
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
 
       <Dialog open={editTicker !== null} onOpenChange={(o) => !o && closeEdit()}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
