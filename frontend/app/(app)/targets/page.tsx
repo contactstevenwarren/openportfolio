@@ -22,6 +22,7 @@ import {
   type AssetClass,
 } from "@/app/(app)/_dashboard/mocks";
 import {
+  fundedL1Slices,
   meaningfulChildren as meaningfulChildrenSlice,
   toAssetClass,
 } from "@/app/lib/allocation-display";
@@ -131,6 +132,10 @@ function applyResidualEdit(
   newPct: number,
   touchOrder: string[],
 ): { values: Record<string, number>; blocked: boolean } {
+  if (keys.length === 1) {
+    const only = keys[0];
+    return { values: { ...values, [only]: 100 }, blocked: false };
+  }
   const n = Math.max(0, Math.min(100, Math.round(newPct)));
   if (n === values[editedKey]) return { values, blocked: false };
   const residualKey = pickResidual(keys, touchOrder, editedKey);
@@ -147,9 +152,11 @@ function applyResidualEdit(
   return { values: next, blocked: false };
 }
 
-function activePresetId(values: Record<string, number>): string | null {
+function activePresetId(values: Record<string, number>, fundedKeys: string[]): string | null {
+  if (fundedKeys.length === 0) return null;
   for (const p of PRESETS) {
-    if (L1_CLASSES.every((c) => (values[c.key] ?? 0) === (p.values[c.key] ?? 0))) {
+    const projected = projectToFundedKeys(p.values, fundedKeys);
+    if (L1_CLASSES.every((c) => (values[c.key] ?? 0) === (projected[c.key] ?? 0))) {
       return p.id;
     }
   }
@@ -193,6 +200,37 @@ function seedFromTargets(
   return raw;
 }
 
+/** Portfolio targets split across funded L1 keys only; other paths 0; renorm funded to 100%. */
+function projectToFundedKeys(
+  full: Record<string, number>,
+  fundedKeys: string[],
+): Record<string, number> {
+  const out: Record<string, number> = { ...EMPTY_VALUES };
+  if (fundedKeys.length === 0) return out;
+  let sum = 0;
+  for (const k of fundedKeys) {
+    sum += full[k] ?? 0;
+  }
+  if (sum <= 0) {
+    const n = fundedKeys.length;
+    const eq = Math.floor(100 / n);
+    fundedKeys.forEach((k, i) => {
+      out[k] = i === n - 1 ? 100 - eq * (n - 1) : eq;
+    });
+    return out;
+  }
+  for (const k of fundedKeys) {
+    out[k] = Math.round((100 * (full[k] ?? 0)) / sum);
+  }
+  let total = fundedKeys.reduce((a, k) => a + out[k], 0);
+  if (total !== 100) {
+    const diff = 100 - total;
+    const largest = [...fundedKeys].sort((a, b) => out[b] - out[a])[0];
+    out[largest] = Math.max(0, out[largest] + diff);
+  }
+  return out;
+}
+
 function formatPp(pp: number): string {
   if (pp === 0) return "—";
   const sign = pp > 0 ? "+" : "−";
@@ -228,6 +266,8 @@ function EditorRow({
   isAbsorber,
   animating,
   onEdit,
+  editLocked,
+  lockHint,
 }: {
   keyName: string;
   label: string;
@@ -237,15 +277,27 @@ function EditorRow({
   isAbsorber: boolean;
   animating: boolean;
   onEdit: (key: string, v: number) => void;
+  /** Single bucket under parent — share must stay 100% of the asset class. */
+  editLocked?: boolean;
+  /** When locked, overrides default single-bucket tooltip (L2 vs L1 wording). */
+  lockHint?: string;
 }) {
   const drift = target - now;
+  const locked = Boolean(editLocked);
   return (
     <div
       className={
         "grid grid-cols-[1fr_minmax(120px,1.5fr)_4.5rem_3rem_3.5rem] items-center gap-x-3 rounded-md px-1 py-2 " +
-        (isAbsorber ? "bg-muted/40" : "hover:bg-muted/40")
+        (!locked && isAbsorber ? "bg-muted/40" : "hover:bg-muted/40")
       }
-      title={isAbsorber ? "Absorbs change from your next edit" : undefined}
+      title={
+        locked
+          ? (lockHint ??
+            "Only one sub-category — it uses 100% of this asset class")
+          : isAbsorber
+            ? "Absorbs change from your next edit"
+            : undefined
+      }
     >
       <div className="flex items-center gap-2 min-w-0">
         <span
@@ -254,7 +306,7 @@ function EditorRow({
           aria-hidden
         />
         <span className="truncate text-body-sm text-foreground">{label}</span>
-        {isAbsorber && (
+        {!locked && isAbsorber && (
           <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground" aria-label="Absorbs next edit">
             absorbs
           </span>
@@ -266,7 +318,7 @@ function EditorRow({
         step={1}
         value={[target]}
         onValueChange={([v]) => onEdit(keyName, v)}
-        disabled={animating}
+        disabled={animating || locked}
         aria-label={`${label} target percentage`}
       />
       <div className="relative flex items-center">
@@ -283,7 +335,7 @@ function EditorRow({
             const v = parseInt(e.target.value, 10);
             if (!isNaN(v)) onEdit(keyName, Math.max(0, Math.min(100, v)));
           }}
-          disabled={animating}
+          disabled={animating || locked}
           className="h-8 w-full pl-2 pr-6 text-right text-mono-sm tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           aria-label={`${label} target %`}
         />
@@ -343,27 +395,32 @@ function L1Editor() {
   const [saving, setSaving] = React.useState(false);
   const [saveError, setSaveError] = React.useState<string | null>(null);
 
-  const keys = L1_CLASSES.map((c) => c.key);
+  const fundedSlices = React.useMemo(
+    () => (alloc ? fundedL1Slices(alloc) : []),
+    [alloc],
+  );
+  const keys = React.useMemo(() => fundedSlices.map((s) => s.name), [fundedSlices]);
 
   React.useEffect(() => {
     if (!alloc || remoteTargets === undefined) return;
     if (values !== null) return;
-    const seeded =
-      remoteTargets.root.length > 0
-        ? seedFromTargets(remoteTargets, alloc)
-        : seedFromActuals(alloc);
-    setValues(seeded);
+    const fundedKeys = fundedL1Slices(alloc).map((s) => s.name);
+    const base =
+      remoteTargets.root.length > 0 ? seedFromTargets(remoteTargets, alloc) : seedFromActuals(alloc);
+    setValues(projectToFundedKeys(base, fundedKeys));
   }, [alloc, remoteTargets, values]);
 
   const loading = allocLoading || targetsLoading || values === null;
   const noPositions = !allocLoading && alloc && alloc.total === 0;
+  const noFundedL1 =
+    !allocLoading && Boolean(alloc && alloc.total > 0 && fundedSlices.length === 0);
 
   const actualsMap = React.useMemo<Record<string, number>>(() => {
     if (!alloc) return {};
     return Object.fromEntries(alloc.by_asset_class.map((s) => [s.name, Math.round(s.pct)]));
   }, [alloc]);
 
-  const activePreset = values ? activePresetId(values) : null;
+  const activePreset = values ? activePresetId(values, keys) : null;
   const absorberKey = React.useMemo(
     () => (values ? displayResidual(keys, touchOrder) : null),
     [values, touchOrder, keys],
@@ -374,45 +431,47 @@ function L1Editor() {
       if (!prev) return prev;
       const result = applyResidualEdit(prev, keys, key, raw, touchOrder);
       if (result.blocked) return prev;
+      if (keys.length === 1) {
+        return { ...EMPTY_VALUES, [keys[0]]: 100 };
+      }
       return result.values;
     });
     setTouchOrder((prev) => addTouch(prev, key));
   }, [touchOrder, keys]);
 
-  const handlePreset = React.useCallback((preset: Preset) => {
-    if (animating || !values) return;
-    setAnimating(true);
-    const start = { ...values };
-    const end = preset.values;
-    const duration = 500;
-    const startTime = performance.now();
-    function tick(now: number) {
-      const t = Math.min(1, (now - startTime) / duration);
-      const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-      const frame: Record<string, number> = {};
-      for (const c of L1_CLASSES) {
-        frame[c.key] = lerp(start[c.key] ?? 0, end[c.key] ?? 0, eased);
+  const handlePreset = React.useCallback(
+    (preset: Preset) => {
+      if (animating || !values) return;
+      const end = projectToFundedKeys(preset.values, keys);
+      setAnimating(true);
+      const start = { ...values };
+      const duration = 500;
+      const startTime = performance.now();
+      function tick(now: number) {
+        const t = Math.min(1, (now - startTime) / duration);
+        const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        const frame: Record<string, number> = { ...EMPTY_VALUES };
+        for (const c of L1_CLASSES) {
+          frame[c.key] = lerp(start[c.key] ?? 0, end[c.key] ?? 0, eased);
+        }
+        setValues(projectToFundedKeys(frame, keys));
+        if (t < 1) {
+          requestAnimationFrame(tick);
+        } else {
+          setValues(end);
+          setTouchOrder([]);
+          setAnimating(false);
+        }
       }
-      const sum = L1_CLASSES.reduce((a, c) => a + frame[c.key], 0);
-      if (sum !== 100) {
-        const largest = L1_CLASSES.sort((a, b) => frame[b.key] - frame[a.key])[0];
-        frame[largest.key] = Math.max(0, frame[largest.key] + (100 - sum));
-      }
-      setValues({ ...frame });
-      if (t < 1) {
-        requestAnimationFrame(tick);
-      } else {
-        setValues({ ...end });
-        setTouchOrder([]);
-        setAnimating(false);
-      }
-    }
-    requestAnimationFrame(tick);
-  }, [animating, values]);
+      requestAnimationFrame(tick);
+    },
+    [animating, values, keys],
+  );
 
   const handleReset = React.useCallback(() => {
     if (!alloc) return;
-    setValues(seedFromActuals(alloc));
+    const fundedKeys = fundedL1Slices(alloc).map((s) => s.name);
+    setValues(projectToFundedKeys(seedFromActuals(alloc), fundedKeys));
     setTouchOrder([]);
   }, [alloc]);
 
@@ -421,7 +480,11 @@ function L1Editor() {
     setSaving(true);
     setSaveError(null);
     try {
-      const root = L1_CLASSES.map((c) => ({ path: c.key, pct: values[c.key] ?? 0 }));
+      const fundedSet = new Set(keys);
+      const root = L1_CLASSES.map((c) => ({
+        path: c.key,
+        pct: fundedSet.has(c.key) ? (values[c.key] ?? 0) : 0,
+      }));
       await api.putTargets({ root, groups: remoteTargets.groups });
       await mutate("/api/allocation");
       await mutate("/api/targets");
@@ -452,6 +515,18 @@ function L1Editor() {
     );
   }
 
+  if (noFundedL1) {
+    return (
+      <div className="mx-auto flex w-full max-w-[900px] flex-col items-center gap-4 px-4 py-12 text-center">
+        <p className="text-h3">Nothing to target yet</p>
+        <p className="text-body-sm text-muted-foreground">
+          Your positions aren&apos;t allocated into asset classes yet. Classify holdings or add positions, then try again.
+        </p>
+        <Button variant="outline" onClick={() => router.push("/")}>Back to dashboard</Button>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-6 lg:px-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -466,7 +541,7 @@ function L1Editor() {
             )}
           </div>
           <p className="text-body-sm text-muted-foreground">
-            Define the asset mix you&apos;re aiming at. Edits adjust one other row (marked
+            Only asset classes you currently hold appear here (same as the allocation donut). Edits adjust one other row (marked
             <span className="mx-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">absorbs</span>)
             to keep the total at 100%.
           </p>
@@ -503,9 +578,12 @@ function L1Editor() {
             type="button"
             onClick={() => handlePreset(preset)}
             disabled={animating}
-            title={L1_CLASSES.filter((c) => (preset.values[c.key] ?? 0) > 0)
-              .map((c) => `${c.label} ${preset.values[c.key]}%`)
-              .join(" · ")}
+            title={(() => {
+              const proj = projectToFundedKeys(preset.values, keys);
+              return L1_CLASSES.filter((c) => (proj[c.key] ?? 0) > 0)
+                .map((c) => `${c.label} ${proj[c.key]}%`)
+                .join(" · ");
+            })()}
             className={
               "rounded-full border px-3 py-1 text-body-sm font-medium transition-colors " +
               (activePreset === preset.id
@@ -569,19 +647,33 @@ function L1Editor() {
               <span className="text-right text-label text-muted-foreground">Now</span>
               <span className="text-right text-label text-muted-foreground">Drift</span>
             </div>
-            {L1_CLASSES.map((c) => (
-              <EditorRow
-                key={c.key}
-                keyName={c.key}
-                label={c.label}
-                fill={ASSET_CLASS_COLOR[c.cls]}
-                target={values?.[c.key] ?? 0}
-                now={actualsMap[c.key] ?? 0}
-                isAbsorber={c.key === absorberKey}
-                animating={animating}
-                onEdit={handleEdit}
-              />
-            ))}
+            {fundedSlices.map((slice) => {
+              const c =
+                L1_CLASSES.find((x) => x.key === slice.name) ?? {
+                  key: slice.name,
+                  label: slice.name,
+                  cls: toAssetClass(slice.name),
+                };
+              return (
+                <EditorRow
+                  key={c.key}
+                  keyName={c.key}
+                  label={c.label}
+                  fill={ASSET_CLASS_COLOR[c.cls]}
+                  target={values?.[c.key] ?? 0}
+                  now={actualsMap[c.key] ?? 0}
+                  isAbsorber={c.key === absorberKey}
+                  animating={animating}
+                  onEdit={handleEdit}
+                  editLocked={keys.length === 1}
+                  lockHint={
+                    keys.length === 1
+                      ? "Only one asset class with holdings — target stays 100%"
+                      : undefined
+                  }
+                />
+              );
+            })}
             <div className="pt-3">
               <Button
                 variant="ghost"
@@ -671,7 +763,10 @@ function L2Editor({ focusClass }: { focusClass: string }) {
     }
   }, [alloc, remoteTargets, l2Slices, values, focusClass, keys, actualsMap]);
 
-  const loading = allocLoading || targetsLoading || values === null;
+  const loading =
+    allocLoading ||
+    targetsLoading ||
+    (l2Slices.length > 0 && values === null);
 
   const absorberKey = React.useMemo(
     () => (values ? displayResidual(keys, touchOrder) : null),
@@ -735,13 +830,13 @@ function L2Editor({ focusClass }: { focusClass: string }) {
       }));
   }, [values, keys, parentColor]);
 
-  // No meaningful children → redirect to L1 page.
-  if (!loading && l2Slices.length <= 1) {
+  // No L2 rows from allocation (no funded sub-categories to edit).
+  if (!loading && l2Slices.length === 0) {
     return (
       <div className="mx-auto flex w-full max-w-[900px] flex-col items-center gap-4 px-4 py-12 text-center">
-        <p className="text-h3">Only one bucket here</p>
+        <p className="text-h3">No breakdown yet</p>
         <p className="text-body-sm text-muted-foreground">
-          {focusClass} has only one sub-category — nothing to allocate between.
+          There’s no sub-category allocation for {focusClass} yet. Add positions or classifications, then try again.
         </p>
         <Button variant="outline" onClick={() => router.push("/targets")}>Back to targets</Button>
       </div>
@@ -749,6 +844,7 @@ function L2Editor({ focusClass }: { focusClass: string }) {
   }
 
   const title = `${focusClass} breakdown`;
+  const singleBucket = keys.length === 1;
 
   return (
     <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6 px-4 py-6 lg:px-6">
@@ -772,8 +868,16 @@ function L2Editor({ focusClass }: { focusClass: string }) {
             )}
           </div>
           <p className="text-body-sm text-muted-foreground">
-            Set how to split your {focusClass.toLowerCase()} allocation.
-            Percentages are % of {focusClass.toLowerCase()}.
+            {singleBucket ? (
+              <>
+                One taxonomy bucket under {focusClass.toLowerCase()} — it uses 100% of this asset class. Targets below stay fixed at 100%; compare &quot;Now&quot; to see drift vs actual mix.
+              </>
+            ) : (
+              <>
+                Set how to split your {focusClass.toLowerCase()} allocation.
+                Percentages are % of {focusClass.toLowerCase()}.
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -854,6 +958,7 @@ function L2Editor({ focusClass }: { focusClass: string }) {
                 isAbsorber={k === absorberKey}
                 animating={false}
                 onEdit={handleEdit}
+                editLocked={singleBucket}
               />
             ))}
             <div className="pt-3">
