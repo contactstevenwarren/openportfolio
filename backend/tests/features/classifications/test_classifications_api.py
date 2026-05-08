@@ -336,7 +336,7 @@ def test_suggest_calls_llm_for_unknown_ticker(
         reasoning="Large-cap US equity ETF.",
         model="azure/test-deployment",
     )
-    with patch("app.main.classify_ticker", return_value=fake):
+    with patch("app.llm.classify_ticker", return_value=fake):
         r = client.post(
             "/api/classifications/suggest",
             json={"tickers": ["ZZNOTINSEED99"]},
@@ -353,7 +353,7 @@ def test_suggest_calls_llm_for_unknown_ticker(
 def test_suggest_none_when_llm_returns_null(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    with patch("app.main.classify_ticker", return_value=None):
+    with patch("app.llm.classify_ticker", return_value=None):
         r = client.post(
             "/api/classifications/suggest",
             json={"tickers": ["ZZNOTINSEED99"]},

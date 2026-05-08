@@ -125,6 +125,60 @@ function addTouch(order: string[], k: string): string[] {
   return [...order.filter((x) => x !== k), k];
 }
 
+/**
+ * Rebuild L2 rows for an asset class so paths match current funded drill slices.
+ * Preserves pcts where paths still exist; new slices get 0 then whole group is
+ * renormalized to integer percents summing to 100.
+ */
+function repairL2GroupRowsForAllocation(
+  gkey: string,
+  sl: AllocationSlice,
+  existingRows: { path: string; pct: number }[],
+): { path: string; pct: number }[] {
+  const meaningful = meaningfulChildrenSlice(sl).filter((c) => c.value > 0);
+  if (meaningful.length === 0) return [];
+
+  const requiredPaths = meaningful
+    .map((c) => `${gkey}.${c.name}`)
+    .sort((a, b) => a.localeCompare(b));
+  const saved = new Map(existingRows.map((r) => [r.path, r.pct]));
+
+  const rows = requiredPaths.map((path) => ({
+    path,
+    pct: saved.get(path) ?? 0,
+  }));
+
+  let sum = rows.reduce((a, r) => a + r.pct, 0);
+  if (sum === 100) return rows;
+
+  if (sum === 0) {
+    const n = rows.length;
+    const base = Math.floor(100 / n);
+    const rem = 100 - base * n;
+    return rows.map((r, i) => ({
+      ...r,
+      pct: base + (i < rem ? 1 : 0),
+    }));
+  }
+
+  const scaled = rows.map((r) => ({
+    path: r.path,
+    pct: Math.floor((100 * r.pct) / sum),
+  }));
+  const s2 = scaled.reduce((a, r) => a + r.pct, 0);
+  let gap = 100 - s2;
+  const order = rows
+    .map((r, i) => {
+      const exact = (100 * r.pct) / sum;
+      return { i, frac: exact - Math.floor(exact) };
+    })
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (let k = 0; k < gap; k++) {
+    scaled[order[k].i].pct += 1;
+  }
+  return scaled;
+}
+
 function applyResidualEdit(
   values: Record<string, number>,
   keys: string[],
@@ -480,12 +534,22 @@ function L1Editor() {
     setSaving(true);
     setSaveError(null);
     try {
+      const freshAlloc = await api.allocation();
+      const repairedGroups: Record<string, { path: string; pct: number }[]> = {};
+      for (const gkey of Object.keys(remoteTargets.groups)) {
+        const rows = remoteTargets.groups[gkey];
+        if (!rows?.length) continue;
+        const sl = freshAlloc.by_asset_class.find((s) => s.name === gkey);
+        if (!sl || sl.value <= 0) continue;
+        const fixed = repairL2GroupRowsForAllocation(gkey, sl, rows);
+        if (fixed.length > 0) repairedGroups[gkey] = fixed;
+      }
       const fundedSet = new Set(keys);
       const root = L1_CLASSES.map((c) => ({
         path: c.key,
         pct: fundedSet.has(c.key) ? (values[c.key] ?? 0) : 0,
       }));
-      await api.putTargets({ root, groups: remoteTargets.groups });
+      await api.putTargets({ root, groups: repairedGroups });
       await mutate("/api/allocation");
       await mutate("/api/targets");
       router.push("/");
@@ -800,9 +864,21 @@ function L2Editor({ focusClass }: { focusClass: string }) {
     setSaving(true);
     setSaveError(null);
     try {
-      const groupRows = keys.map((k) => ({
+      const freshAlloc = await api.allocation();
+      const ps = freshAlloc.by_asset_class.find((s) => s.name === focusClass);
+      if (!ps || ps.value <= 0) {
+        setSaveError("This asset class has no funded holdings.");
+        return;
+      }
+      const freshSlices = meaningfulChildrenSlice(ps).filter((s) => s.value > 0);
+      const freshKeys = freshSlices.map((s) => s.name);
+      const merged: Record<string, number> = { ...values };
+      for (const k of freshKeys) {
+        if (merged[k] === undefined) merged[k] = 0;
+      }
+      const groupRows = freshKeys.map((k) => ({
         path: `${focusClass}.${k}`,
-        pct: values[k] ?? 0,
+        pct: merged[k] ?? 0,
       }));
       await api.putTargets({
         root: remoteTargets.root,

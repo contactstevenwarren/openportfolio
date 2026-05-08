@@ -17,7 +17,8 @@ from app.config import settings
 from app.llm import LLMNotConfiguredError, classify_ticker, extract_positions
 from app.pdf_text import PdfNoTextError, PdfTextTooLargeError
 
-FIXTURES = Path(__file__).parent / "fixtures"
+_TESTS_ROOT = Path(__file__).resolve().parent.parent.parent
+FIXTURES = _TESTS_ROOT / "fixtures"
 
 
 def _load(name: str) -> tuple[str, str]:
@@ -234,7 +235,10 @@ def test_extract_pdf_ok_mocked(
     del test_db
     text, llm_json = _load("fidelity")
     with (
-        patch("app.main.pdf_bytes_to_text", return_value=text),
+        patch(
+            "app.features.extract.service.pdf_bytes_to_text",
+            return_value=text,
+        ),
         patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)),
     ):
         r = client.post(
@@ -247,7 +251,9 @@ def test_extract_pdf_ok_mocked(
     assert [p["ticker"] for p in out["positions"]] == ["VTI", "VXUS", "BND", "aapl"]
 
 
-def test_extract_pdf_422_on_bad_magic(azure_configured, client, test_db, auth_headers) -> None:
+def test_extract_pdf_422_on_bad_magic(
+    azure_configured, client, test_db, auth_headers
+) -> None:
     del test_db
     r = client.post(
         "/api/extract/pdf",
@@ -263,7 +269,7 @@ def test_extract_pdf_422_on_no_text(
 ) -> None:
     del test_db
     with patch(
-        "app.main.pdf_bytes_to_text",
+        "app.features.extract.service.pdf_bytes_to_text",
         side_effect=PdfNoTextError("no text here"),
     ):
         r = client.post(
@@ -280,7 +286,7 @@ def test_extract_pdf_422_on_too_large(
 ) -> None:
     del test_db
     with patch(
-        "app.main.pdf_bytes_to_text",
+        "app.features.extract.service.pdf_bytes_to_text",
         side_effect=PdfTextTooLargeError("exceeds limit (999999)"),
     ):
         r = client.post(
