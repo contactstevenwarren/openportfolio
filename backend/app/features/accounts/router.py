@@ -3,9 +3,9 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_admin_token
 from app.db import get_db
-from app.schemas import AccountCreate, AccountPatch, AccountRead
 
 from . import service as accounts_svc
+from .schemas import AccountCreate, AccountPatch, AccountRead
 
 router = APIRouter(
     prefix="/api/accounts",

@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.allocation import aggregate, meaningful_children
 from app.constants import VALID_ASSET_CLASSES
 from app.models import Target
-from app.schemas import AllocationResult, TargetsPayload
+from app.shared.schemas.allocation import AllocationResult
+from app.shared.schemas.targets import TargetsPayload
 from app.taxonomy import target_path_is_valid
 
 

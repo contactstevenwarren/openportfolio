@@ -3,9 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_admin_token
 from app.db import get_db
-from app.schemas import SnapshotEarliest
-
 from . import service as snapshots_svc
+from .schemas import SnapshotEarliest
 
 router = APIRouter(
     prefix="/api/snapshots",

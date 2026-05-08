@@ -11,7 +11,7 @@ from app.config import settings
 from app.constants import VALID_ASSET_CLASSES
 from app.drift import apply_drift
 from app.models import Account, Position, Target
-from app.schemas import (
+from app.shared.schemas.allocation import (
     AllocationResult,
     DriftThresholds,
     PositionContribution,

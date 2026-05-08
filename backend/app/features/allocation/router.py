@@ -3,9 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_admin_token
 from app.db import get_db
-from app.schemas import AllocationResult, PositionContributionsResponse
-
 from . import service as allocation_svc
+from .schemas import AllocationResult, PositionContributionsResponse
 
 router = APIRouter(
     prefix="/api/allocation",

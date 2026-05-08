@@ -3,9 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_admin_token
 from app.db import get_db
-from app.schemas import InstitutionCreate, InstitutionRead
-
 from . import service as institutions_svc
+from .schemas import InstitutionCreate, InstitutionRead
 
 router = APIRouter(
     prefix="/api/institutions",

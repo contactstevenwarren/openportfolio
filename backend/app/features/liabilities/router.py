@@ -3,9 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_admin_token
 from app.db import get_db
-from app.schemas import LiabilityCreate, LiabilityPatch, LiabilityRead
-
 from . import service as liabilities_svc
+from .schemas import LiabilityCreate, LiabilityPatch, LiabilityRead
 
 router = APIRouter(
     prefix="/api/liabilities",

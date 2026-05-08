@@ -15,7 +15,7 @@ from app.models import (
     Snapshot,
     Target,
 )
-from app.schemas import (
+from .schemas import (
     AccountRead,
     ExportResult,
     LiabilityRead,

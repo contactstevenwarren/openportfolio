@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models import Account, Position, Provenance
-from app.schemas import PositionCommit, PositionPatch, PositionRead
+from .schemas import PositionCommit, PositionPatch, PositionRead
 from app.services.commit_service import commit_positions as run_commit
 
 

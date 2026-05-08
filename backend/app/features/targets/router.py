@@ -3,9 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_admin_token
 from app.db import get_db
-from app.schemas import TargetsPayload
-
 from . import service as targets_svc
+from .schemas import TargetsPayload
 
 router = APIRouter(
     prefix="/api/targets",

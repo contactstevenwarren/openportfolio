@@ -7,7 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import Institution
-from app.schemas import InstitutionCreate, InstitutionRead
+from .schemas import InstitutionCreate, InstitutionRead
 
 
 def list_institutions(db: Session) -> list[InstitutionRead]:

@@ -33,14 +33,30 @@ The Python app under `backend/app/` splits **HTTP surfaces**, **shared workflows
 
 | Layer | Location | Role |
 |--------|-----------|------|
-| **Domain & infrastructure** | Top-level modules (`allocation.py`, `drift.py`, `rebalance.py`, `classifications.py`, `taxonomy.py`, `models.py`, `schemas.py`, `config.py`, `db.py`, `llm.py`, …) | Pure behavior and types: portfolio math, classification loading, ORM models, Pydantic DTOs, settings, DB session. **No FastAPI routes.** Used wherever that logic is needed (not only one URL prefix). |
-| **Features** | `app/features/<area>/` | **API slice per route family:** `router.py` defines paths and dependencies; `service.py` orchestrates DB calls and calls domain modules. Examples: `accounts`, `positions`, `allocation`, `extract`, `health`, `admin` (export + reset). |
-| **Cross-cutting services** | `app/services/` | Workflows **shared across features** so features do not import each other: e.g. position commit pipeline, net-worth snapshot writes after mutations, classification bucket persistence, targets PUT validation. |
-| **App entry** | `main.py`, `bootstrap.py` | `main.py` registers routers and OpenAPI metadata; `bootstrap.py` holds lifespan (migrations, seeds). |
+| **Domain & infrastructure** | Top-level modules (`allocation.py`, `drift.py`, `rebalance.py`, `classifications.py`, `taxonomy.py`, `models.py`, `config.py`, `db.py`, `llm.py`, …) | Pure behavior: portfolio math, classification loading, **SQLAlchemy** ORM (`models.py`), settings, DB session. **No FastAPI routes.** |
+| **API DTOs (Pydantic)** | `app/shared/schemas/` (modules such as `extract.py`, `accounts.py`, `allocation.py`, …) | JSON request/response models for OpenAPI. **`app/schemas.py`** re-exports the same names (`from app.schemas import …`). **Do not** import another feature’s `schemas.py`; shared shapes belong in **`app/shared/schemas/`**. Each **`app/features/<area>/schemas.py`** re-exports types used by that area’s router/service. |
+| **Features** | `app/features/<area>/` | **`router.py`** — paths, dependencies, HTTP concerns. **`service.py`** — orchestration (call domain + `app/services/`). **`schemas.py`** — optional re-exports from `app.shared.schemas`. |
+| **Cross-cutting services** | `app/services/` | Shared workflows (commit pipeline, snapshot writes, classification rows, targets validation). **No feature→feature service imports.** |
+| **App entry** | `main.py`, `bootstrap.py` | **`main.py`** — `FastAPI` app + explicit **`include_router`** per feature. **`bootstrap.py`** — lifespan (migrations, seeds). |
+| **Tests** | `backend/tests/features/<area>/` | Mirror `app/features/` for area tests; **`conftest.py`** stays at `backend/tests/`. **`test_openapi.py`** locks route paths. |
 
-**Request flow (typical):** `HTTP → features/<area>/router.py → features/<area>/service.py` (and/or `app/services/*`) → top-level domain modules → DB.
+**Layers:** HTTP (**router**) → orchestration (**feature `service`**) → **domain** (`allocation`, `rebalance`, …) and/or **`app/services/`** → **persistence** (`models` / DB).
 
-**Why domain code is not nested under `features/`:** Modules like `allocation.py` back **multiple** capabilities (allocation API, account class breakdown, snapshots, rebalance). Treating them as the shared **kernel** avoids duplicating math, keeps dependency direction **features → domain**, and avoids pretending “allocation” is owned solely by `GET /api/allocation`. Put code under a feature folder when it is **only** used by that HTTP area; lift shared orchestration to `app/services/`, shared calculations to top-level modules.
+**Invariant rules**
+
+- **Derived numbers** — allocations, drift, totals — are computed in **Python**, never by the LLM.
+- **LLM extraction** — strict JSON schema, per-field confidence, source span, deterministic validation, user review before commit (details below).
+- **Imports:** `features/*` may use `shared/schemas`, `services/*`, domain packages, `db`, `models` — not other features’ **services**.
+
+**Checklist: new endpoint or feature**
+
+1. Add or extend **`app/features/<area>/`** (`router`, `service`; **`schemas.py`** re-exports if useful).
+2. Register the router in **`main.py`** with **`include_router`**.
+3. Add new shared DTOs under **`app/shared/schemas/`** and export them from **`app/shared/schemas/__init__.py`** (keep **`app/schemas.py`** as the thin re-export barrel).
+4. Add tests under **`backend/tests/features/<area>/`**; run **`pytest`** in Docker per [`CLAUDE.md`](../CLAUDE.md).
+5. If paths or methods change, update **`tests/test_openapi.py`** and API docs URL if needed.
+
+**Why domain modules stay at `app/` root:** `allocation.py` and similar code support **several** HTTP areas (allocation API, account breakdown, snapshots, rebalance). Keeping them as a shared **kernel** avoids duplicate math and keeps **features → domain** dependency direction clear.
 
 ---
 

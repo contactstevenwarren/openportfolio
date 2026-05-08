@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from app.classifications import load_classifications
 from app.constants import VALID_ASSET_CLASSES
 from app.models import Account, Classification, Position, Provenance
-from app.schemas import CommitPosition, CommitResult, MANUAL_ACCOUNT_TYPES, PositionCommit
+from app.shared.schemas.accounts import MANUAL_ACCOUNT_TYPES
+from app.shared.schemas.positions import CommitPosition, CommitResult, PositionCommit
 from app.services.classification_rows import (
     replace_user_classification_buckets,
     single_bucket,

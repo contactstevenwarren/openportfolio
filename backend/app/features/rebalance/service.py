@@ -14,7 +14,7 @@ from app.config import settings
 from app.drift import apply_drift
 from app.models import Position, Target
 from app.rebalance import compute_new_money, compute_rebalance
-from app.schemas import RebalanceResult
+from .schemas import RebalanceResult
 from app.services.portfolio_snapshot import non_investable_account_ids
 
 

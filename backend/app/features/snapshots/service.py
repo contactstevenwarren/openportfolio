@@ -7,7 +7,7 @@ import json
 from sqlalchemy.orm import Session
 
 from app.models import Snapshot
-from app.schemas import SnapshotEarliest
+from .schemas import SnapshotEarliest
 
 
 def get_earliest_snapshot(db: Session) -> SnapshotEarliest | None:

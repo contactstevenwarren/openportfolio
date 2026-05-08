@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.allocation import aggregate
 from app.classifications import load_classifications, load_user_classifications
 from app.models import Position, Target
-from app.schemas import TargetsPayload
+from .schemas import TargetsPayload
 from app.services.portfolio_snapshot import non_investable_account_ids
 from app.services.targets_validation import (
     get_targets_payload,

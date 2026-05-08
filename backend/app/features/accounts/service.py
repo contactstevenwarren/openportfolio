@@ -10,14 +10,14 @@ from sqlalchemy.orm import Session
 from app.allocation import aggregate
 from app.classifications import load_classifications, load_user_classifications
 from app.models import Account, Classification, Institution, Position
-from app.schemas import (
+from .schemas import (
+    TAX_TREATMENTS_BROKERAGE_ONLY,
+    VALID_TAX_TREATMENTS,
+    MANUAL_ACCOUNT_TYPES,
     AccountClassBreakdown,
     AccountCreate,
     AccountPatch,
     AccountRead,
-    MANUAL_ACCOUNT_TYPES,
-    TAX_TREATMENTS_BROKERAGE_ONLY,
-    VALID_TAX_TREATMENTS,
 )
 from app.services.classification_rows import (
     MANUAL_ACCOUNT_TYPE_TO_TAXONOMY,

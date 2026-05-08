@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models import Liability, Provenance
-from app.schemas import LiabilityCreate, LiabilityPatch, LiabilityRead
+from .schemas import LiabilityCreate, LiabilityPatch, LiabilityRead
 from app.services.portfolio_snapshot import write_snapshot
 
 

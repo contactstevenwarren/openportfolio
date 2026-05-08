@@ -5,9 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_admin_token
 from app.db import get_db
-from app.schemas import RebalanceResult
-
 from . import service as rebalance_svc
+from .schemas import RebalanceResult
 
 router = APIRouter(
     prefix="/api/rebalance",

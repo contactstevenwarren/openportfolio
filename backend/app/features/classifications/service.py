@@ -15,7 +15,7 @@ from app.classifications import (
 )
 from app.constants import VALID_ASSET_CLASSES
 from app.models import Classification, Position
-from app.schemas import (
+from .schemas import (
     ClassificationPatch,
     ClassificationRow,
     ClassificationSuggestItem,
