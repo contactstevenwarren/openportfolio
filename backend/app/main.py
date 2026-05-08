@@ -1,17 +1,17 @@
 import logging
 import math
 import re
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import delete, func, inspect, text
-from sqlalchemy.engine import Engine
+from fastapi import Depends, FastAPI, HTTPException, Query, status
+from sqlalchemy import delete, func
 from sqlalchemy.orm import Session
 
 from . import models  # noqa: F401  -- register models with Base.metadata
+from .bootstrap import lifespan
+from .features.extract.router import router as extract_router
+from .features.health.router import router as health_router
 from .allocation import aggregate, meaningful_children, positions_for_slice
 from .auth import require_admin_token
 from .config import settings
@@ -25,9 +25,7 @@ from .classifications import (
 )
 from .db import get_db
 from . import db as db_pkg
-from .llm import classify_ticker, extract_positions
-from .pdf_text import PdfNoTextError, PdfTextTooLargeError, pdf_bytes_to_text
-from .scrub_digits import scrub_digit_runs
+from .llm import classify_ticker
 from .models import (
     Account,
     Classification,
@@ -58,8 +56,6 @@ from .schemas import (
     CommitResult,
     DriftThresholds,
     ExportResult,
-    ExtractionResult,
-    ExtractRequest,
     InstitutionCreate,
     InstitutionRead,
     LiabilityCreate,
@@ -86,24 +82,6 @@ from .taxonomy import (
 )
 
 _VALID_ASSET_CLASSES = {o.value for o in ASSET_CLASS_OPTIONS}
-
-
-def _ensure_alembic_if_nonempty_db(engine: Engine) -> None:
-    """Fail fast when SQLite has application tables but no Alembic revision row."""
-    insp = inspect(engine)
-    tables = set(insp.get_table_names())
-    if not tables:
-        return
-    if "alembic_version" not in tables:
-        logging.getLogger(__name__).error(
-            "Database has tables but no alembic_version (unsupported pre-cutoff schema). "
-            "Export via GET /api/export, reset the database file, run "
-            "`alembic upgrade head` from /app/backend, then restore. "
-            "See README.md — Database migrations."
-        )
-        raise RuntimeError(
-            "missing alembic_version — see README Database migrations"
-        )
 
 
 def _taxonomy_from_locked() -> Taxonomy:
@@ -369,46 +347,6 @@ def _targets_get_payload(db: Session) -> dict[str, object]:
     return {"root": root, "groups": groups}
 
 
-_WELL_KNOWN_INSTITUTIONS = [
-    "Ally Bank",
-    "Bank of America",
-    "Capital One",
-    "Charles Schwab",
-    "Chase",
-    "Coinbase",
-    "E*TRADE",
-    "Empower Retirement",
-    "Fidelity",
-    "Kraken",
-    "Merrill Edge",
-    "Robinhood",
-    "SoFi",
-    "TD Ameritrade",
-    "Vanguard",
-    "Wealthfront",
-    "Wells Fargo",
-]
-
-
-def _seed_institutions(eng: Engine) -> None:
-    """Insert well-known US institutions on first boot. Idempotent."""
-    with eng.begin() as conn:
-        for name in _WELL_KNOWN_INSTITUTIONS:
-            conn.execute(
-                text(
-                    "INSERT OR IGNORE INTO institutions (name) VALUES (:name)"
-                ),
-                {"name": name},
-            )
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    _ensure_alembic_if_nonempty_db(db_pkg.engine)
-    _seed_institutions(db_pkg.engine)
-    yield
-
-
 _OPENAPI_TAGS = [
     {"name": "health", "description": "Liveness probe."},
     {"name": "extract", "description": "LLM-powered position extraction from pasted text or PDF."},
@@ -442,46 +380,8 @@ app = FastAPI(
     openapi_tags=_OPENAPI_TAGS,
 )
 
-
-@app.get("/health", tags=["health"], summary="Liveness probe")
-def health() -> dict[str, bool]:
-    return {"ok": True}
-
-
-def _account_tuples(db: Session) -> list[tuple[int, str, str]]:
-    return [(a.id, a.label, a.type) for a in db.query(Account).order_by(Account.id).all()]
-
-
-@app.post("/api/extract", tags=["extract"], summary="Extract positions from pasted text", dependencies=[Depends(require_admin_token)])
-def extract(body: ExtractRequest, db: Session = Depends(get_db)) -> ExtractionResult:
-    return extract_positions(body.text, accounts=_account_tuples(db))
-
-
-@app.post("/api/extract/pdf", tags=["extract"], summary="Extract positions from a PDF file", dependencies=[Depends(require_admin_token)])
-def extract_pdf(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-) -> ExtractionResult:
-    b = file.file.read()
-    if not b.startswith(b"%PDF"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="File is not a valid PDF (missing %PDF header).",
-        )
-    try:
-        text = pdf_bytes_to_text(b)
-    except PdfNoTextError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(e),
-        ) from e
-    except PdfTextTooLargeError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(e),
-        ) from e
-    scrubbed, _redactions = scrub_digit_runs(text)
-    return extract_positions(scrubbed, accounts=_account_tuples(db))
+app.include_router(health_router)
+app.include_router(extract_router)
 
 
 # ----- accounts -----------------------------------------------------------
