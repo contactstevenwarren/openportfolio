@@ -27,6 +27,23 @@ API docs (local): `http://localhost:8080/api/docs#/` — keep these docs and thi
 
 ---
 
+## Backend package layout
+
+The Python app under `backend/app/` splits **HTTP surfaces**, **shared workflows**, and **domain logic** so allocation math and taxonomy stay in one place while routes stay thin.
+
+| Layer | Location | Role |
+|--------|-----------|------|
+| **Domain & infrastructure** | Top-level modules (`allocation.py`, `drift.py`, `rebalance.py`, `classifications.py`, `taxonomy.py`, `models.py`, `schemas.py`, `config.py`, `db.py`, `llm.py`, …) | Pure behavior and types: portfolio math, classification loading, ORM models, Pydantic DTOs, settings, DB session. **No FastAPI routes.** Used wherever that logic is needed (not only one URL prefix). |
+| **Features** | `app/features/<area>/` | **API slice per route family:** `router.py` defines paths and dependencies; `service.py` orchestrates DB calls and calls domain modules. Examples: `accounts`, `positions`, `allocation`, `extract`, `health`, `admin` (export + reset). |
+| **Cross-cutting services** | `app/services/` | Workflows **shared across features** so features do not import each other: e.g. position commit pipeline, net-worth snapshot writes after mutations, classification bucket persistence, targets PUT validation. |
+| **App entry** | `main.py`, `bootstrap.py` | `main.py` registers routers and OpenAPI metadata; `bootstrap.py` holds lifespan (migrations, seeds). |
+
+**Request flow (typical):** `HTTP → features/<area>/router.py → features/<area>/service.py` (and/or `app/services/*`) → top-level domain modules → DB.
+
+**Why domain code is not nested under `features/`:** Modules like `allocation.py` back **multiple** capabilities (allocation API, account class breakdown, snapshots, rebalance). Treating them as the shared **kernel** avoids duplicating math, keeps dependency direction **features → domain**, and avoids pretending “allocation” is owned solely by `GET /api/allocation`. Put code under a feature folder when it is **only** used by that HTTP area; lift shared orchestration to `app/services/`, shared calculations to top-level modules.
+
+---
+
 ## Data model
 
 Sketch from the original spec; **extended** in v0.1+ (nullable `market_value` on positions, `fund_holdings` cache table). **Planned** v0.1.5: `asset_types` table for user-managed synthetic prefixes (replaces hardcoded prefix dict).
