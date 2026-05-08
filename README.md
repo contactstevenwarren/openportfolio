@@ -7,8 +7,6 @@ An open-source portfolio x-ray for US DIY investors with fragmented accounts and
 - Live: https://openportfolio.fly.dev
 - Roadmap: [docs/openportfolio-roadmap.md](docs/openportfolio-roadmap.md)
 - Architecture (stack, LLM rules, risks): [docs/architecture.md](docs/architecture.md)
-- v0.1 execution plan: [docs/v0.1/execution_plan.md](docs/v0.1/execution_plan.md)
-- v0.1.5 execution plan: [docs/v0.1.5/execution_plan.md](docs/v0.1.5/execution_plan.md)
 - License: AGPL-3.0
 
 ---

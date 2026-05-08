@@ -101,7 +101,7 @@ export function AppSidebar({
           </SidebarMenuItem>
         </SidebarMenu>
         <p className="text-muted-foreground text-xs px-2 py-1">
-          v0.2 · alpha
+          v0.5 · alpha
         </p>
       </SidebarFooter>
 

@@ -409,7 +409,7 @@ export default function BrandPage() {
           Source of truth: <code>docs/brand.md</code>. Component reference in
           Storybook.
         </p>
-        <Badge variant="outline">v0.2 · alpha</Badge>
+        <Badge variant="outline">v0.5 · alpha</Badge>
       </footer>
     </div>
   );
