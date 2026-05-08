@@ -54,6 +54,8 @@ docker compose up -d --build
 open http://localhost:8080
 ```
 
+API docs (keep this URL and the docs themselves up to date): `http://localhost:8080/api/docs#/`
+
 First time you open the UI you'll be prompted for the admin token. It's stored in `localStorage`; clear the browser storage or send a 401 to re-prompt.
 
 Day-to-day, skip `--build` — code changes hot-reload automatically:

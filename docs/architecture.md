@@ -23,6 +23,8 @@ Technical constraints, data model, and operational risks. **Product direction an
 
 Local DB management via Beekeeper Studio or Drizzle Studio. Deployed DB accessed via `fly ssh console`.
 
+API docs (local): `http://localhost:8080/api/docs#/` — keep these docs and this URL updated when endpoints change.
+
 ---
 
 ## Data model
