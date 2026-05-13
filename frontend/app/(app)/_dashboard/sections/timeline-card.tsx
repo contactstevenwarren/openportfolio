@@ -87,13 +87,13 @@ function AnchorDotShape(props: { cx?: number; cy?: number; payload?: AnchorScatt
     <g>
       <text
         x={cx}
-        y={cy - 18}
+        y={cy - 14}
         textAnchor="middle"
-        className="fill-foreground text-sm font-medium font-mono tabular-nums"
+        className="fill-foreground text-xs font-medium font-mono tabular-nums"
       >
         {formatUsd(y, { compact: true })}
       </text>
-      <circle cx={cx} cy={cy} r={9} fill="var(--success)" stroke="var(--background)" strokeWidth={2} />
+      <circle cx={cx} cy={cy} r={8} fill="var(--success)" stroke="var(--background)" strokeWidth={2} />
     </g>
   );
 }
@@ -106,9 +106,9 @@ function AnchorTodayChart({ totalUsd }: { totalUsd: number }) {
   );
 
   return (
-    <div className="relative aspect-[16/6] w-full">
-      <ChartContainer config={chartConfig} className="aspect-[16/6] h-full w-full">
-        <ScatterChart margin={{ top: 40, right: 28, bottom: 8, left: 4 }}>
+    <div className="relative h-36 w-full sm:h-40">
+      <ChartContainer config={chartConfig} className="h-full min-h-0 w-full aspect-auto">
+        <ScatterChart margin={{ top: 24, right: 16, bottom: 2, left: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
           <XAxis
             type="category"
