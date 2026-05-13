@@ -1,9 +1,11 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
+import { Button } from "@/app/components/ui/button";
 import {
   Card,
   CardAction,
@@ -23,69 +25,21 @@ import { cn } from "@/app/lib/utils";
 
 import { formatUsd } from "../mocks";
 import {
-  mockSnapshots,
-  TIMELINE_STACK_COLORS,
-  type SnapshotPoint,
-  type TimelineStackKey,
-} from "../timeline-mocks";
-
-type Period = "1W" | "1M" | "3M" | "YTD" | "1Y" | "All";
-
-const PERIODS: Period[] = ["1W", "1M", "3M", "YTD", "1Y", "All"];
-
-// Stable stack order: bottom → top. Don't sort by value.
-const STACK_ORDER: Array<{ key: TimelineStackKey; label: string }> = [
-  { key: "us-equity", label: "US equity" },
-  { key: "fixed-income", label: "Fixed income" },
-  { key: "intl-equity", label: "Intl equity" },
-  { key: "real-estate", label: "Real estate" },
-  { key: "cash", label: "Cash" },
-];
+  defaultPeriodForSeries,
+  deriveTimelineUi,
+  filterSnapshots,
+  getTimelineMockSeries,
+  periodControls,
+  snapshotTotal,
+  STACK_ORDER,
+  type ChartState,
+  type Period,
+} from "../timeline-state";
+import { TIMELINE_STACK_COLORS, type SnapshotPoint } from "../timeline-mocks";
 
 const chartConfig: ChartConfig = Object.fromEntries(
   STACK_ORDER.map((s) => [s.key, { label: s.label, color: TIMELINE_STACK_COLORS[s.key] }]),
 ) satisfies ChartConfig;
-
-function snapshotTotal(p: SnapshotPoint): number {
-  return (
-    p.cash +
-    p["us-equity"] +
-    p["intl-equity"] +
-    p["fixed-income"] +
-    p["real-estate"]
-  );
-}
-
-function periodCutoff(latest: Date, period: Period): Date | null {
-  if (period === "All") return null;
-  const d = new Date(latest);
-  switch (period) {
-    case "1W":
-      d.setDate(d.getDate() - 7);
-      return d;
-    case "1M":
-      d.setMonth(d.getMonth() - 1);
-      return d;
-    case "3M":
-      d.setMonth(d.getMonth() - 3);
-      return d;
-    case "YTD":
-      return new Date(latest.getFullYear(), 0, 1);
-    case "1Y":
-      d.setFullYear(d.getFullYear() - 1);
-      return d;
-  }
-}
-
-function filterSnapshots(snapshots: SnapshotPoint[], period: Period): SnapshotPoint[] {
-  if (snapshots.length === 0) return snapshots;
-  const latest = new Date(snapshots[snapshots.length - 1].date);
-  const cutoff = periodCutoff(latest, period);
-  if (!cutoff) return snapshots;
-  const filtered = snapshots.filter((s) => new Date(s.date) >= cutoff);
-  // Always show at least the latest 2 points so deltas are meaningful.
-  return filtered.length >= 2 ? filtered : snapshots.slice(-2);
-}
 
 const tickFormatterX = (value: string) => {
   const d = new Date(value);
@@ -94,14 +48,43 @@ const tickFormatterX = (value: string) => {
 
 const tickFormatterY = (v: number) => formatUsd(v, { compact: true });
 
+const PREVIEW_OPTIONS: ChartState[] = ["anchor", "sparse", "full"];
+
 export function TimelineCard() {
+  const [previewMode, setPreviewMode] = React.useState<ChartState>("full");
   const [period, setPeriod] = React.useState<Period>("All");
 
-  const filtered = React.useMemo(() => filterSnapshots(mockSnapshots, period), [period]);
+  const series = React.useMemo(() => getTimelineMockSeries(previewMode), [previewMode]);
+
+  React.useEffect(() => {
+    setPeriod(defaultPeriodForSeries(series));
+  }, [previewMode, series]);
+
+  const latest = React.useMemo(
+    () => new Date(series[series.length - 1]?.date ?? Date.now()),
+    [series],
+  );
+
+  const filtered = React.useMemo(
+    () => filterSnapshots(series, period, latest),
+    [series, period, latest],
+  );
+
+  const periodMeta = React.useMemo(
+    () => periodControls(previewMode, series, latest),
+    [previewMode, series, latest],
+  );
+
+  const derived = React.useMemo(
+    () => deriveTimelineUi(previewMode, series, filtered),
+    [previewMode, series, filtered],
+  );
+
   const first = filtered[0];
   const last = filtered[filtered.length - 1];
-  const firstTotal = snapshotTotal(first);
-  const lastTotal = snapshotTotal(last);
+  const hasPillData = derived.showPerformancePill && first && last;
+  const firstTotal = first ? snapshotTotal(first) : 0;
+  const lastTotal = last ? snapshotTotal(last) : 0;
   const deltaUsd = lastTotal - firstTotal;
   const deltaPct = firstTotal === 0 ? 0 : deltaUsd / firstTotal;
   const positive = deltaUsd >= 0;
@@ -110,48 +93,98 @@ export function TimelineCard() {
     : "bg-rose-500/10 text-rose-700 dark:text-rose-400";
   const Arrow = positive ? ArrowUpRight : ArrowDownRight;
 
+  const anchorBarData = React.useMemo(() => {
+    const p = series[0];
+    if (!p) return [];
+    return [
+      {
+        name: "Today",
+        date: p.date,
+        cash: p.cash,
+        "us-equity": p["us-equity"],
+        "intl-equity": p["intl-equity"],
+        "fixed-income": p["fixed-income"],
+        "real-estate": p["real-estate"],
+      },
+    ];
+  }, [series]);
+
   return (
     <Card className="h-full">
-      <CardHeader className="flex-wrap">
-        <CardTitle className="text-h3">Investable portfolio over time</CardTitle>
-        <CardDescription>
-          Stacked by asset class · investable accounts only. Net worth in the header includes
-          non-investable assets and liabilities.
-        </CardDescription>
-        <CardAction className="flex flex-wrap items-center gap-2">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-label font-mono",
-              sentiment,
-            )}
+      <CardHeader className="flex-wrap gap-3">
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1 space-y-1">
+            <CardTitle className="text-h3">Investable portfolio over time</CardTitle>
+            <CardDescription className="text-pretty">{derived.subtitle}</CardDescription>
+          </div>
+          <div
+            className="flex shrink-0 flex-col gap-1 rounded-md border border-dashed border-amber-600/40 bg-amber-500/5 px-2 py-1.5 dark:border-amber-500/30 dark:bg-amber-500/10"
+            role="group"
+            aria-label="Preview chart state (temporary)"
           >
-            <Provenance
-              source="computed"
-              footnote="Illustrative series in v0.1; matches allocation scope (investable only)."
-            >
-              {formatUsd(deltaUsd, { signed: true })} ·{" "}
-              {formatPct(deltaPct, { signed: true, digits: 2 })}
-            </Provenance>
-            <Arrow className="size-3" aria-hidden />
-          </span>
+            <span className="text-[10px] font-medium uppercase tracking-wide text-amber-900/80 dark:text-amber-200/90">
+              Preview (remove before ship)
+            </span>
+            <div className="flex flex-wrap gap-1">
+              {PREVIEW_OPTIONS.map((m) => (
+                <Button
+                  key={m}
+                  type="button"
+                  size="xs"
+                  variant={previewMode === m ? "default" : "outline"}
+                  className="capitalize"
+                  onClick={() => setPreviewMode(m)}
+                >
+                  {m}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <CardAction className="flex w-full flex-col gap-2 @lg/card-header:max-w-full">
+          <div className="flex w-full flex-wrap items-center justify-end gap-2">
+            {hasPillData ? (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-label font-mono",
+                  sentiment,
+                )}
+              >
+                <Provenance
+                  source="computed"
+                  footnote="Illustrative series in v0.1; matches allocation scope (investable only)."
+                >
+                  {formatUsd(deltaUsd, { signed: true })} ·{" "}
+                  {formatPct(deltaPct, { signed: true, digits: 2 })}
+                </Provenance>
+                <Arrow className="size-3" aria-hidden />
+              </span>
+            ) : null}
+            {hasPillData && derived.performanceSinceCaption ? (
+              <span className="text-body-sm text-muted-foreground">{derived.performanceSinceCaption}</span>
+            ) : null}
+          </div>
           <div
             role="group"
             aria-label="Time period"
-            className="inline-flex items-center gap-0.5 rounded-md border bg-background p-0.5"
+            className="flex w-full flex-wrap items-center justify-end gap-0.5 rounded-md border bg-background p-0.5"
           >
-            {PERIODS.map((p) => {
-              const active = p === period;
+            {periodMeta.map(({ period: p, disabled, title }) => {
+              const active = previewMode !== "anchor" && p === period;
               return (
                 <button
                   key={p}
                   type="button"
                   aria-pressed={active}
-                  onClick={() => setPeriod(p)}
+                  disabled={disabled}
+                  title={title}
+                  onClick={() => !disabled && setPeriod(p)}
                   className={cn(
                     "rounded-sm px-2 py-1 text-label transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    active
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    disabled && "cursor-not-allowed opacity-40",
+                    active && !disabled && "bg-foreground text-background",
+                    !active && !disabled && "text-muted-foreground hover:bg-muted hover:text-foreground",
                   )}
                 >
                   {p}
@@ -161,66 +194,125 @@ export function TimelineCard() {
           </div>
         </CardAction>
       </CardHeader>
-      <CardContent>
-        <ChartContainer config={chartConfig} className="aspect-[16/6] w-full">
-          <AreaChart data={filtered} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
-            <defs>
-              {STACK_ORDER.map((s) => (
-                <linearGradient
-                  key={s.key}
-                  id={`fill-${s.key}`}
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
-                  <stop
-                    offset="0%"
-                    stopColor={`var(--color-${s.key})`}
-                    stopOpacity={0.6}
-                  />
-                  <stop
-                    offset="100%"
-                    stopColor={`var(--color-${s.key})`}
-                    stopOpacity={0.1}
-                  />
-                </linearGradient>
-              ))}
-            </defs>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" />
-            <XAxis
-              dataKey="date"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              minTickGap={24}
-              tickFormatter={tickFormatterX}
-            />
-            <YAxis
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              width={56}
-              tickFormatter={tickFormatterY}
-            />
-            <ChartTooltip
-              cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
-              content={<TimelineTooltip />}
-            />
-            {STACK_ORDER.map((s) => (
-              <Area
-                key={s.key}
-                type="monotone"
-                dataKey={s.key}
-                stackId="nw"
-                stroke={`var(--color-${s.key})`}
-                fill={`url(#fill-${s.key})`}
-                strokeWidth={1.5}
-                isAnimationActive={false}
+      <CardContent className="space-y-4">
+        {previewMode === "anchor" ? (
+          <ChartContainer config={chartConfig} className="aspect-[16/6] w-full">
+            <BarChart
+              data={anchorBarData}
+              layout="vertical"
+              margin={{ left: 4, right: 16, top: 8, bottom: 8 }}
+            >
+              <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+              <XAxis type="number" tickLine={false} axisLine={false} tickFormatter={tickFormatterY} />
+              <YAxis
+                type="category"
+                dataKey="name"
+                width={56}
+                tickLine={false}
+                axisLine={false}
               />
-            ))}
-          </AreaChart>
-        </ChartContainer>
+              <ChartTooltip
+                cursor={{ fill: "var(--muted)", opacity: 0.2 }}
+                content={<TimelineTooltip />}
+              />
+              {STACK_ORDER.map((s) => (
+                <Bar
+                  key={s.key}
+                  dataKey={s.key}
+                  stackId="nw"
+                  fill={`var(--color-${s.key})`}
+                  isAnimationActive={false}
+                />
+              ))}
+            </BarChart>
+          </ChartContainer>
+        ) : (
+          <ChartContainer config={chartConfig} className="aspect-[16/6] w-full">
+            <AreaChart data={filtered} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
+              <defs>
+                {STACK_ORDER.map((s) => (
+                  <linearGradient
+                    key={s.key}
+                    id={`fill-${s.key}`}
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop
+                      offset="0%"
+                      stopColor={`var(--color-${s.key})`}
+                      stopOpacity={0.6}
+                    />
+                    <stop
+                      offset="100%"
+                      stopColor={`var(--color-${s.key})`}
+                      stopOpacity={0.1}
+                    />
+                  </linearGradient>
+                ))}
+              </defs>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                minTickGap={24}
+                tickFormatter={tickFormatterX}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                width={56}
+                tickFormatter={tickFormatterY}
+              />
+              <ChartTooltip
+                cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
+                content={<TimelineTooltip />}
+              />
+              {STACK_ORDER.map((s) => (
+                <Area
+                  key={s.key}
+                  type="monotone"
+                  dataKey={s.key}
+                  stackId="nw"
+                  stroke={`var(--color-${s.key})`}
+                  fill={`url(#fill-${s.key})`}
+                  strokeWidth={1.5}
+                  isAnimationActive={false}
+                />
+              ))}
+            </AreaChart>
+          </ChartContainer>
+        )}
+
+        {derived.cta === "banner" ? (
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-body-sm text-foreground">
+              Upload past statements to fill in history. Each statement adds a data point.
+            </p>
+            <Button asChild variant="accent" size="sm">
+              <Link href="/accounts">Upload PDF</Link>
+            </Button>
+          </div>
+        ) : null}
+
+        {derived.cta === "subtle" ? (
+          <div className="text-right">
+            <Link
+              href="/accounts"
+              className="text-body-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              Upload more statements for longer history →
+            </Link>
+          </div>
+        ) : null}
+
+        {derived.chartFootnote ? (
+          <p className="text-center text-body-sm text-muted-foreground">{derived.chartFootnote}</p>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -231,7 +323,7 @@ type TooltipPayloadItem = {
   name?: string | number;
   value?: number;
   color?: string;
-  payload?: SnapshotPoint;
+  payload?: SnapshotPoint & { name?: string };
 };
 
 function TimelineTooltip({
@@ -244,17 +336,19 @@ function TimelineTooltip({
   if (!active || !payload?.length) return null;
   const point = payload[0]?.payload;
   if (!point) return null;
-  const dateLabel = new Date(point.date).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-  // Display in stack order, top-down (reverse so highest area shows first).
+  const dateLabel =
+    point.name === "Today"
+      ? "Today"
+      : new Date(point.date).toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        });
   const ordered = [...STACK_ORDER].reverse();
   const total = snapshotTotal(point);
 
   return (
-    <div className="grid min-w-[12rem] gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+    <div className="grid min-w-48 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
       <div className="font-medium">{dateLabel}</div>
       <div className="grid gap-1">
         {ordered.map((s) => {
