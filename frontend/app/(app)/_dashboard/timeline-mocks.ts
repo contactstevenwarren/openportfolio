@@ -67,8 +67,8 @@ export const mockTimelineFull: SnapshotPoint[] = monthlyDatesFull.map((date, i) 
   growPoint(i, date),
 );
 
-/** Partial history: 3 statement-style months + current "today" (4 points) — sparse preview. */
-const sparseDates = ["2026-02-26", "2026-03-26", "2026-04-26", "2026-05-13"];
+/** Partial history: 1 statement + today (2 points) — sparse preview for tight layouts. */
+const sparseDates = ["2026-04-26", "2026-05-13"];
 
 export const mockTimelineSparse: SnapshotPoint[] = sparseDates.map((date, i) => growPoint(i, date));
 
