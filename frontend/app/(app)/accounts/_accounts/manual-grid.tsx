@@ -4,13 +4,21 @@
 // Commits directly via api.commit (no review step / extraction).
 // Owned by UpdateForm; all session state is local.
 
-import { useState, Fragment } from "react";
-import { mutate } from "swr";
+import { useState, Fragment, useMemo } from "react";
+import useSWR, { mutate } from "swr";
 import { PlusIcon, XIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
 import { cn } from "@/app/lib/utils";
-import type { Account } from "@/app/lib/api";
-import { api } from "@/app/lib/api";
+import type { Account, ClassificationRow } from "@/app/lib/api";
+import { api, classificationPrimaryAssetClass } from "@/app/lib/api";
 import { ASSET_CLASS_ORDER, ASSET_CLASS_LABEL } from "./mocks";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -46,13 +54,49 @@ function isRowFilled(row: GridRow): boolean {
   return row.ticker.trim() !== "" && row.market_value.trim() !== "";
 }
 
+/** Rows that will PATCH portfolio-wide classification (ticker ≠ dominant merged class, or new ticker). */
+function portfolioWideClassificationWarnings(
+  filled: GridRow[],
+  byTickerUpper: Map<string, ClassificationRow>,
+): { ticker: string; chosen: string; catalogPrimary: string | null }[] {
+  const out: { ticker: string; chosen: string; catalogPrimary: string | null }[] = [];
+  for (const r of filled) {
+    if (!r.asset_class) continue;
+    const t = r.ticker.trim();
+    const found = byTickerUpper.get(t.toUpperCase());
+    const primary = classificationPrimaryAssetClass(found ?? null);
+    if (primary === r.asset_class) continue;
+    out.push({ ticker: t, chosen: r.asset_class, catalogPrimary: primary });
+  }
+  return out;
+}
+
+function assetClassLabel(code: string): string {
+  return ASSET_CLASS_LABEL[code as keyof typeof ASSET_CLASS_LABEL] ?? code;
+}
+
 // ── ManualGrid ─────────────────────────────────────────────────────────────────
 
 export function ManualGrid({ account, onSuccess }: ManualGridProps) {
+  const { data: classifications, isLoading: classificationsLoading } = useSWR(
+    "/api/classifications",
+    () => api.classifications(),
+  );
+  const classificationByTickerUpper = useMemo(() => {
+    const m = new Map<string, ClassificationRow>();
+    for (const row of classifications ?? []) {
+      m.set(row.ticker.toUpperCase(), row);
+    }
+    return m;
+  }, [classifications]);
+
   const [rows, setRows] = useState<GridRow[]>([emptyRow()]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedCount, setSavedCount] = useState<number | null>(null);
+  const [portfolioWideConfirm, setPortfolioWideConfirm] = useState<
+    { ticker: string; chosen: string; catalogPrimary: string | null }[] | null
+  >(null);
 
   function addRow() {
     setRows((prev) => [...prev, emptyRow()]);
@@ -70,10 +114,39 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
     setSavedCount(null);
   }
 
+  function applyTickerBlur(row: GridRow) {
+    const trimmed = row.ticker.trim();
+    if (trimmed === "") {
+      if (row.asset_class !== "") updateRow(row.id, "asset_class", "");
+      return;
+    }
+    if (row.asset_class !== "") return;
+    const found = classificationByTickerUpper.get(trimmed.toUpperCase());
+    const ac = classificationPrimaryAssetClass(found ?? null);
+    if (ac) updateRow(row.id, "asset_class", ac);
+  }
+
   const filledRows = rows.filter(isRowFilled);
   const commitDisabled = saving || filledRows.length === 0;
 
-  async function handleCommit() {
+  function requestCommit() {
+    if (classificationsLoading || !Array.isArray(classifications)) {
+      void runCommit();
+      return;
+    }
+    const warnings = portfolioWideClassificationWarnings(
+      filledRows,
+      classificationByTickerUpper,
+    );
+    if (warnings.length > 0) {
+      setPortfolioWideConfirm(warnings);
+      return;
+    }
+    void runCommit();
+  }
+
+  async function runCommit() {
+    setPortfolioWideConfirm(null);
     setSaving(true);
     setSaveError(null);
     setSavedCount(null);
@@ -151,6 +224,7 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
               placeholder="VTI"
               value={row.ticker}
               onChange={(e) => updateRow(row.id, "ticker", e.target.value)}
+              onBlur={() => applyTickerBlur(row)}
             />
             <select
               className={cn(inputCls, "bg-background")}
@@ -208,10 +282,70 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
         <Button variant="outline" size="sm" onClick={addRow} className="self-start">
           <PlusIcon className="size-4" /> Add row
         </Button>
-        <Button size="sm" disabled={commitDisabled} onClick={handleCommit}>
+        <Button size="sm" disabled={commitDisabled} onClick={() => void requestCommit()}>
           {saving ? "Saving…" : "Commit"}
         </Button>
       </div>
+
+      <Dialog
+        open={portfolioWideConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open && !saving) setPortfolioWideConfirm(null);
+        }}
+      >
+        <DialogContent showCloseButton className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update portfolio-wide classification?</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-left text-body-sm text-muted-foreground">
+                <p>
+                  Asset class is saved per <strong className="text-foreground">ticker</strong>, not
+                  only this account. Other accounts that hold the same symbol will use the new
+                  classification for allocation, drift, and the Classifications page.
+                </p>
+                <ul className="list-disc space-y-2 pl-4">
+                  {portfolioWideConfirm?.map((w) => (
+                    <li key={w.ticker}>
+                      <span className="font-mono text-foreground">{w.ticker}</span>
+                      {w.catalogPrimary !== null ? (
+                        <>
+                          {" "}
+                          — merged catalog (dominant) is{" "}
+                          <strong className="text-foreground">
+                            {assetClassLabel(w.catalogPrimary)}
+                          </strong>
+                          ; you chose{" "}
+                          <strong className="text-foreground">{assetClassLabel(w.chosen)}</strong>.
+                        </>
+                      ) : (
+                        <>
+                          {" "}
+                          — no merged catalog row yet; you chose{" "}
+                          <strong className="text-foreground">{assetClassLabel(w.chosen)}</strong>{" "}
+                          (new portfolio-wide label).
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={saving}
+              onClick={() => setPortfolioWideConfirm(null)}
+            >
+              Cancel
+            </Button>
+            <Button type="button" disabled={saving} onClick={() => void runCommit()}>
+              {saving ? "Saving…" : "Save anyway"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
