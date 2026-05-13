@@ -179,7 +179,7 @@ export function deriveTimelineUi(
       showPerformancePill: filteredSeries.length >= 2,
       performanceSinceCaption: sinceCaption,
       cta: "subtle",
-      chartFootnote: null,
+      chartFootnote: "Shaded band is future timeline space — history still building.",
     };
   }
 

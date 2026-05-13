@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight, FileUp } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, Scatter, ScatterChart, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, ReferenceArea, Scatter, ScatterChart, XAxis, YAxis } from "recharts";
 import type { ScatterShapeProps } from "recharts";
 
 import { Button } from "@/app/components/ui/button";
@@ -52,6 +52,20 @@ const tickFormatterX = (value: string) => {
 };
 
 const tickFormatterY = (v: number) => formatUsd(v, { compact: true });
+
+function parseChartDate(isoDate: string): number {
+  return Date.parse(isoDate.includes("T") ? isoDate : `${isoDate}T12:00:00Z`);
+}
+
+function utcDayEqual(aMs: number, bMs: number): boolean {
+  const a = new Date(aMs);
+  const b = new Date(bMs);
+  return (
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
+  );
+}
 
 /** Top of stack in draw order — vertex dots for sparse mode. */
 const SPARSE_DOT_STACK_KEY = STACK_ORDER[STACK_ORDER.length - 1]!.key;
@@ -199,16 +213,29 @@ export function TimelineCard() {
   const anchorTotal = series[0] ? snapshotTotal(series[0]) : 0;
 
   const isSparseChart = previewMode === "sparse";
-  const sparseLastIso = React.useMemo(
-    () => (isSparseChart ? (series[series.length - 1]?.date ?? null) : null),
-    [isSparseChart, series],
-  );
-  const formatSparseXTick = React.useCallback(
-    (value: string) => {
-      if (sparseLastIso && value === sparseLastIso) return "Today";
-      return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+  const stackedChartData = React.useMemo(() => {
+    if (!isSparseChart) return filtered;
+    return filtered.map((p) => ({ ...p, t: parseChartDate(p.date) }));
+  }, [isSparseChart, filtered]);
+
+  const sparseXLayout = React.useMemo((): { domain: [number, number]; lastT: number } | null => {
+    if (!isSparseChart || filtered.length < 1) return null;
+    const ts = filtered.map((p) => parseChartDate(p.date));
+    const tMin = ts[0]!;
+    const tMax = ts[ts.length - 1]!;
+    const span = Math.max(tMax - tMin, 86_400_000);
+    const runway = Math.max(Math.round(span * 0.45), 86_400_000 * 21);
+    return { domain: [tMin, tMax + runway], lastT: tMax };
+  }, [isSparseChart, filtered]);
+
+  const formatSparseXTickNumber = React.useCallback(
+    (ts: number) => {
+      const layout = sparseXLayout;
+      if (layout && utcDayEqual(ts, layout.lastT)) return "Today";
+      return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     },
-    [sparseLastIso],
+    [sparseXLayout],
   );
 
   return (
@@ -301,7 +328,7 @@ export function TimelineCard() {
           <AnchorTodayChart totalUsd={anchorTotal} />
         ) : (
           <ChartContainer config={chartConfig} className="aspect-[16/6] w-full">
-            <AreaChart data={filtered} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
+            <AreaChart data={stackedChartData} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
               <defs>
                 {STACK_ORDER.map((s) => (
                   <linearGradient
@@ -325,15 +352,35 @@ export function TimelineCard() {
                   </linearGradient>
                 ))}
               </defs>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" />
-              <XAxis
-                dataKey="date"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                minTickGap={isSparseChart ? 8 : 24}
-                tickFormatter={isSparseChart ? formatSparseXTick : tickFormatterX}
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="var(--border)"
+                horizontal
+                vertical={isSparseChart}
+                strokeOpacity={isSparseChart ? 0.45 : 1}
               />
+              {isSparseChart && sparseXLayout ? (
+                <XAxis
+                  type="number"
+                  dataKey="t"
+                  scale="time"
+                  domain={sparseXLayout.domain}
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  minTickGap={8}
+                  tickFormatter={formatSparseXTickNumber}
+                />
+              ) : (
+                <XAxis
+                  dataKey="date"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  minTickGap={24}
+                  tickFormatter={tickFormatterX}
+                />
+              )}
               <YAxis
                 tickLine={false}
                 axisLine={false}
@@ -341,6 +388,17 @@ export function TimelineCard() {
                 width={56}
                 tickFormatter={tickFormatterY}
               />
+              {sparseXLayout ? (
+                <ReferenceArea
+                  x1={sparseXLayout.lastT}
+                  x2={sparseXLayout.domain[1]}
+                  fill="var(--muted)"
+                  fillOpacity={0.14}
+                  strokeOpacity={0}
+                  ifOverflow="visible"
+                  aria-hidden
+                />
+              ) : null}
               <ChartTooltip
                 cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
                 content={<TimelineTooltip />}
