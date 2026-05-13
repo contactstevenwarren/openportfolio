@@ -58,13 +58,16 @@ def suggest_classifications(
         seen.add(ticker)
         if ticker in merged:
             ent = merged[ticker]
-            b0 = ent.buckets[0]
+            if not ent.buckets:
+                out.append(ClassificationSuggestItem(ticker=ticker, source="none"))
+                continue
+            dominant = max(ent.buckets, key=lambda b: b.weight)
             out.append(
                 ClassificationSuggestItem(
                     ticker=ticker,
                     source="existing",
                     asset_class=primary_asset_class(ent),
-                    sub_class=b0.sub_class,
+                    sub_class=dominant.sub_class,
                 )
             )
             continue
@@ -90,7 +93,10 @@ def list_classifications(db: Session) -> list[ClassificationRow]:
     user_entries_full = load_user_classifications(db)
     merged: list[ClassificationRow] = []
     for ticker, entry in yaml_entries.items():
-        if ticker in user_rows:
+        # Suppress YAML only when the user has a real bucketed override. A header-only
+        # Classification row (no buckets) must not hide the seed row — see list test.
+        user_ent = user_entries_full.get(ticker)
+        if user_ent is not None:
             continue
         merged.append(classification_row_from_entry(ticker, entry, overrides_yaml=False))
     for ticker, row in user_rows.items():

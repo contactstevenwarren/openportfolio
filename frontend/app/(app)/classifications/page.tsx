@@ -62,41 +62,52 @@ function ClassificationsPageInner() {
     null,
   );
 
-  const { data: rows = [], error: rowsError } = useSWR<ClassificationRow[]>(
+  const { data: rows, error: rowsError, isLoading: rowsLoading } = useSWR<ClassificationRow[]>(
     "/api/classifications",
-    api.classifications,
+    () => api.classifications(),
     { revalidateOnFocus: false },
   );
+
+  const catalogRows = rows ?? [];
+  const classificationsPending =
+    rowsLoading || (rows === undefined && !rowsError);
 
   const { data: positions = [], isLoading: positionsLoading } = useSWR<Position[]>(
     "/api/positions",
-    api.positions,
+    () => api.positions(),
     { revalidateOnFocus: false },
   );
 
-  const { data: taxonomy } = useSWR<Taxonomy>("/api/classifications/taxonomy", api.taxonomy, {
-    revalidateOnFocus: false,
-  });
+  const { data: taxonomy } = useSWR<Taxonomy>(
+    "/api/classifications/taxonomy",
+    () => api.taxonomy(),
+    {
+      revalidateOnFocus: false,
+    },
+  );
 
   useEffect(() => {
     const t = searchParams.get("ticker");
     if (t) setSearch(t);
   }, [searchParams]);
 
-  const positionCountByTicker = useMemo(() => {
+  const positionCountByTickerUpper = useMemo(() => {
     const m = new Map<string, number>();
-    for (const p of positions) m.set(p.ticker, (m.get(p.ticker) ?? 0) + 1);
+    for (const p of positions) {
+      const k = p.ticker.toUpperCase();
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
     return m;
   }, [positions]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      if ((positionCountByTicker.get(r.ticker) ?? 0) === 0) return false;
+    return catalogRows.filter((r) => {
+      if ((positionCountByTickerUpper.get(r.ticker.toUpperCase()) ?? 0) === 0) return false;
       if (q && !r.ticker.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [rows, search, positionCountByTicker]);
+  }, [catalogRows, search, positionCountByTickerUpper]);
 
   const hasAnyPositions = positions.length > 0;
 
@@ -202,6 +213,8 @@ function ClassificationsPageInner() {
             <Link href="/accounts">Go to Accounts</Link>
           </Button>
         </div>
+      ) : classificationsPending ? (
+        <p className="text-body-sm text-muted-foreground">Loading classifications…</p>
       ) : (
         <>
           <div className="flex flex-wrap items-end gap-3">
@@ -233,7 +246,10 @@ function ClassificationsPageInner() {
             </p>
           )}
 
-          {hasAnyPositions && filtered.length === 0 && !rowsError && (
+          {hasAnyPositions &&
+            filtered.length === 0 &&
+            !rowsError &&
+            !classificationsPending && (
             <p className="text-body-sm text-muted-foreground">
               No matching held symbols{search.trim() ? ` for “${search.trim()}”` : ""}.
               Try another search, or check the dashboard if a ticker is still unclassified.
@@ -261,7 +277,8 @@ function ClassificationsPageInner() {
                 </thead>
                 <tbody>
                   {filtered.map((r) => {
-                    const holdingCount = positionCountByTicker.get(r.ticker) ?? 0;
+                    const holdingCount =
+                      positionCountByTickerUpper.get(r.ticker.toUpperCase()) ?? 0;
                     return (
                       <tr key={r.ticker} className="border-b border-border/60 last:border-0">
                         <td className="px-3 py-2 text-mono-sm tabular-nums text-foreground">

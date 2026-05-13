@@ -125,6 +125,20 @@ def test_list_exposes_full_breakdown_for_auto_split_funds(
     assert abs(sum(weights) - 1.0) < 1e-6
 
 
+def test_list_yaml_visible_when_classification_header_has_no_buckets(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """Orphan DB header (no classification_buckets) must not hide YAML seed tickers."""
+    test_db.add(Classification(ticker="VT", source="user"))
+    test_db.commit()
+
+    rows = client.get("/api/classifications", headers=auth_headers).json()
+    vt = next(r for r in rows if r["ticker"] == "VT")
+    assert vt["source"] == "yaml"
+    assert vt["overrides_yaml"] is False
+    assert vt["has_breakdown"] is True
+
+
 def test_list_single_bucket_fund_still_carries_breakdown(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
@@ -325,6 +339,23 @@ def test_suggest_returns_existing_yaml_row(
     assert rows[0]["ticker"] == "VTI"
     assert rows[0]["source"] == "existing"
     assert rows[0]["asset_class"] == "Stocks"
+    assert rows[0]["sub_class"] == "US Stocks"
+
+
+def test_suggest_multi_bucket_yaml_uses_dominant_weight_sub_class(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    r = client.post(
+        "/api/classifications/suggest",
+        json={"tickers": ["VT"]},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    row = r.json()[0]
+    assert row["ticker"] == "VT"
+    assert row["source"] == "existing"
+    assert row["asset_class"] == "Stocks"
+    assert row["sub_class"] == "US Stocks"
 
 
 def test_suggest_calls_llm_for_unknown_ticker(
