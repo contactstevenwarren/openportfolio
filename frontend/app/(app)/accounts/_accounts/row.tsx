@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import useSWR, { mutate } from "swr";
 import { ChevronRightIcon, ChevronDownIcon, UploadIcon, Pencil } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
@@ -534,6 +534,20 @@ export function Row({
   );
   const classMap = new Map(classifications.map((c) => [c.ticker, c]));
 
+  const { data: allPortfolioPositions = [] } = useSWR(
+    isExpanded && !account.is_manual ? "/api/positions" : null,
+    () => api.positions(),
+    { revalidateOnFocus: false },
+  );
+  const accountCountByTickerUpper = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of allPortfolioPositions) {
+      const k = p.ticker.toUpperCase();
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return m;
+  }, [allPortfolioPositions]);
+
   // ── Unclassified filter state ──────────────────────────────────────────────
   const [unclassifiedFilter, setUnclassifiedFilter] = useState(false);
   const visiblePositions = unclassifiedFilter
@@ -904,7 +918,6 @@ export function Row({
                               <td className="py-1.5 font-mono text-xs">{pos.ticker}</td>
                               {!account.is_manual && (
                                 <td className="py-1.5 pl-2">
-                                  {/* TODO(G3): derive cross-account ticker count once accounts prop is threaded to Row */}
                                   <ClassChip
                                     ticker={pos.ticker}
                                     assetClass={
@@ -912,7 +925,9 @@ export function Row({
                                     }
                                     source={classRow?.source ?? null}
                                     accountId={account.id}
-                                    accountCountForTicker={0}
+                                    accountCountForTicker={
+                                      accountCountByTickerUpper.get(pos.ticker.toUpperCase()) ?? 0
+                                    }
                                   />
                                 </td>
                               )}
@@ -951,7 +966,6 @@ export function Row({
                             <div className="flex flex-col gap-1">
                               <p className="font-mono text-xs text-foreground">{pos.ticker}</p>
                               {!account.is_manual && (
-                                // TODO(G3): derive cross-account ticker count once accounts prop is threaded to Row
                                 <ClassChip
                                   ticker={pos.ticker}
                                   assetClass={
@@ -959,7 +973,9 @@ export function Row({
                                   }
                                   source={classRow?.source ?? null}
                                   accountId={account.id}
-                                  accountCountForTicker={0}
+                                  accountCountForTicker={
+                                    accountCountByTickerUpper.get(pos.ticker.toUpperCase()) ?? 0
+                                  }
                                 />
                               )}
                             </div>

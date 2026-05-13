@@ -503,7 +503,7 @@ function HoldingsTable({
 function LoadingBar() {
   return (
     <div className="h-0.5 w-full overflow-hidden bg-transparent" role="status" aria-label="Loading holdings">
-      <div className="h-full w-1/2 animate-[slide_1.2s_ease-in-out_infinite] bg-border" />
+      <div className="h-full w-1/2 bg-border motion-safe:animate-[slide_1.2s_ease-in-out_infinite]" />
     </div>
   );
 }

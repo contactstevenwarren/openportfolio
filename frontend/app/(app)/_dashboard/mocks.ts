@@ -244,11 +244,7 @@ export function formatUsd(value: number, opts: { compact?: boolean; signed?: boo
   }).format(abs);
 }
 
-export function formatPct(value: number, opts: { signed?: boolean; digits?: number } = {}) {
-  const { signed, digits = 1 } = opts;
-  const sign = signed && value > 0 ? "+" : "";
-  return sign + (value * 100).toFixed(digits) + "%";
-}
+export { formatPct } from "@/app/lib/format";
 
 export function daysSince(iso: string, now: string | Date = SNAPSHOT_AT): number {
   const then = new Date(iso).getTime();
