@@ -27,6 +27,7 @@ import { cn } from "@/app/lib/utils";
 import { formatUsd } from "../mocks";
 import {
   defaultPeriodForSeries,
+  defaultPeriodForSparseSeries,
   deriveTimelineUi,
   filterSnapshots,
   getTimelineMockSeries,
@@ -51,6 +52,9 @@ const tickFormatterX = (value: string) => {
 };
 
 const tickFormatterY = (v: number) => formatUsd(v, { compact: true });
+
+/** Top of stack in draw order — vertex dots for sparse mode. */
+const SPARSE_DOT_STACK_KEY = STACK_ORDER[STACK_ORDER.length - 1]!.key;
 
 const PREVIEW_OPTIONS: ChartState[] = ["anchor", "sparse", "full"];
 
@@ -152,7 +156,11 @@ export function TimelineCard() {
   const series = React.useMemo(() => getTimelineMockSeries(previewMode), [previewMode]);
 
   React.useEffect(() => {
-    setPeriod(defaultPeriodForSeries(series));
+    setPeriod(
+      previewMode === "sparse"
+        ? defaultPeriodForSparseSeries(series)
+        : defaultPeriodForSeries(series),
+    );
   }, [previewMode, series]);
 
   const latest = React.useMemo(
@@ -189,6 +197,19 @@ export function TimelineCard() {
   const Arrow = positive ? ArrowUpRight : ArrowDownRight;
 
   const anchorTotal = series[0] ? snapshotTotal(series[0]) : 0;
+
+  const isSparseChart = previewMode === "sparse";
+  const sparseLastIso = React.useMemo(
+    () => (isSparseChart ? (series[series.length - 1]?.date ?? null) : null),
+    [isSparseChart, series],
+  );
+  const formatSparseXTick = React.useCallback(
+    (value: string) => {
+      if (sparseLastIso && value === sparseLastIso) return "Today";
+      return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    },
+    [sparseLastIso],
+  );
 
   return (
     <Card className="h-full">
@@ -310,8 +331,8 @@ export function TimelineCard() {
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
-                minTickGap={24}
-                tickFormatter={tickFormatterX}
+                minTickGap={isSparseChart ? 8 : 24}
+                tickFormatter={isSparseChart ? formatSparseXTick : tickFormatterX}
               />
               <YAxis
                 tickLine={false}
@@ -327,13 +348,18 @@ export function TimelineCard() {
               {STACK_ORDER.map((s) => (
                 <Area
                   key={s.key}
-                  type="monotone"
+                  type={isSparseChart ? "linear" : "monotone"}
                   dataKey={s.key}
                   stackId="nw"
                   stroke={`var(--color-${s.key})`}
                   fill={`url(#fill-${s.key})`}
-                  strokeWidth={1.5}
+                  strokeWidth={isSparseChart ? 1.25 : 1.5}
                   isAnimationActive={false}
+                  dot={
+                    isSparseChart && s.key === SPARSE_DOT_STACK_KEY
+                      ? { r: 4, fill: "var(--foreground)", stroke: "var(--background)", strokeWidth: 1 }
+                      : false
+                  }
                 />
               ))}
             </AreaChart>
@@ -358,7 +384,7 @@ export function TimelineCard() {
           <div className="text-right">
             <Link
               href="/accounts"
-              className="text-body-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+              className="text-body-sm text-sky-700 underline-offset-4 hover:text-sky-900 hover:underline dark:text-sky-300 dark:hover:text-sky-100"
             >
               Upload more statements for longer history →
             </Link>

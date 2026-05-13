@@ -67,10 +67,10 @@ export const mockTimelineFull: SnapshotPoint[] = monthlyDatesFull.map((date, i) 
   growPoint(i, date),
 );
 
-/** Few wide-spaced points — "sparse" preview (<7 distinct days of dense history). */
-const sparseDates = ["2025-12-01", "2026-02-10", "2026-04-05", "2026-05-13"];
+/** Partial history: 3 statement-style months + current "today" (4 points) — sparse preview. */
+const sparseDates = ["2026-02-26", "2026-03-26", "2026-04-26", "2026-05-13"];
 
-export const mockTimelineSparse: SnapshotPoint[] = sparseDates.map((date, i) => growPoint(i * 3, date));
+export const mockTimelineSparse: SnapshotPoint[] = sparseDates.map((date, i) => growPoint(i, date));
 
 /** Single day — "anchor" preview (import day / no history). */
 export const mockTimelineAnchor: SnapshotPoint[] = [growPoint(12, "2026-05-13")];

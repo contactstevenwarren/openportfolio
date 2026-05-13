@@ -74,6 +74,15 @@ export function defaultPeriodForSeries(series: SnapshotPoint[]): Period {
   return "All";
 }
 
+/** Prefer 3M when it keeps every point (matches sparse “partial quarter” default). */
+export function defaultPeriodForSparseSeries(series: SnapshotPoint[]): Period {
+  if (series.length < 2) return "All";
+  const latest = new Date(series[series.length - 1].date);
+  const with3m = filterSnapshots(series, "3M", latest);
+  if (with3m.length === series.length) return "3M";
+  return defaultPeriodForSeries(series);
+}
+
 export type PeriodControl = {
   period: Period;
   disabled: boolean;
@@ -126,13 +135,26 @@ export function formatSinceMonthYear(isoDate: string): string {
   }).format(new Date(isoDate));
 }
 
+/** e.g. Feb 26 — for sparse performance pill line. */
+export function formatSinceMonthDay(isoDate: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(isoDate));
+}
+
 export function deriveTimelineUi(
   chartState: ChartState,
   series: SnapshotPoint[],
   filteredSeries: SnapshotPoint[],
 ): DerivedTimelineUi {
   const oldest = filteredSeries[0]?.date ?? series[0]?.date ?? null;
-  const sinceCaption = oldest ? `since ${formatSinceMonthYear(oldest)}` : null;
+  const sinceCaption =
+    oldest != null
+      ? `since ${
+          chartState === "sparse" ? formatSinceMonthDay(oldest) : formatSinceMonthYear(oldest)
+        }`
+      : null;
 
   if (chartState === "anchor") {
     return {
@@ -146,10 +168,10 @@ export function deriveTimelineUi(
   }
 
   if (chartState === "sparse") {
-    const n = series.length;
+    const statements = Math.max(0, series.length - 1);
     const subtitle =
-      n >= 2
-        ? `Stacked by asset class · ${n} saved points · linear between points.`
+      series.length >= 2
+        ? `Stacked by asset class · ${statements} statement${statements === 1 ? "" : "s"} + today`
         : "Stacked by asset class · investable accounts only.";
     return {
       chartState,
@@ -157,7 +179,7 @@ export function deriveTimelineUi(
       showPerformancePill: filteredSeries.length >= 2,
       performanceSinceCaption: sinceCaption,
       cta: "subtle",
-      chartFootnote: "Values are linearly interpolated between saved portfolio points.",
+      chartFootnote: null,
     };
   }
 
