@@ -137,7 +137,7 @@ export function deriveTimelineUi(
   if (chartState === "anchor") {
     return {
       chartState,
-      subtitle: "Historical performance tracks from your import date.",
+      subtitle: "Historical performance tracks from your import date",
       showPerformancePill: false,
       performanceSinceCaption: null,
       cta: "banner",

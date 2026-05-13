@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { ArrowDownRight, ArrowUpRight, FileUp } from "lucide-react";
+import { Area, AreaChart, CartesianGrid, Scatter, ScatterChart, XAxis, YAxis } from "recharts";
+import type { ScatterShapeProps } from "recharts";
 
 import { Button } from "@/app/components/ui/button";
 import {
@@ -38,7 +39,10 @@ import {
 import { TIMELINE_STACK_COLORS, type SnapshotPoint } from "../timeline-mocks";
 
 const chartConfig: ChartConfig = Object.fromEntries(
-  STACK_ORDER.map((s) => [s.key, { label: s.label, color: TIMELINE_STACK_COLORS[s.key] }]),
+  [
+    ["portfolio", { label: "Investable total", color: "var(--success)" }],
+    ...STACK_ORDER.map((s) => [s.key, { label: s.label, color: TIMELINE_STACK_COLORS[s.key] }] as const),
+  ],
 ) satisfies ChartConfig;
 
 const tickFormatterX = (value: string) => {
@@ -49,6 +53,97 @@ const tickFormatterX = (value: string) => {
 const tickFormatterY = (v: number) => formatUsd(v, { compact: true });
 
 const PREVIEW_OPTIONS: ChartState[] = ["anchor", "sparse", "full"];
+
+type AnchorScatterPoint = { x: string; y: number };
+
+function anchorYAxisMax(totalUsd: number): number {
+  if (totalUsd <= 0) return 600_000;
+  const step = 200_000;
+  return Math.max(600_000, Math.ceil((totalUsd * 1.12) / step) * step);
+}
+
+function AnchorDotShape(props: { cx?: number; cy?: number; payload?: AnchorScatterPoint }) {
+  const { cx = 0, cy = 0, payload } = props;
+  const y = payload?.y ?? 0;
+  return (
+    <g>
+      <text
+        x={cx}
+        y={cy - 18}
+        textAnchor="middle"
+        className="fill-foreground text-sm font-medium font-mono tabular-nums"
+      >
+        {formatUsd(y, { compact: true })}
+      </text>
+      <circle cx={cx} cy={cy} r={9} fill="var(--success)" stroke="var(--background)" strokeWidth={2} />
+    </g>
+  );
+}
+
+function AnchorTodayChart({ totalUsd }: { totalUsd: number }) {
+  const yMax = React.useMemo(() => anchorYAxisMax(totalUsd), [totalUsd]);
+  const data = React.useMemo(
+    (): AnchorScatterPoint[] => [{ x: "Today", y: totalUsd }],
+    [totalUsd],
+  );
+
+  return (
+    <div className="relative aspect-[16/6] w-full">
+      <ChartContainer config={chartConfig} className="aspect-[16/6] h-full w-full">
+        <ScatterChart margin={{ top: 40, right: 28, bottom: 8, left: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+          <XAxis
+            type="category"
+            dataKey="x"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={10}
+          />
+          <YAxis
+            type="number"
+            dataKey="y"
+            domain={[0, yMax]}
+            tickCount={5}
+            tickLine={false}
+            axisLine={false}
+            width={52}
+            tickFormatter={tickFormatterY}
+          />
+          <ChartTooltip
+            cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
+            content={({ active, payload }) =>
+              active && payload?.[0] ? (
+                <div className="rounded-md border border-border/50 bg-background px-2 py-1 text-xs shadow-md">
+                  <span className="font-mono font-medium tabular-nums">
+                    {formatUsd((payload[0].payload as AnchorScatterPoint).y, { compact: true })}
+                  </span>
+                </div>
+              ) : null
+            }
+          />
+          <Scatter
+            data={data}
+            fill="transparent"
+            isAnimationActive={false}
+            shape={(props: ScatterShapeProps) => (
+              <AnchorDotShape
+                cx={props.cx}
+                cy={props.cy}
+                payload={props.payload as AnchorScatterPoint | undefined}
+              />
+            )}
+          />
+        </ScatterChart>
+      </ChartContainer>
+      <p
+        className="pointer-events-none absolute inset-0 flex items-center justify-center px-16 text-center text-body-sm italic text-muted-foreground"
+        aria-hidden
+      >
+        History will build from here →
+      </p>
+    </div>
+  );
+}
 
 export function TimelineCard() {
   const [previewMode, setPreviewMode] = React.useState<ChartState>("full");
@@ -93,21 +188,7 @@ export function TimelineCard() {
     : "bg-rose-500/10 text-rose-700 dark:text-rose-400";
   const Arrow = positive ? ArrowUpRight : ArrowDownRight;
 
-  const anchorBarData = React.useMemo(() => {
-    const p = series[0];
-    if (!p) return [];
-    return [
-      {
-        name: "Today",
-        date: p.date,
-        cash: p.cash,
-        "us-equity": p["us-equity"],
-        "intl-equity": p["intl-equity"],
-        "fixed-income": p["fixed-income"],
-        "real-estate": p["real-estate"],
-      },
-    ];
-  }, [series]);
+  const anchorTotal = series[0] ? snapshotTotal(series[0]) : 0;
 
   return (
     <Card className="h-full">
@@ -196,36 +277,7 @@ export function TimelineCard() {
       </CardHeader>
       <CardContent className="space-y-4">
         {previewMode === "anchor" ? (
-          <ChartContainer config={chartConfig} className="aspect-[16/6] w-full">
-            <BarChart
-              data={anchorBarData}
-              layout="vertical"
-              margin={{ left: 4, right: 16, top: 8, bottom: 8 }}
-            >
-              <CartesianGrid horizontal={false} strokeDasharray="3 3" />
-              <XAxis type="number" tickLine={false} axisLine={false} tickFormatter={tickFormatterY} />
-              <YAxis
-                type="category"
-                dataKey="name"
-                width={56}
-                tickLine={false}
-                axisLine={false}
-              />
-              <ChartTooltip
-                cursor={{ fill: "var(--muted)", opacity: 0.2 }}
-                content={<TimelineTooltip />}
-              />
-              {STACK_ORDER.map((s) => (
-                <Bar
-                  key={s.key}
-                  dataKey={s.key}
-                  stackId="nw"
-                  fill={`var(--color-${s.key})`}
-                  isAnimationActive={false}
-                />
-              ))}
-            </BarChart>
-          </ChartContainer>
+          <AnchorTodayChart totalUsd={anchorTotal} />
         ) : (
           <ChartContainer config={chartConfig} className="aspect-[16/6] w-full">
             <AreaChart data={filtered} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
@@ -289,11 +341,14 @@ export function TimelineCard() {
         )}
 
         {derived.cta === "banner" ? (
-          <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-body-sm text-foreground">
-              Upload past statements to fill in history. Each statement adds a data point.
-            </p>
-            <Button asChild variant="accent" size="sm">
+          <div className="flex flex-col gap-3 rounded-lg border border-sky-200/80 bg-sky-100/90 px-4 py-3 text-sky-950 sm:flex-row sm:items-center sm:justify-between dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-50">
+            <div className="flex min-w-0 flex-1 items-start gap-3">
+              <FileUp className="mt-0.5 size-5 shrink-0 text-sky-600 dark:text-sky-300" aria-hidden />
+              <p className="text-body-sm">
+                Upload past statements to fill in history. Each statement adds a data point.
+              </p>
+            </div>
+            <Button asChild variant="outline" size="sm" className="shrink-0 border-sky-300 bg-white/80 text-sky-950 hover:bg-white dark:border-sky-700 dark:bg-sky-900/50 dark:text-sky-50 dark:hover:bg-sky-900">
               <Link href="/accounts">Upload PDF</Link>
             </Button>
           </div>
