@@ -1,6 +1,8 @@
 /**
- * Mock time series for the dashboard net-worth timeline (v0.1 illustrative only).
- * Stack keys are legacy layer ids for the chart, not API AssetClass values.
+ * Mock time series for the investable-portfolio timeline (v0.1 illustrative only).
+ * Same conceptual scope as allocation / the donut — not full net worth
+ * (non-investable assets and liabilities stay in the hero).
+ * Stack keys are chart layer ids, not API AssetClass values.
  */
 
 export type TimelineStackKey =

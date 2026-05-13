@@ -45,7 +45,7 @@
   --viz-crypto: #db2777;
   --viz-private: #71717a;
 
-  /* Net-worth timeline stacked layers (mock series; distinct hues per layer) */
+  /* Investable-portfolio timeline stacked layers (mock series; distinct hues per layer) */
   --nw-timeline-cash: var(--viz-cash);
   --nw-timeline-us-equity: #2563eb;
   --nw-timeline-intl-equity: #0d9488;

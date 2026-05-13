@@ -113,8 +113,11 @@ export function TimelineCard() {
   return (
     <Card className="h-full">
       <CardHeader className="flex-wrap">
-        <CardTitle className="text-h3">Net worth over time</CardTitle>
-        <CardDescription>Stacked by asset class</CardDescription>
+        <CardTitle className="text-h3">Investable portfolio over time</CardTitle>
+        <CardDescription>
+          Stacked by asset class · investable accounts only. Net worth in the header includes
+          non-investable assets and liabilities.
+        </CardDescription>
         <CardAction className="flex flex-wrap items-center gap-2">
           <span
             className={cn(
@@ -122,7 +125,10 @@ export function TimelineCard() {
               sentiment,
             )}
           >
-            <Provenance source="snapshots">
+            <Provenance
+              source="computed"
+              footnote="Illustrative series in v0.1; matches allocation scope (investable only)."
+            >
               {formatUsd(deltaUsd, { signed: true })} ·{" "}
               {formatPct(deltaPct, { signed: true, digits: 2 })}
             </Provenance>
@@ -271,7 +277,7 @@ function TimelineTooltip({
       <div className="mt-1 flex items-center justify-between border-t border-border/50 pt-1.5">
         <span className="text-muted-foreground">Total</span>
         <span className="font-mono font-medium tabular-nums text-foreground">
-          <Provenance source="snapshots" capturedAt={point.date}>
+          <Provenance source="computed" capturedAt={point.date}>
             {formatUsd(total, { compact: true })}
           </Provenance>
         </span>
