@@ -179,9 +179,7 @@ export function deriveTimelineUi(
     const subtitle =
       series.length >= 2
         ? isLiveSnapshots
-          ? `Stacked by asset class · ${series.length} saved snapshot${
-              series.length === 1 ? "" : "s"
-            } (X-axis = latest investable position as-of; hover shows when saved)`
+          ? `Stacked by asset class · ${series.length} saved snapshots (X-axis = latest investable position as-of; hover shows when saved)`
           : `Stacked by asset class · ${Math.max(0, series.length - 1)} statement${
               series.length - 1 === 1 ? "" : "s"
             } + today`

@@ -43,9 +43,6 @@ import {
   findMatchingKind,
 } from "./comboboxes";
 import { Switch } from "@/app/components/ui/switch";
-
-const INVESTABLE_HINT_KEY = "op:investable-hint-dismissed";
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -57,6 +54,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/app/components/ui/alert-dialog";
+
+const INVESTABLE_HINT_KEY = "op:investable-hint-dismissed";
 
 // ── Labels ────────────────────────────────────────────────────────────────────
 

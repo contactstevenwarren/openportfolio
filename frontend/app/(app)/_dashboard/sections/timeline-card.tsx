@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowDownRight, ArrowUpRight, FileUp } from "lucide-react";
+import { FileUp } from "lucide-react";
 import useSWR from "swr";
 import { Area, AreaChart, CartesianGrid, ReferenceArea, Scatter, ScatterChart, XAxis, YAxis } from "recharts";
 import type { ScatterShapeProps } from "recharts";
@@ -266,9 +266,9 @@ export function TimelineCard() {
   const deltaPct = firstTotal === 0 ? 0 : deltaUsd / firstTotal;
   const positive = deltaUsd >= 0;
   const sentiment = positive
-    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-    : "bg-rose-500/10 text-rose-700 dark:text-rose-400";
-  const Arrow = positive ? ArrowUpRight : ArrowDownRight;
+    ? "bg-success-soft text-success"
+    : "bg-destructive-soft text-destructive";
+  const trendGlyph = positive ? "\u2197" : "\u2198";
 
   const anchorTotal = series[0] ? snapshotTotal(series[0]) : 0;
 
@@ -365,7 +365,9 @@ export function TimelineCard() {
                   {formatUsd(deltaUsd, { signed: true })} ·{" "}
                   {formatPct(deltaPct, { signed: true, digits: 2 })}
                 </Provenance>
-                <Arrow className="size-3" aria-hidden />
+                <span className="font-sans text-sm leading-none" aria-hidden>
+                  {trendGlyph}
+                </span>
               </span>
             ) : null}
             {hasPillData && derived.performanceSinceCaption ? (
@@ -522,14 +524,14 @@ export function TimelineCard() {
         )}
 
         {derived.cta === "banner" ? (
-          <div className="flex flex-col gap-3 rounded-lg border border-sky-200/80 bg-sky-100/90 px-4 py-3 text-sky-950 sm:flex-row sm:items-center sm:justify-between dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-50">
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-foreground sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 flex-1 items-start gap-3">
-              <FileUp className="mt-0.5 size-5 shrink-0 text-sky-600 dark:text-sky-300" aria-hidden />
+              <FileUp className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
               <p className="text-body-sm">
                 Import your positions to start building a timeline. Each import adds a snapshot point.
               </p>
             </div>
-            <Button asChild variant="outline" size="sm" className="shrink-0 border-sky-300 bg-white/80 text-sky-950 hover:bg-white dark:border-sky-700 dark:bg-sky-900/50 dark:text-sky-50 dark:hover:bg-sky-900">
+            <Button asChild variant="accent" size="sm" className="shrink-0">
               <Link href="/accounts">Upload PDF</Link>
             </Button>
           </div>
@@ -539,7 +541,7 @@ export function TimelineCard() {
           <div className="text-right">
             <Link
               href="/accounts"
-              className="text-body-sm text-sky-700 underline-offset-4 hover:text-sky-900 hover:underline dark:text-sky-300 dark:hover:text-sky-100"
+              className="text-body-sm text-foreground underline underline-offset-4 hover:underline"
             >
               Import more positions to grow your timeline →
             </Link>
@@ -592,7 +594,7 @@ function TimelineTooltip({
     isRealSnapshotPoint(point) ? point.snapshotTakenAt : point.date;
 
   return (
-    <div className="grid min-w-48 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+    <div className="grid min-w-48 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-2">
       <div className="font-medium">{dateLabel}</div>
       <div className="grid gap-1">
         {ordered.map((s) => {

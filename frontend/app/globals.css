@@ -45,7 +45,7 @@
   --viz-crypto: #db2777;
   --viz-private: #71717a;
 
-  /* Investable-portfolio timeline stacked layers (mock series; distinct hues per layer) */
+  /* Dashboard timeline mocks only (`timeline-mocks.ts`). Live chart stacks use `--viz-*` via ASSET_CLASS_COLOR. */
   --nw-timeline-cash: var(--viz-cash);
   --nw-timeline-us-equity: #2563eb;
   --nw-timeline-intl-equity: #0d9488;
@@ -116,6 +116,7 @@
   --viz-crypto: #f472b6;
   --viz-private: #a1a1aa;
 
+  /* Same as light: mock timeline layers only; live stacks use `--viz-*`. */
   --nw-timeline-cash: var(--viz-cash);
   --nw-timeline-us-equity: #60a5fa;
   --nw-timeline-intl-equity: #5eead4;
