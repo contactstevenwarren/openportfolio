@@ -190,8 +190,7 @@ function AnchorTodayChart({
       </div>
       {showBuildingHint ? (
         <p className="mt-2 text-center text-body-sm text-muted-foreground">
-          History builds as you add positions — the chart needs more than one UTC calendar day (last save each
-          day).
+          Each import adds a snapshot. Import on a second day to start building the line chart.
         </p>
       ) : null}
     </div>
@@ -256,12 +255,9 @@ export function TimelineCard() {
     [chartState, series, latest],
   );
 
-  const rawSnapshotCount =
-    hasRealSnapshots && snapshotList?.length != null ? snapshotList.length : undefined;
-
   const derived = React.useMemo(
-    () => deriveTimelineUi(chartState, series, { rawSnapshotCount }),
-    [chartState, series, rawSnapshotCount],
+    () => deriveTimelineUi(chartState, series),
+    [chartState, series],
   );
 
   const anchorTotal = series[0] ? snapshotTotal(series[0]) : 0;
@@ -274,7 +270,7 @@ export function TimelineCard() {
   }, [isSparseChart, filtered]);
 
   const sparseXLayout = React.useMemo(():
-    | { domain: [number, number]; lastT: number; tickWithTime: boolean }
+    | { domain: [number, number]; lastT: number }
     | null => {
     if (!isSparseChart || filtered.length < 1) return null;
     const ts = filtered.map((p) => parseChartDate(p.date));
@@ -282,26 +278,18 @@ export function TimelineCard() {
     const tMax = ts[ts.length - 1]!;
     // Avoid forcing a full-day minimum when two snapshots land minutes apart (same import session);
     // otherwise both points stack on the left and the chart looks "broken".
-    const rawSpan = tMax - tMin;
-    const span = Math.max(rawSpan, 3_600_000); // at least 1h of axis width for readability
-    // Proportional future band; avoid a multi-week minimum runway when history is only hours/days wide.
+    const span = tMax - tMin;
     const runway = Math.max(Math.round(span * 0.55), 3_600_000);
     return {
       domain: [tMin, tMax + runway] as [number, number],
       lastT: tMax,
-      /** When true, X ticks include clock time (same calendar day commits). */
-      tickWithTime: rawSpan < 86_400_000,
     };
   }, [isSparseChart, filtered]);
 
   const formatSparseXTickNumber = React.useCallback(
     (ts: number) => {
-      const layout = sparseXLayout;
-      if (layout && ts === layout.lastT && utcDayEqual(ts, Date.now())) return "Today";
-      const opts: Intl.DateTimeFormatOptions = layout?.tickWithTime
-        ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
-        : { month: "short", day: "numeric" };
-      return new Date(ts).toLocaleString(undefined, opts);
+      if (sparseXLayout && ts === sparseXLayout.lastT && utcDayEqual(ts, Date.now())) return "Today";
+      return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     },
     [sparseXLayout],
   );

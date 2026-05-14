@@ -60,11 +60,6 @@ export function formatPerformanceSince(chartState: ChartState, isoDate: string):
   return new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(d);
 }
 
-export type DeriveTimelineOpts = {
-  /** Count of rows from GET /api/snapshots/ before UTC-day rollup (for honest copy). */
-  rawSnapshotCount?: number;
-};
-
 export function periodCutoff(latest: Date, period: Period): Date | null {
   if (period === "All") return null;
   const d = new Date(latest);
@@ -161,29 +156,16 @@ export type DerivedTimelineUi = {
   chartFootnote: string | null;
 };
 
-function anchorRollupFootnote(raw: number | undefined, dayPoints: number): string | null {
-  if (raw == null || raw < 2 || dayPoints < 1) return null;
-  if (raw <= dayPoints) return null;
-  return `${raw} saves in your history roll up to ${dayPoints} chart day${dayPoints === 1 ? "" : "s"} — one point per UTC calendar day (latest save that day).`;
-}
-
 export function deriveTimelineUi(
   chartState: ChartState,
   series: ChartSnapshotPoint[],
-  opts?: DeriveTimelineOpts,
 ): DerivedTimelineUi {
-  const raw = opts?.rawSnapshotCount;
-  const rollupHint =
-    "Each point is the latest save on that UTC calendar day.";
-
   if (chartState === "anchor") {
-    const foot = anchorRollupFootnote(raw, series.length);
     return {
       chartState,
-      subtitle:
-        "One point per UTC calendar day (latest save that day). The stacked chart appears after you have more than one day of history.",
+      subtitle: "Each import adds a snapshot. The line chart appears once you have more than one day of history.",
       cta: "banner",
-      chartFootnote: foot,
+      chartFootnote: null,
     };
   }
 
@@ -191,13 +173,13 @@ export function deriveTimelineUi(
     const n = series.length;
     const subtitle =
       n >= 2
-        ? `By asset class · ${n} days on the chart (UTC · last save per day)`
+        ? `By asset class · ${n} snapshots`
         : "By asset class · investable accounts only.";
     return {
       chartState,
       subtitle,
       cta: "subtle",
-      chartFootnote: `${rollupHint} Shaded area is space for future snapshots. Hover a point for save time and breakdown by class.`,
+      chartFootnote: "Shaded area is space for future snapshots. Hover a point for save time and breakdown by class.",
     };
   }
 
@@ -205,6 +187,6 @@ export function deriveTimelineUi(
     chartState,
     subtitle: "By asset class · investable accounts only.",
     cta: "none",
-    chartFootnote: `${rollupHint} Net worth in the header also includes non-investable assets and liabilities.`,
+    chartFootnote: "Net worth in the header also includes non-investable assets and liabilities.",
   };
 }
