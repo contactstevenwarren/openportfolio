@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import useSWR, { mutate } from "swr";
-import { ChevronRightIcon, ChevronDownIcon, UploadIcon, Pencil } from "lucide-react";
+import { ChevronRightIcon, ChevronDownIcon, UploadIcon, Pencil, X } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
   Sheet,
@@ -24,7 +24,7 @@ import {
   TooltipContent,
 } from "@/app/components/ui/tooltip";
 import { cn } from "@/app/lib/utils";
-import type { Account, Institution, ClassificationRow } from "@/app/lib/api";
+import type { Account, Institution, ClassificationRow, Position } from "@/app/lib/api";
 import { classificationPrimaryAssetClass } from "@/app/lib/api";
 import { api } from "@/app/lib/api";
 import {
@@ -43,8 +43,6 @@ import {
   findMatchingKind,
 } from "./comboboxes";
 import { Switch } from "@/app/components/ui/switch";
-
-const INVESTABLE_HINT_KEY = "op:investable-hint-dismissed";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,6 +54,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/app/components/ui/alert-dialog";
+
+const INVESTABLE_HINT_KEY = "op:investable-hint-dismissed";
 
 // ── Labels ────────────────────────────────────────────────────────────────────
 
@@ -532,7 +532,10 @@ export function Row({
     () => api.classifications(),
     { revalidateOnFocus: false }
   );
-  const classMap = new Map(classifications.map((c) => [c.ticker, c]));
+  const classMap = useMemo(
+    () => new Map(classifications.map((c) => [c.ticker, c])),
+    [classifications],
+  );
 
   const { data: allPortfolioPositions = [] } = useSWR(
     isExpanded && !account.is_manual ? "/api/positions" : null,
@@ -550,14 +553,14 @@ export function Row({
 
   // ── Unclassified filter state ──────────────────────────────────────────────
   const [unclassifiedFilter, setUnclassifiedFilter] = useState(false);
-  const visiblePositions = unclassifiedFilter
-    ? positions.filter((pos) => {
-        const row = classMap.get(pos.ticker);
-        return !row || !classificationPrimaryAssetClass(row);
-      })
-    : positions;
+  const visiblePositions = useMemo((): Position[] => {
+    if (!unclassifiedFilter) return positions;
+    return positions.filter((pos) => {
+      const row = classMap.get(pos.ticker);
+      return !row || !classificationPrimaryAssetClass(row);
+    });
+  }, [positions, unclassifiedFilter, classMap]);
 
-  // ── Investable hint dismiss state ─────────────────────────────────────────
   // Shown once for real_estate / private accounts that are still marked investable,
   // to nudge the user toward the "Include in Investment Portfolio" toggle in Edit.
   const [hintDismissed, setHintDismissed] = useState<boolean>(() => {
@@ -1010,7 +1013,7 @@ export function Row({
               </>
             ) : (
               <p className="text-body-sm text-muted-foreground py-2">
-                Never updated. Click Update to add holdings.
+                Never updated. Click Import to add holdings.
               </p>
             )}
 
@@ -1034,7 +1037,7 @@ export function Row({
                   onClick={(e) => { e.stopPropagation(); dismissHint(); }}
                   className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  ✕
+                  <X className="size-4" aria-hidden />
                 </button>
               </div>
             )}

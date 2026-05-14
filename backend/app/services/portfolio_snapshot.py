@@ -30,11 +30,12 @@ def write_snapshot(db: Session) -> None:
     """Persist one Snapshot row summarising current portfolio state."""
     positions = db.query(Position).all()
     classifications = {**load_classifications(), **load_user_classifications(db)}
+    non_inv = non_investable_account_ids(db)
     result = aggregate(
         positions,
         classifications,
         db=db,
-        non_investable_account_ids=non_investable_account_ids(db),
+        non_investable_account_ids=non_inv,
     )
     liabilities = liabilities_total(db)
     net_worth = result.assets_total - liabilities

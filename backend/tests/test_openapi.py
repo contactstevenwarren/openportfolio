@@ -37,6 +37,7 @@ def test_openapi_documents_admin_token_scheme(client: TestClient) -> None:
     "/api/positions/commit",
     "/api/allocation",
     "/api/allocation/positions/{asset_class}",
+    "/api/snapshots/",
     "/api/snapshots/earliest",
     "/api/liabilities",
     "/api/targets",

@@ -3,6 +3,7 @@ import { DonutCard } from "./_dashboard/sections/donut-card";
 import { HealthCard } from "./_dashboard/sections/health-card";
 import { HeroSection } from "./_dashboard/sections/hero";
 import { SandboxCard } from "./_dashboard/sections/sandbox-card";
+import { TimelineCard } from "./_dashboard/sections/timeline-card";
 
 export default function HomePage() {
   return (
@@ -17,6 +18,10 @@ export default function HomePage() {
         </div>
         <div className="@lg/main:col-span-5">
           <SandboxCard />
+        </div>
+
+        <div className="@lg/main:col-span-12">
+          <TimelineCard />
         </div>
 
         <div className="@lg/main:col-span-12">

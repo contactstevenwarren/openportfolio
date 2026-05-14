@@ -207,6 +207,8 @@ export function EditPositionSheet({
       await mutate("/api/accounts");
       await mutate(positionsKey);
       await mutate("/api/positions");
+      await mutate("/api/allocation");
+      await mutate("/api/snapshots");
       onOpenChange(false);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Failed to save.");
@@ -223,6 +225,8 @@ export function EditPositionSheet({
       await mutate("/api/accounts");
       await mutate(positionsKey);
       await mutate("/api/positions");
+      await mutate("/api/allocation");
+      await mutate("/api/snapshots");
       onOpenChange(false);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Failed to delete.");

@@ -206,6 +206,13 @@ export type SnapshotEarliest = {
   total_usd: number | null;
 };
 
+/** One row from GET /api/snapshots/ (investable scope). */
+export type SnapshotListItem = {
+  taken_at: string;
+  investable_total_usd: number;
+  by_asset_class: Record<string, number>;
+};
+
 /** One weighted (asset_class × sub_class) bucket — matches backend schema. */
 export type ClassificationBucketPayload = {
   asset_class: string;
@@ -408,6 +415,8 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
   snapshotsEarliest: () => fetchJson<SnapshotEarliest | null>('/api/snapshots/earliest'),
+  snapshots: (limit = 500) =>
+    fetchJson<SnapshotListItem[]>(`/api/snapshots/?limit=${encodeURIComponent(String(limit))}`),
   createAccount: (body: {
     label: string;
     type?: string;
