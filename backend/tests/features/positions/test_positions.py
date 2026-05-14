@@ -255,7 +255,6 @@ def test_delete_removes_position(
     assert test_db.get(Position, position_id) is None
 
 
-
 def test_delete_preserves_provenance_audit_trail(
     client: TestClient, auth_headers: dict[str, str], test_db: Session
 ) -> None:

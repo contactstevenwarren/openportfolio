@@ -1,4 +1,4 @@
-"""Tests for GET /api/snapshots/earliest."""
+"""Tests for GET /api/snapshots/ and GET /api/snapshots/earliest."""
 
 import json
 from datetime import UTC, datetime

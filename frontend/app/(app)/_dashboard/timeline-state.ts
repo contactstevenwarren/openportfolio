@@ -171,7 +171,7 @@ export function deriveTimelineUi(
       performanceSinceCaption: sinceCaption,
       cta: "subtle",
       chartFootnote:
-        "Shaded area is space for future dates. Dates follow your positions’ latest statement as-of; hover a point for when it was saved and amounts by class.",
+        "Shaded area is space for future snapshots. Hover a point to see when it was saved and the breakdown by asset class.",
     };
   }
 

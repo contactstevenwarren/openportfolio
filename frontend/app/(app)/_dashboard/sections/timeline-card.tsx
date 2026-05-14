@@ -78,7 +78,7 @@ function utcDayEqual(aMs: number, bMs: number): boolean {
 
 /** Full provenance line for `title=` tooltips on numbers (kept concise in UI body copy). */
 const SNAPSHOTS_PROVENANCE_FOOTNOTE =
-  "Each point reflects the investable total when that snapshot was saved. The chart time is the latest as-of date among investable positions (usually your statement date); hover shows the exact save time.";
+  "Each point reflects the investable total when that snapshot was saved. Hover a point to see the exact capture time and breakdown by asset class.";
 
 const CHART_HOVER_HINT = "Hover points for capture time and breakdown.";
 const ANCHOR_HOVER_HINT = "Hover the dot for save time and source.";
