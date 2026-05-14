@@ -400,24 +400,24 @@ export function TimelineCard() {
             ) : null}
           </div>
         ) : (
-          // anchor / sparse states: title, subtitle hint, period controls
-          <div className="flex flex-col gap-4">
-            <div className="flex items-start justify-between gap-3">
-              <CardTitle className="text-h3 min-w-0 flex-1 pr-2">
+          // anchor / sparse states: same top row as full, subtitle drops below
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <CardTitle className="text-h3 min-w-0 flex-1">
                 Investable portfolio over time
               </CardTitle>
+              <div
+                role="group"
+                aria-label="Time period"
+                className="flex flex-wrap gap-0.5 rounded-md border border-border bg-background p-0.5"
+              >
+                {periodButtons}
+              </div>
               {showPerformanceSummary ? (
-                <div className="max-w-[min(100%,22rem)] shrink-0 text-right">{performanceBadge}</div>
+                <div className="shrink-0 text-right">{performanceBadge}</div>
               ) : null}
             </div>
             <CardDescription className="text-pretty">{derived.subtitle}</CardDescription>
-            <div
-              role="group"
-              aria-label="Time period"
-              className="flex w-full max-w-md flex-wrap gap-0.5 rounded-md border border-border bg-background p-0.5"
-            >
-              {periodButtons}
-            </div>
           </div>
         )}
       </CardHeader>
