@@ -413,21 +413,16 @@ export function TimelineCard() {
               : "Loading timeline…"}
           </div>
         ) : chartState === "anchor" ? (
-          <>
-            <AnchorTodayChart
-              totalUsd={anchorTotal}
-              xLabel={anchorXLabel}
-              provenanceSource={hasRealSnapshots ? "snapshots" : "allocation"}
-              provenanceFootnote={
-                hasRealSnapshots ? SNAPSHOTS_PROVENANCE_FOOTNOTE : "Live investable total from /api/allocation."
-              }
-              capturedAt={anchorCapturedAt}
-              showBuildingHint={!hasRealSnapshots}
-            />
-            {derived.chartFootnote ? (
-              <p className="text-center text-body-sm text-muted-foreground">{derived.chartFootnote}</p>
-            ) : null}
-          </>
+          <AnchorTodayChart
+            totalUsd={anchorTotal}
+            xLabel={anchorXLabel}
+            provenanceSource={hasRealSnapshots ? "snapshots" : "allocation"}
+            provenanceFootnote={
+              hasRealSnapshots ? SNAPSHOTS_PROVENANCE_FOOTNOTE : "Live investable total from /api/allocation."
+            }
+            capturedAt={anchorCapturedAt}
+            showBuildingHint={!hasRealSnapshots}
+          />
         ) : (
           <ChartContainer config={realAreaChartConfig} className="aspect-[16/6] w-full">
             <AreaChart data={stackedChartData} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
