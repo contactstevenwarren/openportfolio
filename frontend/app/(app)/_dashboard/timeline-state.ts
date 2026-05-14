@@ -20,6 +20,39 @@ export function snapshotTotal(p: ChartSnapshotPoint): number {
   return realSnapshotTotal(p);
 }
 
+/** Parse chart `date` ISO to ms (date-only treated as UTC noon). */
+function chartDateInstantMs(isoDate: string): number {
+  const raw = isoDate.includes("T") ? isoDate : `${isoDate}T12:00:00Z`;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : NaN;
+}
+
+/**
+ * Whole UTC calendar days between instants (non-negative).
+ * Used so we do not show a "since … / Δ%" pill when both endpoints are the same calendar day
+ * (same-day snapshots can swing totals without representing a meaningful time window).
+ */
+export function utcCalendarDaySpan(aMs: number, bMs: number): number {
+  const a = new Date(aMs);
+  const b = new Date(bMs);
+  const dayA = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
+  const dayB = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
+  return Math.abs(Math.round((dayB - dayA) / 86_400_000));
+}
+
+/** True when Δ% vs first point is worth showing (≥2 points and ≥1 calendar day apart). */
+export function performancePillWarranted(
+  chartState: ChartState,
+  filteredSeries: ChartSnapshotPoint[],
+): boolean {
+  if (chartState === "anchor") return false;
+  if (filteredSeries.length < 2) return false;
+  const t0 = chartDateInstantMs(filteredSeries[0]!.date);
+  const t1 = chartDateInstantMs(filteredSeries[filteredSeries.length - 1]!.date);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return false;
+  return utcCalendarDaySpan(t0, t1) >= 1;
+}
+
 export function periodCutoff(latest: Date, period: Period): Date | null {
   if (period === "All") return null;
   const d = new Date(latest);
@@ -140,9 +173,10 @@ export function deriveTimelineUi(
   series: ChartSnapshotPoint[],
   filteredSeries: ChartSnapshotPoint[],
 ): DerivedTimelineUi {
+  const showPill = performancePillWarranted(chartState, filteredSeries);
   const oldest = filteredSeries[0]?.date ?? series[0]?.date ?? null;
   const sinceCaption =
-    oldest != null
+    showPill && oldest != null
       ? `since ${
           chartState === "sparse" ? formatSinceMonthDay(oldest) : formatSinceMonthYear(oldest)
         }`
@@ -167,7 +201,7 @@ export function deriveTimelineUi(
     return {
       chartState,
       subtitle,
-      showPerformancePill: filteredSeries.length >= 2,
+      showPerformancePill: showPill,
       performanceSinceCaption: sinceCaption,
       cta: "subtle",
       chartFootnote:
@@ -179,7 +213,7 @@ export function deriveTimelineUi(
   return {
     chartState,
     subtitle: "By asset class · investable accounts only.",
-    showPerformancePill: filteredSeries.length >= 2,
+    showPerformancePill: showPill,
     performanceSinceCaption: sinceCaption,
     cta: "none",
     chartFootnote:
