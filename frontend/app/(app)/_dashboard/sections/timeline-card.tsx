@@ -526,7 +526,7 @@ export function TimelineCard() {
             <div className="flex min-w-0 flex-1 items-start gap-3">
               <FileUp className="mt-0.5 size-5 shrink-0 text-sky-600 dark:text-sky-300" aria-hidden />
               <p className="text-body-sm">
-                Upload past statements to fill in history. Each import or commit adds a snapshot point.
+                Import your positions to start building a timeline. Each import adds a snapshot point.
               </p>
             </div>
             <Button asChild variant="outline" size="sm" className="shrink-0 border-sky-300 bg-white/80 text-sky-950 hover:bg-white dark:border-sky-700 dark:bg-sky-900/50 dark:text-sky-50 dark:hover:bg-sky-900">
@@ -541,7 +541,7 @@ export function TimelineCard() {
               href="/accounts"
               className="text-body-sm text-sky-700 underline-offset-4 hover:text-sky-900 hover:underline dark:text-sky-300 dark:hover:text-sky-100"
             >
-              Upload more statements for longer history →
+              Import more positions to grow your timeline →
             </Link>
           </div>
         ) : null}
