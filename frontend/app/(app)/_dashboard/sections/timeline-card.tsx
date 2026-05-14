@@ -334,66 +334,92 @@ export function TimelineCard() {
       ? formatPerformanceSince(chartState, firstFiltered.date)
       : null;
 
+  const periodButtons = periodMeta.map(({ period: p, disabled, title }) => {
+    const active = chartState !== "anchor" && p === period;
+    return (
+      <button
+        key={p}
+        type="button"
+        aria-pressed={active}
+        disabled={disabled}
+        title={title}
+        onClick={() => !disabled && setPeriod(p)}
+        className={cn(
+          "rounded-sm px-2 py-1 text-label transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          disabled && "cursor-not-allowed opacity-40",
+          active && !disabled && "bg-foreground text-background",
+          !active && !disabled && "text-muted-foreground hover:bg-muted hover:text-foreground",
+        )}
+      >
+        {p}
+      </button>
+    );
+  });
+
+  const performanceBadge = showPerformanceSummary ? (
+    <p className="text-body-sm leading-snug">
+      <span className={cn("font-mono font-medium tabular-nums", sentimentSummary)}>
+        <Provenance
+          source="snapshots"
+          footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
+          capturedAt={lastFiltered?.snapshotTakenAt ?? undefined}
+        >
+          {formatUsd(deltaUsd, { signed: true })} · {formatPct(deltaPct, { signed: true, digits: 2 })}
+        </Provenance>{" "}
+        <span className="font-sans font-normal" aria-hidden>
+          {trendGlyph}
+        </span>
+      </span>
+      {sinceLabel ? (
+        <span className="font-sans font-normal text-muted-foreground">
+          {" "}
+          · since {sinceLabel}
+        </span>
+      ) : null}
+    </p>
+  ) : null;
+
   return (
     <Card className="h-full">
-      <CardHeader className="flex flex-col gap-4 px-6">
-        <div className="flex items-start justify-between gap-3">
-          <CardTitle className="text-h3 min-w-0 flex-1 pr-2">
-            Investable portfolio over time
-          </CardTitle>
-          {showPerformanceSummary ? (
-            <div className="max-w-[min(100%,22rem)] shrink-0 text-right">
-              <p className="text-body-sm leading-snug">
-                <span className={cn("font-mono font-medium tabular-nums", sentimentSummary)}>
-                  <Provenance
-                    source="snapshots"
-                    footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
-                    capturedAt={lastFiltered?.snapshotTakenAt ?? undefined}
-                  >
-                    {formatUsd(deltaUsd, { signed: true })} · {formatPct(deltaPct, { signed: true, digits: 2 })}
-                  </Provenance>{" "}
-                  <span className="font-sans font-normal" aria-hidden>
-                    {trendGlyph}
-                  </span>
-                </span>
-                {sinceLabel ? (
-                  <span className="font-sans font-normal text-muted-foreground">
-                    {" "}
-                    · since {sinceLabel}
-                  </span>
-                ) : null}
-              </p>
+      <CardHeader className="px-6">
+        {chartState === "full" ? (
+          // full state: one row — title, period controls, performance badge
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <CardTitle className="text-h3 min-w-0 flex-1">
+              Investable portfolio over time
+            </CardTitle>
+            <div
+              role="group"
+              aria-label="Time period"
+              className="flex flex-wrap gap-0.5 rounded-md border border-border bg-background p-0.5"
+            >
+              {periodButtons}
             </div>
-          ) : null}
-        </div>
-        <CardDescription className="text-pretty">{derived.subtitle}</CardDescription>
-        <div
-          role="group"
-          aria-label="Time period"
-          className="flex w-full max-w-md flex-wrap gap-0.5 rounded-md border border-border bg-background p-0.5"
-        >
-          {periodMeta.map(({ period: p, disabled, title }) => {
-            const active = chartState !== "anchor" && p === period;
-            return (
-              <button
-                key={p}
-                type="button"
-                aria-pressed={active}
-                disabled={disabled}
-                title={title}
-                onClick={() => !disabled && setPeriod(p)}
-                className={cn(
-                  "rounded-sm px-2 py-1 text-label transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  disabled && "cursor-not-allowed opacity-40",
-                  active && !disabled && "bg-foreground text-background",
-                  !active && !disabled && "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                {p}
-              </button>
-            );
-          })}
-        </div>
+            {showPerformanceSummary ? (
+              <div className="shrink-0 text-right">{performanceBadge}</div>
+            ) : null}
+          </div>
+        ) : (
+          // anchor / sparse states: title, subtitle hint, period controls
+          <div className="flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-3">
+              <CardTitle className="text-h3 min-w-0 flex-1 pr-2">
+                Investable portfolio over time
+              </CardTitle>
+              {showPerformanceSummary ? (
+                <div className="max-w-[min(100%,22rem)] shrink-0 text-right">{performanceBadge}</div>
+              ) : null}
+            </div>
+            <CardDescription className="text-pretty">{derived.subtitle}</CardDescription>
+            <div
+              role="group"
+              aria-label="Time period"
+              className="flex w-full max-w-md flex-wrap gap-0.5 rounded-md border border-border bg-background p-0.5"
+            >
+              {periodButtons}
+            </div>
+          </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         {!chartReady ? (
