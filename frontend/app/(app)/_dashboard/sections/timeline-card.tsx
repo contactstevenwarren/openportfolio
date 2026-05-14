@@ -336,62 +336,64 @@ export function TimelineCard() {
 
   return (
     <Card className="h-full">
-      <CardHeader className="flex flex-col gap-4 px-6 @lg/card-header:flex-row @lg/card-header:items-start @lg/card-header:justify-between @lg/card-header:gap-6">
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <div className="space-y-1">
-            <CardTitle className="text-h3">Investable portfolio over time</CardTitle>
-            <CardDescription className="text-pretty">{derived.subtitle}</CardDescription>
-          </div>
-          <div
-            role="group"
-            aria-label="Time period"
-            className="flex w-full max-w-md flex-wrap gap-0.5 rounded-md border border-border bg-background p-0.5"
-          >
-            {periodMeta.map(({ period: p, disabled, title }) => {
-              const active = chartState !== "anchor" && p === period;
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  aria-pressed={active}
-                  disabled={disabled}
-                  title={title}
-                  onClick={() => !disabled && setPeriod(p)}
-                  className={cn(
-                    "rounded-sm px-2 py-1 text-label transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    disabled && "cursor-not-allowed opacity-40",
-                    active && !disabled && "bg-foreground text-background",
-                    !active && !disabled && "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  {p}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {showPerformanceSummary ? (
-          <div className="flex shrink-0 flex-col items-end gap-1 text-right">
-            <p className={cn("text-body-sm", sentimentSummary)}>
-              <span className="font-mono font-medium tabular-nums">
-                <Provenance
-                  source="snapshots"
-                  footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
-                  capturedAt={lastFiltered?.snapshotTakenAt ?? undefined}
-                >
-                  {formatUsd(deltaUsd, { signed: true })} · {formatPct(deltaPct, { signed: true, digits: 2 })}
-                </Provenance>{" "}
-                <span className="font-sans font-normal" aria-hidden>
-                  {trendGlyph}
+      <CardHeader className="flex flex-col gap-4 px-6">
+        <div className="flex items-start justify-between gap-3">
+          <CardTitle className="text-h3 min-w-0 flex-1 pr-2">
+            Investable portfolio over time
+          </CardTitle>
+          {showPerformanceSummary ? (
+            <div className="max-w-[min(100%,22rem)] shrink-0 text-right">
+              <p className="text-body-sm leading-snug">
+                <span className={cn("font-mono font-medium tabular-nums", sentimentSummary)}>
+                  <Provenance
+                    source="snapshots"
+                    footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
+                    capturedAt={lastFiltered?.snapshotTakenAt ?? undefined}
+                  >
+                    {formatUsd(deltaUsd, { signed: true })} · {formatPct(deltaPct, { signed: true, digits: 2 })}
+                  </Provenance>{" "}
+                  <span className="font-sans font-normal" aria-hidden>
+                    {trendGlyph}
+                  </span>
                 </span>
-              </span>
-            </p>
-            {sinceLabel ? (
-              <p className="text-body-sm text-muted-foreground">since {sinceLabel}</p>
-            ) : null}
-          </div>
-        ) : null}
+                {sinceLabel ? (
+                  <span className="font-sans font-normal text-muted-foreground">
+                    {" "}
+                    · since {sinceLabel}
+                  </span>
+                ) : null}
+              </p>
+            </div>
+          ) : null}
+        </div>
+        <CardDescription className="text-pretty">{derived.subtitle}</CardDescription>
+        <div
+          role="group"
+          aria-label="Time period"
+          className="flex w-full max-w-md flex-wrap gap-0.5 rounded-md border border-border bg-background p-0.5"
+        >
+          {periodMeta.map(({ period: p, disabled, title }) => {
+            const active = chartState !== "anchor" && p === period;
+            return (
+              <button
+                key={p}
+                type="button"
+                aria-pressed={active}
+                disabled={disabled}
+                title={title}
+                onClick={() => !disabled && setPeriod(p)}
+                className={cn(
+                  "rounded-sm px-2 py-1 text-label transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  disabled && "cursor-not-allowed opacity-40",
+                  active && !disabled && "bg-foreground text-background",
+                  !active && !disabled && "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                {p}
+              </button>
+            );
+          })}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {!chartReady ? (
