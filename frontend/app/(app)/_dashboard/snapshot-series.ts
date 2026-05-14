@@ -18,17 +18,10 @@ export type RealSnapshotPoint = {
   investable_total_usd: number;
 } & Record<AssetClass, number>;
 
-function chartInstantFromSnapshot(s: SnapshotListItem): { ms: number; iso: string } {
-  const raw = s.taken_at.includes("T") ? s.taken_at : `${s.taken_at}T12:00:00Z`;
-  let t = Date.parse(raw);
-  if (Number.isNaN(t)) t = Date.now();
-  return { ms: t, iso: new Date(t).toISOString() };
-}
-
-function parseTakenAtIso(s: SnapshotListItem): string {
+function takenAtMs(s: SnapshotListItem): number {
   const raw = s.taken_at.includes("T") ? s.taken_at : `${s.taken_at}T12:00:00Z`;
   const t = Date.parse(raw);
-  return Number.isNaN(t) ? new Date().toISOString() : new Date(t).toISOString();
+  return Number.isNaN(t) ? Date.now() : t;
 }
 
 function emptyStacks(): Record<AssetClass, number> {
@@ -39,35 +32,28 @@ function emptyStacks(): Record<AssetClass, number> {
 }
 
 export function snapshotsToSeries(snaps: SnapshotListItem[]): RealSnapshotPoint[] {
-  const sorted = [...snaps].sort((a, b) => {
-    const ca = chartInstantFromSnapshot(a).ms;
-    const cb = chartInstantFromSnapshot(b).ms;
-    if (ca !== cb) return ca - cb;
-    return parseTakenAtIso(a).localeCompare(parseTakenAtIso(b));
-  });
-  const rows: RealSnapshotPoint[] = sorted.map((s) => {
+  // Parse each timestamp once, then sort and deduplicate by calendar day.
+  const withMs = snaps.map((s) => ({ s, ms: takenAtMs(s) }));
+  withMs.sort((a, b) => a.ms - b.ms);
+
+  // One point per calendar day: keep the last snapshot written that day.
+  const byDay = new Map<string, SnapshotListItem>();
+  for (const { s, ms } of withMs) {
+    byDay.set(new Date(ms).toISOString().slice(0, 10), s);
+  }
+
+  return Array.from(byDay.entries()).map(([day, s]) => {
     const stacks = emptyStacks();
     for (const ac of ASSET_CLASS_ORDER) {
       const v = s.by_asset_class[ac];
       if (typeof v === "number") stacks[ac] = v;
     }
-    const { iso: date } = chartInstantFromSnapshot(s);
     return {
-      date,
-      snapshotTakenAt: parseTakenAtIso(s),
+      date: `${day}T12:00:00.000Z`,
+      snapshotTakenAt: new Date(takenAtMs(s)).toISOString(),
       investable_total_usd: s.investable_total_usd,
       ...stacks,
     };
-  });
-  let lastMs = 0;
-  return rows.map((row) => {
-    let ms = Date.parse(row.date);
-    if (!Number.isFinite(ms)) ms = Date.parse(row.snapshotTakenAt);
-    if (!Number.isFinite(ms)) ms = Date.now();
-    if (ms <= lastMs) ms = lastMs + 1;
-    lastMs = ms;
-    const nextIso = new Date(ms).toISOString();
-    return nextIso === row.date ? row : { ...row, date: nextIso };
   });
 }
 

@@ -148,8 +148,19 @@ export function HeroSection() {
   const liabilitiesTotal = allocation?.liabilities_total ?? 0;
   const investablePct = netWorth > 0 ? investable / netWorth : null;
 
-  // Derived: delta vs earliest snapshot
-  const hasDelta = snapshot != null && snapshot.net_worth_usd > 0 && netWorth > 0;
+  // Derived: delta vs earliest snapshot — only when snapshot is from a prior calendar day.
+  // Same-day snapshots produce misleading swings (e.g. first-ever import today compares
+  // today's total against itself from hours earlier).
+  const snapshotUtcDay = snapshot?.taken_at
+    ? new Date(snapshot.taken_at).toISOString().slice(0, 10)
+    : null;
+  const todayUtcDay = new Date().toISOString().slice(0, 10);
+  const hasDelta =
+    snapshot != null &&
+    snapshot.net_worth_usd > 0 &&
+    netWorth > 0 &&
+    snapshotUtcDay !== null &&
+    snapshotUtcDay < todayUtcDay;
   const deltaUsd = hasDelta ? netWorth - snapshot!.net_worth_usd : 0;
   const deltaPct = hasDelta ? deltaUsd / snapshot!.net_worth_usd : 0;
   const deltaPositive = deltaUsd >= 0;

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import useSWR, { mutate } from "swr";
-import { ChevronRightIcon, ChevronDownIcon, UploadIcon, Pencil } from "lucide-react";
+import { ChevronRightIcon, ChevronDownIcon, UploadIcon, Pencil, X } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
   Sheet,
@@ -1013,7 +1013,7 @@ export function Row({
               </>
             ) : (
               <p className="text-body-sm text-muted-foreground py-2">
-                Never updated. Click Update to add holdings.
+                Never updated. Click Import to add holdings.
               </p>
             )}
 
@@ -1037,7 +1037,7 @@ export function Row({
                   onClick={(e) => { e.stopPropagation(); dismissHint(); }}
                   className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  ✕
+                  <X className="size-4" aria-hidden />
                 </button>
               </div>
             )}

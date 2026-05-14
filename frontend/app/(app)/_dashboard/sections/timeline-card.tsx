@@ -20,7 +20,6 @@ import {
   ChartTooltip,
   type ChartConfig,
 } from "@/app/components/ui/chart";
-import { formatPct } from "@/app/lib/format";
 import { api } from "@/app/lib/api";
 import { Provenance } from "@/app/lib/provenance";
 import { cn } from "@/app/lib/utils";
@@ -62,9 +61,7 @@ const tickFormatterX = (value: string) => {
 
 const tickFormatterY = (v: number) => formatUsd(v, { compact: true });
 
-function parseChartDate(isoDate: string): number {
-  return Date.parse(isoDate.includes("T") ? isoDate : `${isoDate}T12:00:00Z`);
-}
+const parseChartDate = Date.parse;
 
 function utcDayEqual(aMs: number, bMs: number): boolean {
   const a = new Date(aMs);
@@ -80,8 +77,6 @@ function utcDayEqual(aMs: number, bMs: number): boolean {
 const SNAPSHOTS_PROVENANCE_FOOTNOTE =
   "Each point reflects the investable total when that snapshot was saved. Hover a point to see the exact capture time and breakdown by asset class.";
 
-const CHART_HOVER_HINT = "Hover points for capture time and breakdown.";
-const ANCHOR_HOVER_HINT = "Hover the dot for save time and source.";
 
 type AnchorScatterPoint = { x: string; y: number };
 
@@ -254,29 +249,11 @@ export function TimelineCard() {
   );
 
   const derived = React.useMemo(
-    () => deriveTimelineUi(chartState, series, filtered),
-    [chartState, series, filtered],
+    () => deriveTimelineUi(chartState, series),
+    [chartState, series],
   );
 
-  const first = filtered[0];
-  const last = filtered[filtered.length - 1];
-  const hasPillData = derived.showPerformancePill && first && last;
-  const firstTotal = first ? snapshotTotal(first) : 0;
-  const lastTotal = last ? snapshotTotal(last) : 0;
-  const deltaUsd = lastTotal - firstTotal;
-  const deltaPct = firstTotal === 0 ? 0 : deltaUsd / firstTotal;
-  const positive = deltaUsd >= 0;
-  const sentiment = positive
-    ? "bg-success-soft text-success"
-    : "bg-destructive-soft text-destructive";
-  const trendGlyph = positive ? "\u2197" : "\u2198";
-
   const anchorTotal = series[0] ? snapshotTotal(series[0]) : 0;
-
-  const lastSnapshotTakenAt =
-    hasRealSnapshots && snapshotList?.length ? snapshotList[snapshotList.length - 1]!.taken_at : null;
-
-  const performanceCapturedAt = hasPillData ? (lastSnapshotTakenAt ?? last?.date ?? null) : null;
 
   const isSparseChart = chartState === "sparse";
 
@@ -374,34 +351,6 @@ export function TimelineCard() {
               );
             })}
           </div>
-        </div>
-
-        <div className="flex shrink-0 flex-col items-stretch gap-2 @lg/card-header:items-end">
-          {hasPillData ? (
-            <div className="flex flex-wrap items-center gap-2 @lg/card-header:justify-end">
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-label font-mono",
-                  sentiment,
-                )}
-              >
-                <Provenance
-                  source="snapshots"
-                  footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
-                  capturedAt={performanceCapturedAt}
-                >
-                  {formatUsd(deltaUsd, { signed: true })} ·{" "}
-                  {formatPct(deltaPct, { signed: true, digits: 2 })}
-                </Provenance>
-                <span className="font-sans text-sm leading-none" aria-hidden>
-                  {trendGlyph}
-                </span>
-              </span>
-              {derived.performanceSinceCaption ? (
-                <span className="text-body-sm text-muted-foreground">{derived.performanceSinceCaption}</span>
-              ) : null}
-            </div>
-          ) : null}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -528,12 +477,6 @@ export function TimelineCard() {
           <p className="text-center text-body-sm text-muted-foreground">{derived.chartFootnote}</p>
         ) : null}
 
-        {chartReady ? (
-          <p className="text-center text-body-sm text-muted-foreground">
-            {chartState === "anchor" ? ANCHOR_HOVER_HINT : CHART_HOVER_HINT}
-          </p>
-        ) : null}
-
         {derived.cta === "banner" ? (
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-foreground sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -581,23 +524,29 @@ function TimelineTooltip({
   if (!active || !payload?.length) return null;
   const point = payload[0]?.payload;
   if (!point) return null;
-  const d = new Date(point.date);
-  const dateLabel = Number.isFinite(d.getTime())
-    ? point.date.includes("T")
-      ? d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-      : d.toLocaleDateString(undefined, {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        })
+
+  const dayMs = Date.parse(point.date);
+  const dayLabel = Number.isFinite(dayMs)
+    ? new Date(dayMs).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
     : String(point.date);
-  const ordered = [...REAL_STACK_ORDER].reverse();
+  const savedAtLabel = point.snapshotTakenAt
+    ? new Date(point.snapshotTakenAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+    : null;
+
+  const ordered = [...REAL_STACK_ORDER].reverse().filter((s) => {
+    const v = (point as Record<string, number | string | undefined>)[s.key];
+    return typeof v === "number" && v > 0;
+  });
   const total = snapshotTotal(point);
-  const provenanceCapturedAt = point.snapshotTakenAt;
 
   return (
     <div className="grid min-w-44 max-w-xs gap-2 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-2">
-      <div className="font-medium leading-tight text-foreground">{dateLabel}</div>
+      <div>
+        <div className="font-medium leading-tight text-foreground">{dayLabel}</div>
+        {savedAtLabel ? (
+          <div className="text-[11px] text-muted-foreground">Saved {savedAtLabel}</div>
+        ) : null}
+      </div>
       <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-2">
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           Total
@@ -606,33 +555,37 @@ function TimelineTooltip({
           <Provenance
             source="snapshots"
             footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
-            capturedAt={provenanceCapturedAt}
+            capturedAt={point.snapshotTakenAt}
           >
             {formatUsd(total, { compact: true })}
           </Provenance>
         </span>
       </div>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        By class
-      </div>
-      <div className="grid gap-1">
-        {ordered.map((s) => {
-          const value = (point as Record<string, number | string | undefined>)[s.key] as number;
-          return (
-            <div key={s.key} className="flex items-center gap-2 text-[11px] leading-tight">
-              <span
-                aria-hidden
-                className="h-2 w-2 shrink-0 rounded-[2px]"
-                style={{ backgroundColor: stackColor(s.key) }}
-              />
-              <span className="min-w-0 flex-1 text-muted-foreground">{s.label}</span>
-              <span className="shrink-0 font-mono tabular-nums text-foreground">
-                {formatUsd(value, { compact: true })}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      {ordered.length > 0 ? (
+        <>
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            By class
+          </div>
+          <div className="grid gap-1">
+            {ordered.map((s) => {
+              const value = (point as Record<string, number | string | undefined>)[s.key] as number;
+              return (
+                <div key={s.key} className="flex items-center gap-2 text-[11px] leading-tight">
+                  <span
+                    aria-hidden
+                    className="h-2 w-2 shrink-0 rounded-[2px]"
+                    style={{ backgroundColor: stackColor(s.key) }}
+                  />
+                  <span className="min-w-0 flex-1 text-muted-foreground">{s.label}</span>
+                  <span className="shrink-0 font-mono tabular-nums text-foreground">
+                    {formatUsd(value, { compact: true })}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

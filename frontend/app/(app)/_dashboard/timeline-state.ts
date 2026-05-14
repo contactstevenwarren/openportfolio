@@ -20,39 +20,6 @@ export function snapshotTotal(p: ChartSnapshotPoint): number {
   return realSnapshotTotal(p);
 }
 
-/** Parse chart `date` ISO to ms (date-only treated as UTC noon). */
-function chartDateInstantMs(isoDate: string): number {
-  const raw = isoDate.includes("T") ? isoDate : `${isoDate}T12:00:00Z`;
-  const t = Date.parse(raw);
-  return Number.isFinite(t) ? t : NaN;
-}
-
-/**
- * Whole UTC calendar days between instants (non-negative).
- * Used so we do not show a "since … / Δ%" pill when both endpoints are the same calendar day
- * (same-day snapshots can swing totals without representing a meaningful time window).
- */
-export function utcCalendarDaySpan(aMs: number, bMs: number): number {
-  const a = new Date(aMs);
-  const b = new Date(bMs);
-  const dayA = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
-  const dayB = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
-  return Math.abs(Math.round((dayB - dayA) / 86_400_000));
-}
-
-/** True when Δ% vs first point is worth showing (≥2 points and ≥1 calendar day apart). */
-export function performancePillWarranted(
-  chartState: ChartState,
-  filteredSeries: ChartSnapshotPoint[],
-): boolean {
-  if (chartState === "anchor") return false;
-  if (filteredSeries.length < 2) return false;
-  const t0 = chartDateInstantMs(filteredSeries[0]!.date);
-  const t1 = chartDateInstantMs(filteredSeries[filteredSeries.length - 1]!.date);
-  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return false;
-  return utcCalendarDaySpan(t0, t1) >= 1;
-}
-
 export function periodCutoff(latest: Date, period: Period): Date | null {
   if (period === "All") return null;
   const d = new Date(latest);
@@ -91,12 +58,11 @@ export function filterSnapshots(
 export function defaultPeriodForSeries(series: ChartSnapshotPoint[]): Period {
   if (series.length < 2) return "All";
   const latest = new Date(series[series.length - 1].date);
-  const order: Period[] = ["All", "1Y", "YTD", "3M", "1M", "1W"];
-  for (const p of order) {
-    const f = filterSnapshots(series, p, latest);
-    if (f.length >= 2) return p;
+  // "All" is first in the loop and always matches (filterSnapshots returns the full series).
+  for (const p of (["All", "1Y", "YTD", "3M", "1M", "1W"] as Period[])) {
+    if (filterSnapshots(series, p, latest).length >= 2) return p;
   }
-  return "All";
+  return "All"; // unreachable
 }
 
 /** Prefer 3M when it keeps every point (matches sparse “partial quarter” default). */
@@ -146,48 +112,19 @@ export type TimelineCta = "none" | "subtle" | "banner";
 export type DerivedTimelineUi = {
   chartState: ChartState;
   subtitle: string;
-  showPerformancePill: boolean;
-  performanceSinceCaption: string | null;
   cta: TimelineCta;
   /** Footnote under chart area for sparse (linear interpolation). */
   chartFootnote: string | null;
 };
 
-export function formatSinceMonthYear(isoDate: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    year: "numeric",
-  }).format(new Date(isoDate));
-}
-
-/** e.g. Feb 26 — for sparse performance pill line. */
-export function formatSinceMonthDay(isoDate: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(isoDate));
-}
-
 export function deriveTimelineUi(
   chartState: ChartState,
   series: ChartSnapshotPoint[],
-  filteredSeries: ChartSnapshotPoint[],
 ): DerivedTimelineUi {
-  const showPill = performancePillWarranted(chartState, filteredSeries);
-  const oldest = filteredSeries[0]?.date ?? series[0]?.date ?? null;
-  const sinceCaption =
-    showPill && oldest != null
-      ? `since ${
-          chartState === "sparse" ? formatSinceMonthDay(oldest) : formatSinceMonthYear(oldest)
-        }`
-      : null;
-
   if (chartState === "anchor") {
     return {
       chartState,
       subtitle: "Each import or save adds a snapshot. The line chart appears after you have more than one.",
-      showPerformancePill: false,
-      performanceSinceCaption: null,
       cta: "banner",
       chartFootnote: null,
     };
@@ -201,8 +138,6 @@ export function deriveTimelineUi(
     return {
       chartState,
       subtitle,
-      showPerformancePill: showPill,
-      performanceSinceCaption: sinceCaption,
       cta: "subtle",
       chartFootnote:
         "Shaded area is space for future snapshots. Hover a point to see when it was saved and the breakdown by asset class.",
@@ -213,8 +148,6 @@ export function deriveTimelineUi(
   return {
     chartState,
     subtitle: "By asset class · investable accounts only.",
-    showPerformancePill: showPill,
-    performanceSinceCaption: sinceCaption,
     cta: "none",
     chartFootnote:
       "Net worth in the header also includes non-investable assets and liabilities.",
