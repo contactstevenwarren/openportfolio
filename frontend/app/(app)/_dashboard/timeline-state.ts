@@ -151,7 +151,7 @@ export function deriveTimelineUi(
   if (chartState === "anchor") {
     return {
       chartState,
-      subtitle: "Historical performance tracks from your import date",
+      subtitle: "Each import or save adds a snapshot. The line chart appears after you have more than one.",
       showPerformancePill: false,
       performanceSinceCaption: null,
       cta: "banner",
@@ -162,26 +162,27 @@ export function deriveTimelineUi(
   if (chartState === "sparse") {
     const subtitle =
       series.length >= 2
-        ? `Stacked by asset class · ${series.length} saved snapshots (X-axis = latest investable position as-of; hover shows when saved)`
-        : "Stacked by asset class · investable accounts only.";
+        ? `By asset class · ${series.length} saved snapshots`
+        : "By asset class · investable accounts only.";
     return {
       chartState,
       subtitle,
       showPerformancePill: filteredSeries.length >= 2,
       performanceSinceCaption: sinceCaption,
       cta: "subtle",
-      chartFootnote: "Shaded band is future timeline space — history still building.",
+      chartFootnote:
+        "Shaded area is space for future dates. Dates follow your positions’ latest statement as-of; hover a point for when it was saved and amounts by class.",
     };
   }
 
   // full
   return {
     chartState,
-    subtitle:
-      "Stacked by asset class · investable accounts only. Net worth in the header includes non-investable assets and liabilities.",
+    subtitle: "By asset class · investable accounts only.",
     showPerformancePill: filteredSeries.length >= 2,
     performanceSinceCaption: sinceCaption,
     cta: "none",
-    chartFootnote: null,
+    chartFootnote:
+      "Net worth in the header also includes non-investable assets and liabilities.",
   };
 }

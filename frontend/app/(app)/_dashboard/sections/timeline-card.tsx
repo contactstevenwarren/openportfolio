@@ -10,7 +10,6 @@ import type { ScatterShapeProps } from "recharts";
 import { Button } from "@/app/components/ui/button";
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -77,8 +76,12 @@ function utcDayEqual(aMs: number, bMs: number): boolean {
   );
 }
 
+/** Full provenance line for `title=` tooltips on numbers (kept concise in UI body copy). */
 const SNAPSHOTS_PROVENANCE_FOOTNOTE =
   "Each point reflects the investable total when that snapshot was saved. The chart time is the latest as-of date among investable positions (usually your statement date); hover shows the exact save time.";
+
+const CHART_HOVER_HINT = "Hover points for capture time and breakdown.";
+const ANCHOR_HOVER_HINT = "Hover the dot for save time and source.";
 
 type AnchorScatterPoint = { x: string; y: number };
 
@@ -128,65 +131,64 @@ function AnchorTodayChart({
   );
 
   return (
-    <div className="relative h-36 w-full sm:h-40">
-      <ChartContainer config={anchorChartConfig} className="h-full min-h-0 w-full aspect-auto">
-        <ScatterChart margin={{ top: 24, right: 16, bottom: 2, left: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-          <XAxis
-            type="category"
-            dataKey="x"
-            tickLine={false}
-            axisLine={false}
-            tickMargin={10}
-          />
-          <YAxis
-            type="number"
-            dataKey="y"
-            domain={[0, yMax]}
-            tickCount={5}
-            tickLine={false}
-            axisLine={false}
-            width={52}
-            tickFormatter={tickFormatterY}
-          />
-          <ChartTooltip
-            cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
-            content={({ active, payload }) =>
-              active && payload?.[0] ? (
-                <div className="rounded-md border border-border/50 bg-background px-2 py-1 text-xs shadow-md">
-                  <Provenance
-                    source={provenanceSource}
-                    footnote={provenanceFootnote}
-                    capturedAt={capturedAt ?? undefined}
-                  >
-                    <span className="font-mono font-medium tabular-nums">
-                      {formatUsd((payload[0].payload as AnchorScatterPoint).y, { compact: true })}
-                    </span>
-                  </Provenance>
-                </div>
-              ) : null
-            }
-          />
-          <Scatter
-            data={data}
-            fill="transparent"
-            isAnimationActive={false}
-            shape={(props: ScatterShapeProps) => (
-              <AnchorDotShape
-                cx={props.cx}
-                cy={props.cy}
-                payload={props.payload as AnchorScatterPoint | undefined}
-              />
-            )}
-          />
-        </ScatterChart>
-      </ChartContainer>
+    <div className="w-full">
+      <div className="relative h-36 w-full sm:h-40">
+        <ChartContainer config={anchorChartConfig} className="h-full min-h-0 w-full aspect-auto">
+          <ScatterChart margin={{ top: 24, right: 16, bottom: 2, left: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+            <XAxis
+              type="category"
+              dataKey="x"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={10}
+            />
+            <YAxis
+              type="number"
+              dataKey="y"
+              domain={[0, yMax]}
+              tickCount={5}
+              tickLine={false}
+              axisLine={false}
+              width={52}
+              tickFormatter={tickFormatterY}
+            />
+            <ChartTooltip
+              cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
+              content={({ active, payload }) =>
+                active && payload?.[0] ? (
+                  <div className="rounded-md border border-border/50 bg-background px-2 py-1 text-xs shadow-md">
+                    <Provenance
+                      source={provenanceSource}
+                      footnote={provenanceFootnote}
+                      capturedAt={capturedAt ?? undefined}
+                    >
+                      <span className="font-mono font-medium tabular-nums">
+                        {formatUsd((payload[0].payload as AnchorScatterPoint).y, { compact: true })}
+                      </span>
+                    </Provenance>
+                  </div>
+                ) : null
+              }
+            />
+            <Scatter
+              data={data}
+              fill="transparent"
+              isAnimationActive={false}
+              shape={(props: ScatterShapeProps) => (
+                <AnchorDotShape
+                  cx={props.cx}
+                  cy={props.cy}
+                  payload={props.payload as AnchorScatterPoint | undefined}
+                />
+              )}
+            />
+          </ScatterChart>
+        </ChartContainer>
+      </div>
       {showBuildingHint ? (
-        <p
-          className="pointer-events-none absolute inset-0 flex items-center justify-center px-16 text-center text-body-sm italic text-muted-foreground"
-          aria-hidden
-        >
-          History builds as you import or commit positions →
+        <p className="mt-2 text-center text-body-sm text-muted-foreground">
+          History builds as you import or commit positions — the chart fills in as snapshots add up.
         </p>
       ) : null}
     </div>
@@ -339,44 +341,16 @@ export function TimelineCard() {
 
   return (
     <Card className="h-full">
-      <CardHeader className="flex-wrap gap-3">
-        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 flex-1 space-y-1">
+      <CardHeader className="flex flex-col gap-4 px-6 @lg/card-header:flex-row @lg/card-header:items-start @lg/card-header:justify-between @lg/card-header:gap-6">
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          <div className="space-y-1">
             <CardTitle className="text-h3">Investable portfolio over time</CardTitle>
             <CardDescription className="text-pretty">{derived.subtitle}</CardDescription>
-          </div>
-        </div>
-
-        <CardAction className="flex w-full flex-col gap-2 @lg/card-header:max-w-full">
-          <div className="flex w-full flex-wrap items-center justify-end gap-2">
-            {hasPillData ? (
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-label font-mono",
-                  sentiment,
-                )}
-              >
-                <Provenance
-                  source="snapshots"
-                  footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
-                  capturedAt={performanceCapturedAt}
-                >
-                  {formatUsd(deltaUsd, { signed: true })} ·{" "}
-                  {formatPct(deltaPct, { signed: true, digits: 2 })}
-                </Provenance>
-                <span className="font-sans text-sm leading-none" aria-hidden>
-                  {trendGlyph}
-                </span>
-              </span>
-            ) : null}
-            {hasPillData && derived.performanceSinceCaption ? (
-              <span className="text-body-sm text-muted-foreground">{derived.performanceSinceCaption}</span>
-            ) : null}
           </div>
           <div
             role="group"
             aria-label="Time period"
-            className="flex w-full flex-wrap items-center justify-end gap-0.5 rounded-md border bg-background p-0.5"
+            className="flex w-full max-w-md flex-wrap gap-0.5 rounded-md border border-border bg-background p-0.5"
           >
             {periodMeta.map(({ period: p, disabled, title }) => {
               const active = chartState !== "anchor" && p === period;
@@ -400,13 +374,41 @@ export function TimelineCard() {
               );
             })}
           </div>
-        </CardAction>
+        </div>
+
+        <div className="flex shrink-0 flex-col items-stretch gap-2 @lg/card-header:items-end">
+          {hasPillData ? (
+            <div className="flex flex-wrap items-center gap-2 @lg/card-header:justify-end">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-label font-mono",
+                  sentiment,
+                )}
+              >
+                <Provenance
+                  source="snapshots"
+                  footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
+                  capturedAt={performanceCapturedAt}
+                >
+                  {formatUsd(deltaUsd, { signed: true })} ·{" "}
+                  {formatPct(deltaPct, { signed: true, digits: 2 })}
+                </Provenance>
+                <span className="font-sans text-sm leading-none" aria-hidden>
+                  {trendGlyph}
+                </span>
+              </span>
+              {derived.performanceSinceCaption ? (
+                <span className="text-body-sm text-muted-foreground">{derived.performanceSinceCaption}</span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {!chartReady ? (
           <div className="flex min-h-36 items-center justify-center rounded-md border border-dashed bg-muted/30 px-4 py-8 text-body-sm text-muted-foreground">
             {snapshotsError || allocationError
-              ? "Could not load timeline data. Check your connection and admin token, then reload."
+              ? "Couldn't load this chart. Check your connection and try again."
               : "Loading timeline…"}
           </div>
         ) : chartState === "anchor" ? (
@@ -522,6 +524,16 @@ export function TimelineCard() {
           </ChartContainer>
         )}
 
+        {derived.chartFootnote ? (
+          <p className="text-center text-body-sm text-muted-foreground">{derived.chartFootnote}</p>
+        ) : null}
+
+        {chartReady ? (
+          <p className="text-center text-body-sm text-muted-foreground">
+            {chartState === "anchor" ? ANCHOR_HOVER_HINT : CHART_HOVER_HINT}
+          </p>
+        ) : null}
+
         {derived.cta === "banner" ? (
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-foreground sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -545,14 +557,6 @@ export function TimelineCard() {
               Import more positions to grow your timeline →
             </Link>
           </div>
-        ) : null}
-
-        {hasRealSnapshots ? (
-          <p className="text-center text-body-sm text-muted-foreground">{SNAPSHOTS_PROVENANCE_FOOTNOTE}</p>
-        ) : null}
-
-        {derived.chartFootnote ? (
-          <p className="text-center text-body-sm text-muted-foreground">{derived.chartFootnote}</p>
         ) : null}
       </CardContent>
     </Card>
@@ -592,29 +596,13 @@ function TimelineTooltip({
   const provenanceCapturedAt = point.snapshotTakenAt;
 
   return (
-    <div className="grid min-w-48 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-2">
-      <div className="font-medium">{dateLabel}</div>
-      <div className="grid gap-1">
-        {ordered.map((s) => {
-          const value = (point as Record<string, number | string | undefined>)[s.key] as number;
-          return (
-            <div key={s.key} className="flex items-center gap-2">
-              <span
-                aria-hidden
-                className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                style={{ backgroundColor: stackColor(s.key) }}
-              />
-              <span className="flex-1 text-muted-foreground">{s.label}</span>
-              <span className="font-mono tabular-nums text-foreground">
-                {formatUsd(value, { compact: true })}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-1 flex items-center justify-between border-t border-border/50 pt-1.5">
-        <span className="text-muted-foreground">Total</span>
-        <span className="font-mono font-medium tabular-nums text-foreground">
+    <div className="grid min-w-44 max-w-xs gap-2 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-2">
+      <div className="font-medium leading-tight text-foreground">{dateLabel}</div>
+      <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-2">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Total
+        </span>
+        <span className="font-mono text-sm font-medium tabular-nums leading-none text-foreground">
           <Provenance
             source="snapshots"
             footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
@@ -623,6 +611,27 @@ function TimelineTooltip({
             {formatUsd(total, { compact: true })}
           </Provenance>
         </span>
+      </div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        By class
+      </div>
+      <div className="grid gap-1">
+        {ordered.map((s) => {
+          const value = (point as Record<string, number | string | undefined>)[s.key] as number;
+          return (
+            <div key={s.key} className="flex items-center gap-2 text-[11px] leading-tight">
+              <span
+                aria-hidden
+                className="h-2 w-2 shrink-0 rounded-[2px]"
+                style={{ backgroundColor: stackColor(s.key) }}
+              />
+              <span className="min-w-0 flex-1 text-muted-foreground">{s.label}</span>
+              <span className="shrink-0 font-mono tabular-nums text-foreground">
+                {formatUsd(value, { compact: true })}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
