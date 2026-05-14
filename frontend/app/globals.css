@@ -45,13 +45,6 @@
   --viz-crypto: #db2777;
   --viz-private: #71717a;
 
-  /* Dashboard timeline mocks only (`timeline-mocks.ts`). Live chart stacks use `--viz-*` via ASSET_CLASS_COLOR. */
-  --nw-timeline-cash: var(--viz-cash);
-  --nw-timeline-us-equity: #2563eb;
-  --nw-timeline-intl-equity: #0d9488;
-  --nw-timeline-fixed-income: #7c3aed;
-  --nw-timeline-real-estate: var(--viz-real-estate);
-
   --chart-1: var(--viz-cash);
   --chart-2: var(--viz-stocks);
   --chart-3: var(--viz-bonds);
@@ -115,13 +108,6 @@
   --viz-commodities: #facc15;
   --viz-crypto: #f472b6;
   --viz-private: #a1a1aa;
-
-  /* Same as light: mock timeline layers only; live stacks use `--viz-*`. */
-  --nw-timeline-cash: var(--viz-cash);
-  --nw-timeline-us-equity: #60a5fa;
-  --nw-timeline-intl-equity: #5eead4;
-  --nw-timeline-fixed-income: #a78bfa;
-  --nw-timeline-real-estate: var(--viz-real-estate);
 
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.40);
   --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.50);

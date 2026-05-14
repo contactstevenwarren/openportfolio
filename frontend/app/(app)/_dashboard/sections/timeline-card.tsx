@@ -32,7 +32,6 @@ import {
   SPARSE_DOT_STACK_KEY_REAL,
   allocationToAnchorSeries,
   chartColorVarSegment,
-  isRealSnapshotPoint,
   snapshotsToSeries,
   stackColor,
 } from "../snapshot-series";
@@ -590,8 +589,7 @@ function TimelineTooltip({
     : String(point.date);
   const ordered = [...REAL_STACK_ORDER].reverse();
   const total = snapshotTotal(point);
-  const provenanceCapturedAt =
-    isRealSnapshotPoint(point) ? point.snapshotTakenAt : point.date;
+  const provenanceCapturedAt = point.snapshotTakenAt;
 
   return (
     <div className="grid min-w-48 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-2">

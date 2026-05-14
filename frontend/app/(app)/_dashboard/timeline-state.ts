@@ -1,19 +1,12 @@
 /**
- * Investable timeline chart UI state (Phase A: mock + preview override).
+ * Investable timeline chart UI state (snapshots + live allocation anchor).
  */
 
-import {
-  mockTimelineAnchor,
-  mockTimelineFull,
-  mockTimelineSparse,
-  type SnapshotPoint,
-  type TimelineStackKey,
-} from "./timeline-mocks";
 import type { RealSnapshotPoint } from "./snapshot-series";
-import { isRealSnapshotPoint, realSnapshotTotal } from "./snapshot-series";
+import { realSnapshotTotal } from "./snapshot-series";
 
-/** Any row the investable timeline chart can plot (mock keys or live allocation classes). */
-export type ChartSnapshotPoint = SnapshotPoint | RealSnapshotPoint;
+/** Rows plotted by the investable timeline (API snapshots or allocation-derived anchor). */
+export type ChartSnapshotPoint = RealSnapshotPoint;
 
 export type ChartState = "anchor" | "sparse" | "full";
 
@@ -24,15 +17,7 @@ export const PERIODS: Period[] = ["1W", "1M", "3M", "YTD", "1Y", "All"];
 const RANGE_DISABLED_TITLE = "Available once history accumulates.";
 
 export function snapshotTotal(p: ChartSnapshotPoint): number {
-  if ("investable_total_usd" in p) return realSnapshotTotal(p);
-  const m = p as SnapshotPoint;
-  return (
-    m.cash +
-    m["us-equity"] +
-    m["intl-equity"] +
-    m["fixed-income"] +
-    m["real-estate"]
-  );
+  return realSnapshotTotal(p);
 }
 
 export function periodCutoff(latest: Date, period: Period): Date | null {
@@ -175,14 +160,9 @@ export function deriveTimelineUi(
   }
 
   if (chartState === "sparse") {
-    const isLiveSnapshots = series.length > 0 && isRealSnapshotPoint(series[0]);
     const subtitle =
       series.length >= 2
-        ? isLiveSnapshots
-          ? `Stacked by asset class · ${series.length} saved snapshots (X-axis = latest investable position as-of; hover shows when saved)`
-          : `Stacked by asset class · ${Math.max(0, series.length - 1)} statement${
-              series.length - 1 === 1 ? "" : "s"
-            } + today`
+        ? `Stacked by asset class · ${series.length} saved snapshots (X-axis = latest investable position as-of; hover shows when saved)`
         : "Stacked by asset class · investable accounts only.";
     return {
       chartState,
@@ -197,29 +177,11 @@ export function deriveTimelineUi(
   // full
   return {
     chartState,
-    subtitle: "Stacked by asset class · investable accounts only. Net worth in the header includes non-investable assets and liabilities.",
+    subtitle:
+      "Stacked by asset class · investable accounts only. Net worth in the header includes non-investable assets and liabilities.",
     showPerformancePill: filteredSeries.length >= 2,
     performanceSinceCaption: sinceCaption,
     cta: "none",
     chartFootnote: null,
   };
-}
-
-export const STACK_ORDER: Array<{ key: TimelineStackKey; label: string }> = [
-  { key: "us-equity", label: "US equity" },
-  { key: "fixed-income", label: "Fixed income" },
-  { key: "intl-equity", label: "Intl equity" },
-  { key: "real-estate", label: "Real estate" },
-  { key: "cash", label: "Cash" },
-];
-
-export function getTimelineMockSeries(chartState: ChartState): SnapshotPoint[] {
-  switch (chartState) {
-    case "anchor":
-      return mockTimelineAnchor;
-    case "sparse":
-      return mockTimelineSparse;
-    case "full":
-      return mockTimelineFull;
-  }
 }
