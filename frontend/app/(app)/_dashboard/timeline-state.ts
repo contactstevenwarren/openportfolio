@@ -20,6 +20,51 @@ export function snapshotTotal(p: ChartSnapshotPoint): number {
   return realSnapshotTotal(p);
 }
 
+/** Parse chart `date` ISO to ms (date-only treated as UTC noon). */
+function chartDateInstantMs(isoDate: string): number {
+  const raw = isoDate.includes("T") ? isoDate : `${isoDate}T12:00:00Z`;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : NaN;
+}
+
+/** Whole UTC calendar days between instants (non-negative). */
+export function utcCalendarDaySpan(aMs: number, bMs: number): number {
+  const a = new Date(aMs);
+  const b = new Date(bMs);
+  const dayA = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
+  const dayB = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
+  return Math.abs(Math.round((dayB - dayA) / 86_400_000));
+}
+
+/**
+ * Show a muted “change vs first day in range” line only when the window is at least one UTC calendar day
+ * (avoids implying a trend from same-day-only points).
+ */
+export function performanceSummaryWarranted(
+  chartState: ChartState,
+  filteredSeries: ChartSnapshotPoint[],
+): boolean {
+  if (chartState === "anchor") return false;
+  if (filteredSeries.length < 2) return false;
+  const t0 = chartDateInstantMs(filteredSeries[0]!.date);
+  const t1 = chartDateInstantMs(filteredSeries[filteredSeries.length - 1]!.date);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return false;
+  return utcCalendarDaySpan(t0, t1) >= 1;
+}
+
+export function formatPerformanceSince(chartState: ChartState, isoDate: string): string {
+  const d = new Date(isoDate);
+  if (chartState === "sparse") {
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
+  }
+  return new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(d);
+}
+
+export type DeriveTimelineOpts = {
+  /** Count of rows from GET /api/snapshots/ before UTC-day rollup (for honest copy). */
+  rawSnapshotCount?: number;
+};
+
 export function periodCutoff(latest: Date, period: Period): Date | null {
   if (period === "All") return null;
   const d = new Date(latest);
@@ -58,11 +103,10 @@ export function filterSnapshots(
 export function defaultPeriodForSeries(series: ChartSnapshotPoint[]): Period {
   if (series.length < 2) return "All";
   const latest = new Date(series[series.length - 1].date);
-  // "All" is first in the loop and always matches (filterSnapshots returns the full series).
-  for (const p of (["All", "1Y", "YTD", "3M", "1M", "1W"] as Period[])) {
+  for (const p of ["All", "1Y", "YTD", "3M", "1M", "1W"] as Period[]) {
     if (filterSnapshots(series, p, latest).length >= 2) return p;
   }
-  return "All"; // unreachable
+  return "All";
 }
 
 /** Prefer 3M when it keeps every point (matches sparse “partial quarter” default). */
@@ -117,39 +161,50 @@ export type DerivedTimelineUi = {
   chartFootnote: string | null;
 };
 
+function anchorRollupFootnote(raw: number | undefined, dayPoints: number): string | null {
+  if (raw == null || raw < 2 || dayPoints < 1) return null;
+  if (raw <= dayPoints) return null;
+  return `${raw} saves in your history roll up to ${dayPoints} chart day${dayPoints === 1 ? "" : "s"} — one point per UTC calendar day (latest save that day).`;
+}
+
 export function deriveTimelineUi(
   chartState: ChartState,
   series: ChartSnapshotPoint[],
+  opts?: DeriveTimelineOpts,
 ): DerivedTimelineUi {
+  const raw = opts?.rawSnapshotCount;
+  const rollupHint =
+    "Each point is the latest save on that UTC calendar day.";
+
   if (chartState === "anchor") {
+    const foot = anchorRollupFootnote(raw, series.length);
     return {
       chartState,
-      subtitle: "Each import or save adds a snapshot. The line chart appears after you have more than one.",
+      subtitle:
+        "One point per UTC calendar day (latest save that day). The stacked chart appears after you have more than one day of history.",
       cta: "banner",
-      chartFootnote: null,
+      chartFootnote: foot,
     };
   }
 
   if (chartState === "sparse") {
+    const n = series.length;
     const subtitle =
-      series.length >= 2
-        ? `By asset class · ${series.length} saved snapshots`
+      n >= 2
+        ? `By asset class · ${n} days on the chart (UTC · last save per day)`
         : "By asset class · investable accounts only.";
     return {
       chartState,
       subtitle,
       cta: "subtle",
-      chartFootnote:
-        "Shaded area is space for future snapshots. Hover a point to see when it was saved and the breakdown by asset class.",
+      chartFootnote: `${rollupHint} Shaded area is space for future snapshots. Hover a point for save time and breakdown by class.`,
     };
   }
 
-  // full
   return {
     chartState,
     subtitle: "By asset class · investable accounts only.",
     cta: "none",
-    chartFootnote:
-      "Net worth in the header also includes non-investable assets and liabilities.",
+    chartFootnote: `${rollupHint} Net worth in the header also includes non-investable assets and liabilities.`,
   };
 }

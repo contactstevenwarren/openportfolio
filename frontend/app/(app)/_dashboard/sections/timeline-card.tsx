@@ -21,6 +21,7 @@ import {
   type ChartConfig,
 } from "@/app/components/ui/chart";
 import { api } from "@/app/lib/api";
+import { formatPct } from "@/app/lib/format";
 import { Provenance } from "@/app/lib/provenance";
 import { cn } from "@/app/lib/utils";
 
@@ -38,6 +39,8 @@ import {
   defaultPeriodForSparseSeries,
   deriveTimelineUi,
   filterSnapshots,
+  formatPerformanceSince,
+  performanceSummaryWarranted,
   periodControls,
   snapshotTotal,
   type ChartSnapshotPoint,
@@ -81,9 +84,13 @@ const SNAPSHOTS_PROVENANCE_FOOTNOTE =
 type AnchorScatterPoint = { x: string; y: number };
 
 function anchorYAxisMax(totalUsd: number): number {
-  if (totalUsd <= 0) return 600_000;
-  const step = 200_000;
-  return Math.max(600_000, Math.ceil((totalUsd * 1.12) / step) * step);
+  if (totalUsd <= 0) return 10_000;
+  const padded = totalUsd * 1.18;
+  if (padded <= 25_000) return Math.max(10_000, Math.ceil(padded / 2_500) * 2_500);
+  if (padded <= 100_000) return Math.ceil(padded / 10_000) * 10_000;
+  if (padded <= 500_000) return Math.ceil(padded / 25_000) * 25_000;
+  const step = 100_000;
+  return Math.max(200_000, Math.ceil(padded / step) * step);
 }
 
 function AnchorDotShape(props: { cx?: number; cy?: number; payload?: AnchorScatterPoint }) {
@@ -183,7 +190,8 @@ function AnchorTodayChart({
       </div>
       {showBuildingHint ? (
         <p className="mt-2 text-center text-body-sm text-muted-foreground">
-          History builds as you import or commit positions — the chart fills in as snapshots add up.
+          History builds as you add positions — the chart needs more than one UTC calendar day (last save each
+          day).
         </p>
       ) : null}
     </div>
@@ -248,9 +256,12 @@ export function TimelineCard() {
     [chartState, series, latest],
   );
 
+  const rawSnapshotCount =
+    hasRealSnapshots && snapshotList?.length != null ? snapshotList.length : undefined;
+
   const derived = React.useMemo(
-    () => deriveTimelineUi(chartState, series),
-    [chartState, series],
+    () => deriveTimelineUi(chartState, series, { rawSnapshotCount }),
+    [chartState, series, rawSnapshotCount],
   );
 
   const anchorTotal = series[0] ? snapshotTotal(series[0]) : 0;
@@ -316,6 +327,25 @@ export function TimelineCard() {
   const anchorCapturedAt =
     hasRealSnapshots && snapshotList?.[0] ? snapshotList[0].taken_at : null;
 
+  const firstFiltered = filtered[0];
+  const lastFiltered = filtered[filtered.length - 1];
+  const showPerformanceSummary =
+    chartReady &&
+    performanceSummaryWarranted(chartState, filtered) &&
+    firstFiltered &&
+    lastFiltered;
+  const firstTotal = firstFiltered ? snapshotTotal(firstFiltered) : 0;
+  const lastTotal = lastFiltered ? snapshotTotal(lastFiltered) : 0;
+  const deltaUsd = lastTotal - firstTotal;
+  const deltaPct = firstTotal === 0 ? 0 : deltaUsd / firstTotal;
+  const positive = deltaUsd >= 0;
+  const sentimentSummary = positive ? "text-success" : "text-destructive";
+  const trendGlyph = positive ? "\u2197" : "\u2198";
+  const sinceLabel =
+    showPerformanceSummary && firstFiltered
+      ? formatPerformanceSince(chartState, firstFiltered.date)
+      : null;
+
   return (
     <Card className="h-full">
       <CardHeader className="flex flex-col gap-4 px-6 @lg/card-header:flex-row @lg/card-header:items-start @lg/card-header:justify-between @lg/card-header:gap-6">
@@ -352,6 +382,28 @@ export function TimelineCard() {
             })}
           </div>
         </div>
+
+        {showPerformanceSummary ? (
+          <div className="flex shrink-0 flex-col items-end gap-1 text-right">
+            <p className={cn("text-body-sm", sentimentSummary)}>
+              <span className="font-mono font-medium tabular-nums">
+                <Provenance
+                  source="snapshots"
+                  footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
+                  capturedAt={lastFiltered?.snapshotTakenAt ?? undefined}
+                >
+                  {formatUsd(deltaUsd, { signed: true })} · {formatPct(deltaPct, { signed: true, digits: 2 })}
+                </Provenance>{" "}
+                <span className="font-sans font-normal" aria-hidden>
+                  {trendGlyph}
+                </span>
+              </span>
+            </p>
+            {sinceLabel ? (
+              <p className="text-body-sm text-muted-foreground">since {sinceLabel}</p>
+            ) : null}
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent className="space-y-4">
         {!chartReady ? (
@@ -361,16 +413,21 @@ export function TimelineCard() {
               : "Loading timeline…"}
           </div>
         ) : chartState === "anchor" ? (
-          <AnchorTodayChart
-            totalUsd={anchorTotal}
-            xLabel={anchorXLabel}
-            provenanceSource={hasRealSnapshots ? "snapshots" : "allocation"}
-            provenanceFootnote={
-              hasRealSnapshots ? SNAPSHOTS_PROVENANCE_FOOTNOTE : "Live investable total from /api/allocation."
-            }
-            capturedAt={anchorCapturedAt}
-            showBuildingHint={!hasRealSnapshots}
-          />
+          <>
+            <AnchorTodayChart
+              totalUsd={anchorTotal}
+              xLabel={anchorXLabel}
+              provenanceSource={hasRealSnapshots ? "snapshots" : "allocation"}
+              provenanceFootnote={
+                hasRealSnapshots ? SNAPSHOTS_PROVENANCE_FOOTNOTE : "Live investable total from /api/allocation."
+              }
+              capturedAt={anchorCapturedAt}
+              showBuildingHint={!hasRealSnapshots}
+            />
+            {derived.chartFootnote ? (
+              <p className="text-center text-body-sm text-muted-foreground">{derived.chartFootnote}</p>
+            ) : null}
+          </>
         ) : (
           <ChartContainer config={realAreaChartConfig} className="aspect-[16/6] w-full">
             <AreaChart data={stackedChartData} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
@@ -486,7 +543,7 @@ export function TimelineCard() {
               </p>
             </div>
             <Button asChild variant="accent" size="sm" className="shrink-0">
-              <Link href="/accounts">Upload PDF</Link>
+              <Link href="/accounts">Add positions</Link>
             </Button>
           </div>
         ) : null}

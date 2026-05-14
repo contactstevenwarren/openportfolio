@@ -32,6 +32,7 @@ function emptyStacks(): Record<AssetClass, number> {
 }
 
 export function snapshotsToSeries(snaps: SnapshotListItem[]): RealSnapshotPoint[] {
+  // One chart row per UTC calendar day (latest save that day). UI copy must match; raw row count may be higher.
   // Parse each timestamp once, then sort and deduplicate by calendar day.
   const withMs = snaps.map((s) => ({ s, ms: takenAtMs(s) }));
   withMs.sort((a, b) => a.ms - b.ms);
