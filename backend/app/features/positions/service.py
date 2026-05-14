@@ -8,8 +8,13 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models import Account, Position, Provenance
-from .schemas import PositionCommit, PositionPatch, PositionRead
+from .schemas import (
+    PositionCommit,
+    PositionPatch,
+    PositionRead,
+)
 from app.services.commit_service import commit_positions as run_commit
+from app.services.portfolio_snapshot import write_snapshot
 
 
 def list_positions(db: Session, account_id: int | None) -> list[PositionRead]:
@@ -60,6 +65,7 @@ def patch_position(db: Session, position_id: int, body: PositionPatch) -> Positi
 
     db.commit()
     db.refresh(position)
+    write_snapshot(db)
     return PositionRead.model_validate(position)
 
 
@@ -69,6 +75,7 @@ def delete_position(db: Session, position_id: int) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     db.delete(position)
     db.commit()
+    write_snapshot(db)
 
 
 def commit_positions(db: Session, body: PositionCommit):

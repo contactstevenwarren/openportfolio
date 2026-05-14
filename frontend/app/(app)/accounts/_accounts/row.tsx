@@ -24,7 +24,7 @@ import {
   TooltipContent,
 } from "@/app/components/ui/tooltip";
 import { cn } from "@/app/lib/utils";
-import type { Account, Institution, ClassificationRow } from "@/app/lib/api";
+import type { Account, Institution, ClassificationRow, Position } from "@/app/lib/api";
 import { classificationPrimaryAssetClass } from "@/app/lib/api";
 import { api } from "@/app/lib/api";
 import {
@@ -45,6 +45,7 @@ import {
 import { Switch } from "@/app/components/ui/switch";
 
 const INVESTABLE_HINT_KEY = "op:investable-hint-dismissed";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -532,7 +533,10 @@ export function Row({
     () => api.classifications(),
     { revalidateOnFocus: false }
   );
-  const classMap = new Map(classifications.map((c) => [c.ticker, c]));
+  const classMap = useMemo(
+    () => new Map(classifications.map((c) => [c.ticker, c])),
+    [classifications],
+  );
 
   const { data: allPortfolioPositions = [] } = useSWR(
     isExpanded && !account.is_manual ? "/api/positions" : null,
@@ -550,14 +554,14 @@ export function Row({
 
   // ── Unclassified filter state ──────────────────────────────────────────────
   const [unclassifiedFilter, setUnclassifiedFilter] = useState(false);
-  const visiblePositions = unclassifiedFilter
-    ? positions.filter((pos) => {
-        const row = classMap.get(pos.ticker);
-        return !row || !classificationPrimaryAssetClass(row);
-      })
-    : positions;
+  const visiblePositions = useMemo((): Position[] => {
+    if (!unclassifiedFilter) return positions;
+    return positions.filter((pos) => {
+      const row = classMap.get(pos.ticker);
+      return !row || !classificationPrimaryAssetClass(row);
+    });
+  }, [positions, unclassifiedFilter, classMap]);
 
-  // ── Investable hint dismiss state ─────────────────────────────────────────
   // Shown once for real_estate / private accounts that are still marked investable,
   // to nudge the user toward the "Include in Investment Portfolio" toggle in Edit.
   const [hintDismissed, setHintDismissed] = useState<boolean>(() => {

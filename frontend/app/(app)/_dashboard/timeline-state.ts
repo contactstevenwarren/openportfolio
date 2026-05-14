@@ -9,6 +9,11 @@ import {
   type SnapshotPoint,
   type TimelineStackKey,
 } from "./timeline-mocks";
+import type { RealSnapshotPoint } from "./snapshot-series";
+import { isRealSnapshotPoint, realSnapshotTotal } from "./snapshot-series";
+
+/** Any row the investable timeline chart can plot (mock keys or live allocation classes). */
+export type ChartSnapshotPoint = SnapshotPoint | RealSnapshotPoint;
 
 export type ChartState = "anchor" | "sparse" | "full";
 
@@ -18,13 +23,15 @@ export const PERIODS: Period[] = ["1W", "1M", "3M", "YTD", "1Y", "All"];
 
 const RANGE_DISABLED_TITLE = "Available once history accumulates.";
 
-export function snapshotTotal(p: SnapshotPoint): number {
+export function snapshotTotal(p: ChartSnapshotPoint): number {
+  if ("investable_total_usd" in p) return realSnapshotTotal(p);
+  const m = p as SnapshotPoint;
   return (
-    p.cash +
-    p["us-equity"] +
-    p["intl-equity"] +
-    p["fixed-income"] +
-    p["real-estate"]
+    m.cash +
+    m["us-equity"] +
+    m["intl-equity"] +
+    m["fixed-income"] +
+    m["real-estate"]
   );
 }
 
@@ -50,10 +57,10 @@ export function periodCutoff(latest: Date, period: Period): Date | null {
 }
 
 export function filterSnapshots(
-  snapshots: SnapshotPoint[],
+  snapshots: ChartSnapshotPoint[],
   period: Period,
   latestOverride?: Date,
-): SnapshotPoint[] {
+): ChartSnapshotPoint[] {
   if (snapshots.length === 0) return snapshots;
   const latest = latestOverride ?? new Date(snapshots[snapshots.length - 1].date);
   const cutoff = periodCutoff(latest, period);
@@ -63,7 +70,7 @@ export function filterSnapshots(
 }
 
 /** Widest period (prefer showing full series) that still leaves ≥2 points after filter. */
-export function defaultPeriodForSeries(series: SnapshotPoint[]): Period {
+export function defaultPeriodForSeries(series: ChartSnapshotPoint[]): Period {
   if (series.length < 2) return "All";
   const latest = new Date(series[series.length - 1].date);
   const order: Period[] = ["All", "1Y", "YTD", "3M", "1M", "1W"];
@@ -75,7 +82,7 @@ export function defaultPeriodForSeries(series: SnapshotPoint[]): Period {
 }
 
 /** Prefer 3M when it keeps every point (matches sparse “partial quarter” default). */
-export function defaultPeriodForSparseSeries(series: SnapshotPoint[]): Period {
+export function defaultPeriodForSparseSeries(series: ChartSnapshotPoint[]): Period {
   if (series.length < 2) return "All";
   const latest = new Date(series[series.length - 1].date);
   const with3m = filterSnapshots(series, "3M", latest);
@@ -91,7 +98,7 @@ export type PeriodControl = {
 
 export function periodControls(
   chartState: ChartState,
-  series: SnapshotPoint[],
+  series: ChartSnapshotPoint[],
   latest: Date,
 ): PeriodControl[] {
   if (chartState === "anchor") {
@@ -145,8 +152,8 @@ export function formatSinceMonthDay(isoDate: string): string {
 
 export function deriveTimelineUi(
   chartState: ChartState,
-  series: SnapshotPoint[],
-  filteredSeries: SnapshotPoint[],
+  series: ChartSnapshotPoint[],
+  filteredSeries: ChartSnapshotPoint[],
 ): DerivedTimelineUi {
   const oldest = filteredSeries[0]?.date ?? series[0]?.date ?? null;
   const sinceCaption =
@@ -168,10 +175,16 @@ export function deriveTimelineUi(
   }
 
   if (chartState === "sparse") {
-    const statements = Math.max(0, series.length - 1);
+    const isLiveSnapshots = series.length > 0 && isRealSnapshotPoint(series[0]);
     const subtitle =
       series.length >= 2
-        ? `Stacked by asset class · ${statements} statement${statements === 1 ? "" : "s"} + today`
+        ? isLiveSnapshots
+          ? `Stacked by asset class · ${series.length} saved snapshot${
+              series.length === 1 ? "" : "s"
+            } (X-axis = latest investable position as-of; hover shows when saved)`
+          : `Stacked by asset class · ${Math.max(0, series.length - 1)} statement${
+              series.length - 1 === 1 ? "" : "s"
+            } + today`
         : "Stacked by asset class · investable accounts only.";
     return {
       chartState,

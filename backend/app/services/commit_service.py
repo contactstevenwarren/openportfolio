@@ -164,6 +164,7 @@ def add_position_numeric_provenance(
 
 def commit_positions(db: Session, body: PositionCommit) -> CommitResult:
     now = datetime.now(UTC)
+    position_as_of = now
 
     if body.account_id is not None:
         target_account = db.get(Account, body.account_id)
@@ -226,7 +227,7 @@ def commit_positions(db: Session, body: PositionCommit) -> CommitResult:
                 position.shares = row.shares
                 position.cost_basis = row.cost_basis
                 position.market_value = row.market_value
-                position.as_of = now
+                position.as_of = position_as_of
                 position.source = body.source
                 for field, old_v, new_v in (
                     ("shares", old_shares, row.shares),
@@ -256,7 +257,7 @@ def commit_positions(db: Session, body: PositionCommit) -> CommitResult:
                     shares=row.shares,
                     cost_basis=row.cost_basis,
                     market_value=row.market_value,
-                    as_of=now,
+                    as_of=position_as_of,
                     source=body.source,
                 )
                 db.add(position)
@@ -314,7 +315,7 @@ def commit_positions(db: Session, body: PositionCommit) -> CommitResult:
             position.shares = row.shares
             position.cost_basis = row.cost_basis
             position.market_value = row.market_value
-            position.as_of = now
+            position.as_of = position_as_of
             position.source = body.source
         else:
             position = Position(
@@ -323,7 +324,7 @@ def commit_positions(db: Session, body: PositionCommit) -> CommitResult:
                 shares=row.shares,
                 cost_basis=row.cost_basis,
                 market_value=row.market_value,
-                as_of=now,
+                as_of=position_as_of,
                 source=body.source,
             )
             db.add(position)

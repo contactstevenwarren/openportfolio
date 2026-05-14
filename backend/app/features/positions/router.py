@@ -4,7 +4,12 @@ from sqlalchemy.orm import Session
 from app.auth import require_admin_token
 from app.db import get_db
 from . import service as positions_svc
-from .schemas import CommitResult, PositionCommit, PositionPatch, PositionRead
+from .schemas import (
+    CommitResult,
+    PositionCommit,
+    PositionPatch,
+    PositionRead,
+)
 
 router = APIRouter(
     prefix="/api/positions",

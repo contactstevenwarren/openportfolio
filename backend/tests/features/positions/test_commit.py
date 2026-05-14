@@ -630,3 +630,5 @@ def test_replace_account_upsert_adds_provenance_only_for_changed_numerics(
     assert last.source == "paste:2"
     assert last.confidence == 0.92
     assert last.llm_span == "s2"
+
+

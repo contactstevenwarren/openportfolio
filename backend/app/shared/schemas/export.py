@@ -39,6 +39,14 @@ class SnapshotEarliest(BaseModel):
     total_usd: float | None = None
 
 
+class SnapshotListItem(BaseModel):
+    """One persisted portfolio snapshot (investable scope, same as allocation)."""
+
+    taken_at: datetime
+    investable_total_usd: float
+    by_asset_class: dict[str, float] = Field(default_factory=dict)
+
+
 class LiabilityRead(BaseModel):
     id: int
     label: str

@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight, FileUp } from "lucide-react";
+import useSWR from "swr";
 import { Area, AreaChart, CartesianGrid, ReferenceArea, Scatter, ScatterChart, XAxis, YAxis } from "recharts";
 import type { ScatterShapeProps } from "recharts";
 
@@ -21,30 +22,40 @@ import {
   type ChartConfig,
 } from "@/app/components/ui/chart";
 import { formatPct } from "@/app/lib/format";
+import { api } from "@/app/lib/api";
 import { Provenance } from "@/app/lib/provenance";
 import { cn } from "@/app/lib/utils";
 
 import { formatUsd } from "../mocks";
 import {
+  REAL_STACK_ORDER,
+  SPARSE_DOT_STACK_KEY_REAL,
+  allocationToAnchorSeries,
+  chartColorVarSegment,
+  isRealSnapshotPoint,
+  snapshotsToSeries,
+  stackColor,
+} from "../snapshot-series";
+import {
   defaultPeriodForSeries,
   defaultPeriodForSparseSeries,
   deriveTimelineUi,
   filterSnapshots,
-  getTimelineMockSeries,
   periodControls,
   snapshotTotal,
-  STACK_ORDER,
+  type ChartSnapshotPoint,
   type ChartState,
   type Period,
 } from "../timeline-state";
-import { TIMELINE_STACK_COLORS, type SnapshotPoint } from "../timeline-mocks";
 
-const chartConfig: ChartConfig = Object.fromEntries(
-  [
-    ["portfolio", { label: "Investable total", color: "var(--success)" }],
-    ...STACK_ORDER.map((s) => [s.key, { label: s.label, color: TIMELINE_STACK_COLORS[s.key] }] as const),
-  ],
-) satisfies ChartConfig;
+const anchorChartConfig: ChartConfig = {
+  portfolio: { label: "Investable total", color: "var(--success)" },
+};
+
+const realAreaChartConfig: ChartConfig = Object.fromEntries([
+  ["portfolio", { label: "Investable total", color: "var(--success)" }],
+  ...REAL_STACK_ORDER.map((s) => [s.key, { label: s.label, color: stackColor(s.key) }] as const),
+]) satisfies ChartConfig;
 
 const tickFormatterX = (value: string) => {
   const d = new Date(value);
@@ -67,10 +78,8 @@ function utcDayEqual(aMs: number, bMs: number): boolean {
   );
 }
 
-/** Top of stack in draw order — vertex dots for sparse mode. */
-const SPARSE_DOT_STACK_KEY = STACK_ORDER[STACK_ORDER.length - 1]!.key;
-
-const PREVIEW_OPTIONS: ChartState[] = ["anchor", "sparse", "full"];
+const SNAPSHOTS_PROVENANCE_FOOTNOTE =
+  "Each point reflects the investable total when that snapshot was saved. The chart time is the latest as-of date among investable positions (usually your statement date); hover shows the exact save time.";
 
 type AnchorScatterPoint = { x: string; y: number };
 
@@ -98,16 +107,30 @@ function AnchorDotShape(props: { cx?: number; cy?: number; payload?: AnchorScatt
   );
 }
 
-function AnchorTodayChart({ totalUsd }: { totalUsd: number }) {
+function AnchorTodayChart({
+  totalUsd,
+  xLabel,
+  provenanceSource,
+  provenanceFootnote,
+  capturedAt,
+  showBuildingHint,
+}: {
+  totalUsd: number;
+  xLabel: string;
+  provenanceSource: string;
+  provenanceFootnote?: string;
+  capturedAt?: string | null;
+  showBuildingHint: boolean;
+}) {
   const yMax = React.useMemo(() => anchorYAxisMax(totalUsd), [totalUsd]);
   const data = React.useMemo(
-    (): AnchorScatterPoint[] => [{ x: "Today", y: totalUsd }],
-    [totalUsd],
+    (): AnchorScatterPoint[] => [{ x: xLabel, y: totalUsd }],
+    [totalUsd, xLabel],
   );
 
   return (
     <div className="relative h-36 w-full sm:h-40">
-      <ChartContainer config={chartConfig} className="h-full min-h-0 w-full aspect-auto">
+      <ChartContainer config={anchorChartConfig} className="h-full min-h-0 w-full aspect-auto">
         <ScatterChart margin={{ top: 24, right: 16, bottom: 2, left: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
           <XAxis
@@ -132,9 +155,15 @@ function AnchorTodayChart({ totalUsd }: { totalUsd: number }) {
             content={({ active, payload }) =>
               active && payload?.[0] ? (
                 <div className="rounded-md border border-border/50 bg-background px-2 py-1 text-xs shadow-md">
-                  <span className="font-mono font-medium tabular-nums">
-                    {formatUsd((payload[0].payload as AnchorScatterPoint).y, { compact: true })}
-                  </span>
+                  <Provenance
+                    source={provenanceSource}
+                    footnote={provenanceFootnote}
+                    capturedAt={capturedAt ?? undefined}
+                  >
+                    <span className="font-mono font-medium tabular-nums">
+                      {formatUsd((payload[0].payload as AnchorScatterPoint).y, { compact: true })}
+                    </span>
+                  </Provenance>
                 </div>
               ) : null
             }
@@ -153,29 +182,60 @@ function AnchorTodayChart({ totalUsd }: { totalUsd: number }) {
           />
         </ScatterChart>
       </ChartContainer>
-      <p
-        className="pointer-events-none absolute inset-0 flex items-center justify-center px-16 text-center text-body-sm italic text-muted-foreground"
-        aria-hidden
-      >
-        History will build from here →
-      </p>
+      {showBuildingHint ? (
+        <p
+          className="pointer-events-none absolute inset-0 flex items-center justify-center px-16 text-center text-body-sm italic text-muted-foreground"
+          aria-hidden
+        >
+          History builds as you import or commit positions →
+        </p>
+      ) : null}
     </div>
   );
 }
 
+function chartStateFromSnapshotCount(n: number): ChartState {
+  if (n <= 1) return "anchor";
+  if (n === 2) return "sparse";
+  return "full";
+}
+
 export function TimelineCard() {
-  const [previewMode, setPreviewMode] = React.useState<ChartState>("full");
+  const {
+    data: snapshotList,
+    error: snapshotsError,
+    isLoading: snapshotsLoading,
+  } = useSWR("/api/snapshots", () => api.snapshots());
+  const {
+    data: allocation,
+    error: allocationError,
+    isLoading: allocationLoading,
+  } = useSWR("/api/allocation", () => api.allocation());
+
+  const persistedSeries = React.useMemo(() => {
+    if (snapshotsError || !snapshotList) return [];
+    return snapshotsToSeries(snapshotList);
+  }, [snapshotList, snapshotsError]);
+
+  const hasRealSnapshots = persistedSeries.length > 0;
+  const chartState = chartStateFromSnapshotCount(persistedSeries.length);
+
+  const series = React.useMemo((): ChartSnapshotPoint[] => {
+    if (hasRealSnapshots) return persistedSeries;
+    if (allocation) return allocationToAnchorSeries(allocation);
+    return [];
+  }, [hasRealSnapshots, persistedSeries, allocation]);
+
   const [period, setPeriod] = React.useState<Period>("All");
 
-  const series = React.useMemo(() => getTimelineMockSeries(previewMode), [previewMode]);
-
   React.useEffect(() => {
+    if (series.length === 0) return;
     setPeriod(
-      previewMode === "sparse"
+      chartState === "sparse"
         ? defaultPeriodForSparseSeries(series)
         : defaultPeriodForSeries(series),
     );
-  }, [previewMode, series]);
+  }, [chartState, series]);
 
   const latest = React.useMemo(
     () => new Date(series[series.length - 1]?.date ?? Date.now()),
@@ -188,13 +248,13 @@ export function TimelineCard() {
   );
 
   const periodMeta = React.useMemo(
-    () => periodControls(previewMode, series, latest),
-    [previewMode, series, latest],
+    () => periodControls(chartState, series, latest),
+    [chartState, series, latest],
   );
 
   const derived = React.useMemo(
-    () => deriveTimelineUi(previewMode, series, filtered),
-    [previewMode, series, filtered],
+    () => deriveTimelineUi(chartState, series, filtered),
+    [chartState, series, filtered],
   );
 
   const first = filtered[0];
@@ -212,31 +272,71 @@ export function TimelineCard() {
 
   const anchorTotal = series[0] ? snapshotTotal(series[0]) : 0;
 
-  const isSparseChart = previewMode === "sparse";
+  const lastSnapshotTakenAt =
+    hasRealSnapshots && snapshotList?.length ? snapshotList[snapshotList.length - 1]!.taken_at : null;
+
+  const performanceCapturedAt = hasPillData ? (lastSnapshotTakenAt ?? last?.date ?? null) : null;
+
+  const isSparseChart = chartState === "sparse";
 
   const stackedChartData = React.useMemo(() => {
     if (!isSparseChart) return filtered;
     return filtered.map((p) => ({ ...p, t: parseChartDate(p.date) }));
   }, [isSparseChart, filtered]);
 
-  const sparseXLayout = React.useMemo((): { domain: [number, number]; lastT: number } | null => {
+  const sparseXLayout = React.useMemo(():
+    | { domain: [number, number]; lastT: number; tickWithTime: boolean }
+    | null => {
     if (!isSparseChart || filtered.length < 1) return null;
     const ts = filtered.map((p) => parseChartDate(p.date));
     const tMin = ts[0]!;
     const tMax = ts[ts.length - 1]!;
-    const span = Math.max(tMax - tMin, 86_400_000);
-    const runway = Math.max(Math.round(span * 0.45), 86_400_000 * 21);
-    return { domain: [tMin, tMax + runway], lastT: tMax };
+    // Avoid forcing a full-day minimum when two snapshots land minutes apart (same import session);
+    // otherwise both points stack on the left and the chart looks "broken".
+    const rawSpan = tMax - tMin;
+    const span = Math.max(rawSpan, 3_600_000); // at least 1h of axis width for readability
+    // Proportional future band; avoid a multi-week minimum runway when history is only hours/days wide.
+    const runway = Math.max(Math.round(span * 0.55), 3_600_000);
+    return {
+      domain: [tMin, tMax + runway] as [number, number],
+      lastT: tMax,
+      /** When true, X ticks include clock time (same calendar day commits). */
+      tickWithTime: rawSpan < 86_400_000,
+    };
   }, [isSparseChart, filtered]);
 
   const formatSparseXTickNumber = React.useCallback(
     (ts: number) => {
       const layout = sparseXLayout;
-      if (layout && utcDayEqual(ts, layout.lastT)) return "Today";
-      return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      if (layout && ts === layout.lastT && utcDayEqual(ts, Date.now())) return "Today";
+      const opts: Intl.DateTimeFormatOptions = layout?.tickWithTime
+        ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+        : { month: "short", day: "numeric" };
+      return new Date(ts).toLocaleString(undefined, opts);
     },
     [sparseXLayout],
   );
+
+  const snapsResolved = !snapshotsLoading || snapshotsError != null;
+  const allocResolved = !allocationLoading || allocationError != null;
+  const chartReady =
+    snapsResolved && (hasRealSnapshots || (allocResolved && allocation != null));
+
+  const anchorXLabel = React.useMemo(() => {
+    if (hasRealSnapshots && persistedSeries.length === 1 && snapshotList?.[0]) {
+      const s0 = snapshotList[0];
+      const raw = s0.taken_at.includes("T") ? s0.taken_at : `${s0.taken_at}T12:00:00Z`;
+      return new Date(raw).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    }
+    return "Today";
+  }, [hasRealSnapshots, persistedSeries.length, snapshotList]);
+
+  const anchorCapturedAt =
+    hasRealSnapshots && snapshotList?.[0] ? snapshotList[0].taken_at : null;
 
   return (
     <Card className="h-full">
@@ -245,29 +345,6 @@ export function TimelineCard() {
           <div className="min-w-0 flex-1 space-y-1">
             <CardTitle className="text-h3">Investable portfolio over time</CardTitle>
             <CardDescription className="text-pretty">{derived.subtitle}</CardDescription>
-          </div>
-          <div
-            className="flex shrink-0 flex-col gap-1 rounded-md border border-dashed border-amber-600/40 bg-amber-500/5 px-2 py-1.5 dark:border-amber-500/30 dark:bg-amber-500/10"
-            role="group"
-            aria-label="Preview chart state (temporary)"
-          >
-            <span className="text-[10px] font-medium uppercase tracking-wide text-amber-900/80 dark:text-amber-200/90">
-              Preview (remove before ship)
-            </span>
-            <div className="flex flex-wrap gap-1">
-              {PREVIEW_OPTIONS.map((m) => (
-                <Button
-                  key={m}
-                  type="button"
-                  size="xs"
-                  variant={previewMode === m ? "default" : "outline"}
-                  className="capitalize"
-                  onClick={() => setPreviewMode(m)}
-                >
-                  {m}
-                </Button>
-              ))}
-            </div>
           </div>
         </div>
 
@@ -281,8 +358,9 @@ export function TimelineCard() {
                 )}
               >
                 <Provenance
-                  source="computed"
-                  footnote="Illustrative series in v0.1; matches allocation scope (investable only)."
+                  source="snapshots"
+                  footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
+                  capturedAt={performanceCapturedAt}
                 >
                   {formatUsd(deltaUsd, { signed: true })} ·{" "}
                   {formatPct(deltaPct, { signed: true, digits: 2 })}
@@ -300,7 +378,7 @@ export function TimelineCard() {
             className="flex w-full flex-wrap items-center justify-end gap-0.5 rounded-md border bg-background p-0.5"
           >
             {periodMeta.map(({ period: p, disabled, title }) => {
-              const active = previewMode !== "anchor" && p === period;
+              const active = chartState !== "anchor" && p === period;
               return (
                 <button
                   key={p}
@@ -324,33 +402,44 @@ export function TimelineCard() {
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-4">
-        {previewMode === "anchor" ? (
-          <AnchorTodayChart totalUsd={anchorTotal} />
+        {!chartReady ? (
+          <div className="flex min-h-36 items-center justify-center rounded-md border border-dashed bg-muted/30 px-4 py-8 text-body-sm text-muted-foreground">
+            {snapshotsError || allocationError
+              ? "Could not load timeline data. Check your connection and admin token, then reload."
+              : "Loading timeline…"}
+          </div>
+        ) : chartState === "anchor" ? (
+          <AnchorTodayChart
+            totalUsd={anchorTotal}
+            xLabel={anchorXLabel}
+            provenanceSource={hasRealSnapshots ? "snapshots" : "allocation"}
+            provenanceFootnote={
+              hasRealSnapshots ? SNAPSHOTS_PROVENANCE_FOOTNOTE : "Live investable total from /api/allocation."
+            }
+            capturedAt={anchorCapturedAt}
+            showBuildingHint={!hasRealSnapshots}
+          />
         ) : (
-          <ChartContainer config={chartConfig} className="aspect-[16/6] w-full">
+          <ChartContainer config={realAreaChartConfig} className="aspect-[16/6] w-full">
             <AreaChart data={stackedChartData} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
               <defs>
-                {STACK_ORDER.map((s) => (
-                  <linearGradient
-                    key={s.key}
-                    id={`fill-${s.key}`}
-                    x1="0"
-                    y1="0"
-                    x2="0"
-                    y2="1"
-                  >
-                    <stop
-                      offset="0%"
-                      stopColor={`var(--color-${s.key})`}
-                      stopOpacity={0.6}
-                    />
-                    <stop
-                      offset="100%"
-                      stopColor={`var(--color-${s.key})`}
-                      stopOpacity={0.1}
-                    />
-                  </linearGradient>
-                ))}
+                {REAL_STACK_ORDER.map((s) => {
+                  const seg = chartColorVarSegment(s.key);
+                  return (
+                    <linearGradient key={s.key} id={`fill-${seg}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop
+                        offset="0%"
+                        stopColor={`var(--color-${seg})`}
+                        stopOpacity={0.6}
+                      />
+                      <stop
+                        offset="100%"
+                        stopColor={`var(--color-${seg})`}
+                        stopOpacity={0.1}
+                      />
+                    </linearGradient>
+                  );
+                })}
               </defs>
               <CartesianGrid
                 strokeDasharray="3 3"
@@ -403,23 +492,31 @@ export function TimelineCard() {
                 cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
                 content={<TimelineTooltip />}
               />
-              {STACK_ORDER.map((s) => (
-                <Area
-                  key={s.key}
-                  type={isSparseChart ? "linear" : "monotone"}
-                  dataKey={s.key}
-                  stackId="nw"
-                  stroke={`var(--color-${s.key})`}
-                  fill={`url(#fill-${s.key})`}
-                  strokeWidth={isSparseChart ? 1.25 : 1.5}
-                  isAnimationActive={false}
-                  dot={
-                    isSparseChart && s.key === SPARSE_DOT_STACK_KEY
-                      ? { r: 4, fill: "var(--foreground)", stroke: "var(--background)", strokeWidth: 1 }
-                      : false
-                  }
-                />
-              ))}
+              {REAL_STACK_ORDER.map((s) => {
+                const seg = chartColorVarSegment(s.key);
+                return (
+                  <Area
+                    key={s.key}
+                    type={isSparseChart ? "linear" : "monotone"}
+                    dataKey={s.key}
+                    stackId="nw"
+                    stroke={`var(--color-${seg})`}
+                    fill={`url(#fill-${seg})`}
+                    strokeWidth={isSparseChart ? 1.25 : 1.5}
+                    isAnimationActive={false}
+                    dot={
+                      isSparseChart && s.key === SPARSE_DOT_STACK_KEY_REAL
+                        ? {
+                            r: 4,
+                            fill: stackColor(SPARSE_DOT_STACK_KEY_REAL),
+                            stroke: "var(--background)",
+                            strokeWidth: 1,
+                          }
+                        : false
+                    }
+                  />
+                );
+              })}
             </AreaChart>
           </ChartContainer>
         )}
@@ -429,7 +526,7 @@ export function TimelineCard() {
             <div className="flex min-w-0 flex-1 items-start gap-3">
               <FileUp className="mt-0.5 size-5 shrink-0 text-sky-600 dark:text-sky-300" aria-hidden />
               <p className="text-body-sm">
-                Upload past statements to fill in history. Each statement adds a data point.
+                Upload past statements to fill in history. Each import or commit adds a snapshot point.
               </p>
             </div>
             <Button asChild variant="outline" size="sm" className="shrink-0 border-sky-300 bg-white/80 text-sky-950 hover:bg-white dark:border-sky-700 dark:bg-sky-900/50 dark:text-sky-50 dark:hover:bg-sky-900">
@@ -449,6 +546,10 @@ export function TimelineCard() {
           </div>
         ) : null}
 
+        {hasRealSnapshots ? (
+          <p className="text-center text-body-sm text-muted-foreground">{SNAPSHOTS_PROVENANCE_FOOTNOTE}</p>
+        ) : null}
+
         {derived.chartFootnote ? (
           <p className="text-center text-body-sm text-muted-foreground">{derived.chartFootnote}</p>
         ) : null}
@@ -462,7 +563,7 @@ type TooltipPayloadItem = {
   name?: string | number;
   value?: number;
   color?: string;
-  payload?: SnapshotPoint & { name?: string };
+  payload?: (ChartSnapshotPoint & { name?: string; t?: number }) | undefined;
 };
 
 function TimelineTooltip({
@@ -475,29 +576,33 @@ function TimelineTooltip({
   if (!active || !payload?.length) return null;
   const point = payload[0]?.payload;
   if (!point) return null;
-  const dateLabel =
-    point.name === "Today"
-      ? "Today"
-      : new Date(point.date).toLocaleDateString(undefined, {
+  const d = new Date(point.date);
+  const dateLabel = Number.isFinite(d.getTime())
+    ? point.date.includes("T")
+      ? d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+      : d.toLocaleDateString(undefined, {
           year: "numeric",
           month: "short",
           day: "numeric",
-        });
-  const ordered = [...STACK_ORDER].reverse();
+        })
+    : String(point.date);
+  const ordered = [...REAL_STACK_ORDER].reverse();
   const total = snapshotTotal(point);
+  const provenanceCapturedAt =
+    isRealSnapshotPoint(point) ? point.snapshotTakenAt : point.date;
 
   return (
     <div className="grid min-w-48 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
       <div className="font-medium">{dateLabel}</div>
       <div className="grid gap-1">
         {ordered.map((s) => {
-          const value = point[s.key];
+          const value = (point as Record<string, number | string | undefined>)[s.key] as number;
           return (
             <div key={s.key} className="flex items-center gap-2">
               <span
                 aria-hidden
                 className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                style={{ backgroundColor: TIMELINE_STACK_COLORS[s.key] }}
+                style={{ backgroundColor: stackColor(s.key) }}
               />
               <span className="flex-1 text-muted-foreground">{s.label}</span>
               <span className="font-mono tabular-nums text-foreground">
@@ -510,7 +615,11 @@ function TimelineTooltip({
       <div className="mt-1 flex items-center justify-between border-t border-border/50 pt-1.5">
         <span className="text-muted-foreground">Total</span>
         <span className="font-mono font-medium tabular-nums text-foreground">
-          <Provenance source="computed" capturedAt={point.date}>
+          <Provenance
+            source="snapshots"
+            footnote={SNAPSHOTS_PROVENANCE_FOOTNOTE}
+            capturedAt={provenanceCapturedAt}
+          >
             {formatUsd(total, { compact: true })}
           </Provenance>
         </span>
