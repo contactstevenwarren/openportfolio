@@ -220,18 +220,17 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
               value={row.ticker}
               onChange={(v) => {
                 const trimmed = v.trim();
-                const ac =
-                  trimmed && !row.asset_class
-                    ? classificationPrimaryAssetClass(
-                        classificationByTickerUpper.get(trimmed.toUpperCase()) ?? null,
-                      )
-                    : null;
                 setRows((prev) =>
-                  prev.map((r) =>
-                    r.id === row.id
-                      ? { ...r, ticker: v, ...(ac ? { asset_class: ac } : {}) }
-                      : r,
-                  ),
+                  prev.map((r) => {
+                    if (r.id !== row.id) return r;
+                    const ac =
+                      trimmed && !r.asset_class
+                        ? classificationPrimaryAssetClass(
+                            classificationByTickerUpper.get(trimmed.toUpperCase()) ?? null,
+                          )
+                        : null;
+                    return { ...r, ticker: v, ...(ac ? { asset_class: ac } : {}) };
+                  }),
                 );
                 setSavedCount(null);
               }}
