@@ -88,7 +88,7 @@ def test_ollama_model_string_and_api_base() -> None:
 @pytest.mark.parametrize(
     "fixture,expected_tickers",
     [
-        ("fidelity", ["VTI", "VXUS", "BND", "aapl"]),
+        ("fidelity", ["VTI", "VXUS", "BND", "AAPL"]),
         ("vanguard", ["VTI", "BND", "VXUS"]),
         ("schwab", ["SPY", "QQQ", "GLD", "BTC-USD", "SNOXX", "U12TEST99", "CASH"]),
     ],
@@ -105,16 +105,14 @@ def test_extract_fixture(
     assert result.extracted_at is not None
 
 
-def test_extract_applies_validation(azure_configured: None) -> None:
+def test_extract_applies_normalization(azure_configured: None) -> None:
     text, llm_json = _load("fidelity")
     with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
         result = extract_positions(text)
 
     by_ticker = {p.ticker: p for p in result.positions}
-    # Lowercase 'aapl' fails the ticker regex and is annotated.
-    assert by_ticker["aapl"].validation_errors
-    assert "does not match" in by_ticker["aapl"].validation_errors[0]
-    # Well-formed rows stay clean.
+    # Normalization uppercases tickers before validation, so all rows are clean.
+    assert by_ticker["AAPL"].validation_errors == []
     assert by_ticker["VTI"].validation_errors == []
     assert by_ticker["BND"].validation_errors == []
 
@@ -189,10 +187,10 @@ def test_extract_endpoint_returns_annotated_positions(
     assert r.status_code == 200
     body = r.json()
     tickers = [p["ticker"] for p in body["positions"]]
-    assert tickers == ["VTI", "VXUS", "BND", "aapl"]
-    # Validation errors surface in the response body (review UI consumes them).
-    aapl = next(p for p in body["positions"] if p["ticker"] == "aapl")
-    assert aapl["validation_errors"]
+    assert tickers == ["VTI", "VXUS", "BND", "AAPL"]
+    # Normalization uppercases tickers before validation so AAPL is clean.
+    aapl = next(p for p in body["positions"] if p["ticker"] == "AAPL")
+    assert aapl["validation_errors"] == []
     assert body.get("extraction_warnings") == []
     assert body.get("matched_account_id") is None
 
@@ -248,7 +246,7 @@ def test_extract_pdf_ok_mocked(
         )
     assert r.status_code == 200
     out = r.json()
-    assert [p["ticker"] for p in out["positions"]] == ["VTI", "VXUS", "BND", "aapl"]
+    assert [p["ticker"] for p in out["positions"]] == ["VTI", "VXUS", "BND", "AAPL"]
 
 
 def test_extract_pdf_422_on_bad_magic(
