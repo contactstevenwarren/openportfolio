@@ -33,45 +33,40 @@ import {
 } from "@/app/lib/api";
 import { cn } from "@/app/lib/utils";
 
-const HOW_CLASSIFIED_COPY: Record<
-  HowClassified,
-  { label: string; description: string }
-> = {
-  built_in: {
-    label: "Built-in catalog",
-    description: "From bundled data/classifications.yaml (no DB row).",
+type BadgeTier = "catalog" | "custom" | "ai_suggested";
+
+const TIER_BADGE: Record<BadgeTier, { label: string; className: string }> = {
+  catalog: {
+    label: "Catalog",
+    className: "bg-muted/60 text-muted-foreground",
   },
-  classifications_ui: {
-    label: "You edited",
-    description: "Saved from this Classifications page (portfolio-wide).",
+  custom: {
+    label: "Custom",
+    className: "bg-primary/10 text-primary",
   },
-  accounts_manual: {
-    label: "From Accounts",
-    description: "Saved via manual account or grid flows.",
-  },
-  import_llm: {
-    label: "Import · LLM",
-    description:
-      "Paste/PDF import carried LLM suggestion metadata; check provenance for reasoning.",
-  },
-  import_manual: {
-    label: "Import",
-    description: "Paste/PDF import wrote this mapping without LLM reasoning on file.",
-  },
-  unknown: {
-    label: "Saved",
-    description: "Database override without matching provenance (older data).",
+  ai_suggested: {
+    label: "AI-suggested",
+    className: "bg-warning-soft text-warning",
   },
 };
 
-function howClassifiedBadgeClass(how: HowClassified): string {
-  if (how === "built_in") return "bg-muted/60 text-muted-foreground";
-  if (how === "import_llm") return "bg-warning-soft text-warning";
-  if (how === "unknown" || how === "import_manual") {
-    return "bg-muted/50 text-muted-foreground";
-  }
-  return "bg-warning-soft text-warning";
-}
+const HOW_TO_TIER: Record<HowClassified, BadgeTier> = {
+  built_in: "catalog",
+  classifications_ui: "custom",
+  accounts_manual: "custom",
+  import_manual: "custom",
+  unknown: "custom",
+  import_llm: "ai_suggested",
+};
+
+const HOW_TOOLTIP: Record<HowClassified, string> = {
+  built_in: "Default classification from the bundled catalog.",
+  classifications_ui: "You edited this on the Classifications page.",
+  accounts_manual: "You set this from the Accounts view.",
+  import_manual: "Saved during a paste or PDF import (no AI involved).",
+  import_llm: "An AI suggested this during a paste or PDF import — review before relying on it.",
+  unknown: "You set this previously; the exact origin wasn't recorded.",
+};
 
 function formatBucketsBrief(r: ClassificationRow): string {
   if (r.buckets.length === 0) return "—";
@@ -327,24 +322,18 @@ function ClassificationsPageInner() {
                         </td>
                         <td className="max-w-[min(420px,50vw)] px-3 py-2">
                           <div className="flex flex-wrap items-center gap-2">
-                            {r.source === "yaml" ? (
-                              <span
-                                className="shrink-0 rounded bg-muted/60 px-2 py-0.5 text-label text-muted-foreground"
-                                title={HOW_CLASSIFIED_COPY.built_in.description}
-                              >
-                                {HOW_CLASSIFIED_COPY.built_in.label}
-                              </span>
-                            ) : (
-                              <span
-                                className={cn(
-                                  "shrink-0 rounded px-2 py-0.5 text-label",
-                                  howClassifiedBadgeClass(r.how_classified),
-                                )}
-                                title={HOW_CLASSIFIED_COPY[r.how_classified].description}
-                              >
-                                {HOW_CLASSIFIED_COPY[r.how_classified].label}
-                              </span>
-                            )}
+                            {(() => {
+                              const tier = r.source === "yaml" ? "catalog" : HOW_TO_TIER[r.how_classified];
+                              const { label, className } = TIER_BADGE[tier];
+                              return (
+                                <span
+                                  className={cn("shrink-0 rounded px-2 py-0.5 text-label", className)}
+                                  title={HOW_TOOLTIP[r.how_classified]}
+                                >
+                                  {label}
+                                </span>
+                              );
+                            })()}
                             <span
                               className="line-clamp-2 text-muted-foreground"
                               title={formatBucketsBrief(r)}
