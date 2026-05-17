@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.classifications import ClassificationEntry
 from app.models import Classification, ClassificationBucket, Provenance
-from app.shared.schemas.classifications import ClassificationBucketPayload, ClassificationRow
+from app.shared.schemas.classifications import (
+    ClassificationBucketPayload,
+    ClassificationRow,
+    HowClassified,
+)
 
 # Synthetic tickers for manual account types: map account.type → (L1, L2).
 MANUAL_ACCOUNT_TYPE_TO_TAXONOMY: dict[str, tuple[str, str]] = {
@@ -31,7 +35,11 @@ def slug(s: str) -> str:
 
 
 def classification_row_from_entry(
-    ticker: str, entry: ClassificationEntry, *, overrides_yaml: bool = False
+    ticker: str,
+    entry: ClassificationEntry,
+    *,
+    overrides_yaml: bool = False,
+    how_classified: HowClassified,
 ) -> ClassificationRow:
     payloads = [
         ClassificationBucketPayload(
@@ -45,6 +53,7 @@ def classification_row_from_entry(
         source=entry.source,
         overrides_yaml=overrides_yaml,
         has_breakdown=len(entry.buckets) > 1,
+        how_classified=how_classified,
     )
 
 

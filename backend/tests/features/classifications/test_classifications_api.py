@@ -93,6 +93,7 @@ def test_list_includes_yaml_baseline(
     vti = next(r for r in rows if r["ticker"] == "VTI")
     assert vti["source"] == "yaml"
     assert vti["overrides_yaml"] is False
+    assert vti["how_classified"] == "built_in"
 
 
 def test_list_shows_user_row_as_override(
@@ -107,6 +108,7 @@ def test_list_shows_user_row_as_override(
     assert bnd["source"] == "user"
     assert bnd["buckets"][0]["sub_class"] == "US Corporate"
     assert bnd["overrides_yaml"] is True
+    assert bnd["how_classified"] == "unknown"
     # And there's only one BND row (the yaml one is suppressed when
     # user overrides it).
     assert sum(1 for r in rows if r["ticker"] == "BND") == 1
@@ -171,6 +173,7 @@ def test_list_new_user_ticker_is_not_an_override(
     wine = next(r for r in rows if r["ticker"] == "wine-bottle-2019")
     assert wine["source"] == "user"
     assert wine["overrides_yaml"] is False
+    assert wine["how_classified"] == "unknown"
 
 
 # --- PATCH ----------------------------------------------------------------
@@ -193,6 +196,7 @@ def test_patch_creates_user_override(
     assert body["source"] == "user"
     assert body["buckets"][0]["sub_class"] == "US Treasury"
     assert body["overrides_yaml"] is True
+    assert body["how_classified"] == "classifications_ui"
 
     # Row persisted.
     row = test_db.get(Classification, "BND")
@@ -394,3 +398,71 @@ def test_suggest_none_when_llm_returns_null(
     row = r.json()[0]
     assert row["source"] == "none"
     assert row.get("asset_class") in (None, "")
+
+
+def test_list_how_classified_import_llm_after_paste_commit(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    client.post(
+        "/api/positions/commit",
+        json={
+            "source": "paste:fixture",
+            "positions": [
+                {
+                    "ticker": "HOWLLM1",
+                    "shares": 1.0,
+                    "cost_basis": 10.0,
+                    "market_value": 11.0,
+                    "confidence": 0.9,
+                    "source_span": "x",
+                    "classification": {
+                        "asset_class": "Stocks",
+                        "sub_class": "US Stocks",
+                        "auto_suffix": False,
+                        "suggestion_reasoning": "Synthetic test reasoning.",
+                    },
+                }
+            ],
+        },
+        headers=auth_headers,
+    )
+    rows = client.get("/api/classifications", headers=auth_headers).json()
+    row = next(r for r in rows if r["ticker"] == "HOWLLM1")
+    assert row["how_classified"] == "import_llm"
+    prov = (
+        test_db.query(Provenance)
+        .filter(Provenance.entity_type == "classification")
+        .filter(Provenance.entity_key == "HOWLLM1")
+        .one()
+    )
+    assert prov.llm_span == "Synthetic test reasoning."
+
+
+def test_list_how_classified_import_manual_when_no_llm_span(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    client.post(
+        "/api/positions/commit",
+        json={
+            "source": "paste:fixture2",
+            "positions": [
+                {
+                    "ticker": "HOWMAN1",
+                    "shares": 1.0,
+                    "cost_basis": 10.0,
+                    "market_value": 11.0,
+                    "confidence": 0.9,
+                    "source_span": "x",
+                    "classification": {
+                        "asset_class": "Bonds",
+                        "sub_class": "US Treasury",
+                        "auto_suffix": False,
+                    },
+                }
+            ],
+        },
+        headers=auth_headers,
+    )
+    rows = client.get("/api/classifications", headers=auth_headers).json()
+    row = next(r for r in rows if r["ticker"] == "HOWMAN1")
+    assert row["how_classified"] == "import_manual"

@@ -9,6 +9,14 @@ import useSWR, { mutate } from "swr";
 import { ArrowLeftIcon, InfoIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -23,14 +31,21 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/app/components/ui/popover";
+import {
+  BucketEditor,
+  normalizeBucketsForTaxonomy,
+} from "@/app/components/bucket-editor";
 import { cn } from "@/app/lib/utils";
 import type {
   Account,
   ExtractionResult,
   Position,
   ClassificationSuggestItem,
+  ClassificationBucketPayload,
+  Taxonomy,
+  InlineClassification,
 } from "@/app/lib/api";
-import { api } from "@/app/lib/api";
+import { api, classificationDominantBucket } from "@/app/lib/api";
 import { ASSET_CLASS_ORDER, ASSET_CLASS_LABEL } from "./mocks";
 import type { UpdateMode, ReviewTotals } from "./update-form";
 
@@ -55,10 +70,16 @@ type ReviewRow = {
   class_source: ClassSource;
   /** True after user changes asset class in the review dropdown (not API-filled). */
   classification_dirty: boolean;
+  suggestion_confidence: number | null;
+  suggestion_reasoning: string | null;
+  /** User edited weights in the breakdown dialog — always send classification on commit. */
+  has_custom_buckets: boolean;
+  commit_buckets: ClassificationBucketPayload[] | null;
 };
 
-/** When false for yaml_user rows, omit classification on commit so DB/YAML mappings are not rewritten. */
+/** When true for yaml_user rows, omit classification on commit so DB/YAML mappings are not rewritten. */
 function shouldIncludeClassificationForCommit(r: ReviewRow): boolean {
+  if (r.has_custom_buckets) return true;
   if (!r.asset_class) return false;
   if (r.classification_dirty) return true;
   if (r.class_source !== "yaml_user") return true;
@@ -127,6 +148,16 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
       revalidateOnFocus: false,
     });
 
+    const { data: taxonomy } = useSWR<Taxonomy>(
+      "/api/classifications/taxonomy",
+      () => api.taxonomy(),
+      { revalidateOnFocus: false },
+    );
+
+    const [breakdownRowId, setBreakdownRowId] = useState<string | null>(null);
+    const [breakdownBuckets, setBreakdownBuckets] = useState<ClassificationBucketPayload[]>([]);
+    const [breakdownErr, setBreakdownErr] = useState<string | null>(null);
+
     // Build diff rows once currentPositions arrives
     useEffect(() => {
       if (currentPositions === undefined) return;
@@ -162,6 +193,10 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           sub_class: null,
           class_source: "none",
           classification_dirty: false,
+          suggestion_confidence: null,
+          suggestion_reasoning: null,
+          has_custom_buckets: false,
+          commit_buckets: null,
         };
       });
 
@@ -185,6 +220,10 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           sub_class: null,
           class_source: "none" as ClassSource,
           classification_dirty: false,
+          suggestion_confidence: null,
+          suggestion_reasoning: null,
+          has_custom_buckets: false,
+          commit_buckets: null,
         }));
 
       setRows([
@@ -213,12 +252,17 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
               if (!s || r.asset_class !== null) return r;
               const classSource: ClassSource =
                 s.source === "existing" ? "yaml_user" : s.source === "llm" ? "llm" : "none";
+              const isLlm = classSource === "llm";
               return {
                 ...r,
                 asset_class: s.asset_class ?? null,
                 sub_class: s.sub_class ?? null,
                 class_source: classSource,
                 classification_dirty: false,
+                suggestion_confidence: isLlm ? (s.confidence ?? null) : null,
+                suggestion_reasoning: isLlm && s.reasoning?.trim() ? s.reasoning.trim() : null,
+                has_custom_buckets: false,
+                commit_buckets: null,
               };
             })
           );
@@ -252,6 +296,68 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
       setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
     }
 
+    function bucketsFromRowSelect(row: ReviewRow, tax: Taxonomy): ClassificationBucketPayload[] {
+      const ac = row.asset_class ?? tax.asset_classes[0]?.value ?? "Stocks";
+      const opts = tax.sub_classes_by_class[ac] ?? [];
+      let sub: string | null = row.sub_class;
+      if (!sub || !opts.some((o) => o.value === sub)) {
+        sub = opts[0]?.value ?? null;
+      }
+      return [{ asset_class: ac, sub_class: sub, weight: 1.0 }];
+    }
+
+    function closeBreakdown() {
+      setBreakdownRowId(null);
+      setBreakdownBuckets([]);
+      setBreakdownErr(null);
+    }
+
+    function openBreakdown(row: ReviewRow) {
+      if (!taxonomy || row.status === "removed") return;
+      const seed =
+        row.commit_buckets && row.commit_buckets.length > 0
+          ? row.commit_buckets.map((b) => ({ ...b }))
+          : bucketsFromRowSelect(row, taxonomy);
+      setBreakdownBuckets(normalizeBucketsForTaxonomy(seed, taxonomy));
+      setBreakdownRowId(row.id);
+      setBreakdownErr(null);
+    }
+
+    function saveBreakdown() {
+      if (!breakdownRowId || !taxonomy) return;
+      const s = breakdownBuckets.reduce(
+        (a, b) => a + (Number.isFinite(b.weight) ? b.weight : 0),
+        0,
+      );
+      if (Math.abs(s - 1) > 0.02) {
+        setBreakdownErr("Bucket weights must sum to 100% (±2%).");
+        return;
+      }
+      const d = classificationDominantBucket({
+        ticker: "",
+        buckets: breakdownBuckets,
+        source: "user",
+        overrides_yaml: false,
+        has_breakdown: breakdownBuckets.length > 1,
+        how_classified: "unknown",
+      });
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === breakdownRowId
+            ? {
+                ...r,
+                commit_buckets: breakdownBuckets.map((b) => ({ ...b })),
+                has_custom_buckets: true,
+                classification_dirty: true,
+                asset_class: d.asset_class,
+                sub_class: d.sub_class ?? null,
+              }
+            : r,
+        ),
+      );
+      closeBreakdown();
+    }
+
     async function handleTickerBlur(rowId: string, newTicker: string) {
       const trimmed = newTicker.trim();
       if (!trimmed) return;
@@ -265,11 +371,22 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           setRows((prev) =>
             prev.map((r) =>
               r.id === rowId
-                ? { ...r, asset_class: null, sub_class: null, class_source: "none", classification_dirty: false }
+                ? {
+                    ...r,
+                    asset_class: null,
+                    sub_class: null,
+                    class_source: "none",
+                    classification_dirty: false,
+                    suggestion_confidence: null,
+                    suggestion_reasoning: null,
+                    has_custom_buckets: false,
+                    commit_buckets: null,
+                  }
                 : r
             )
           );
         } else {
+          const isExisting = sug.source === "existing";
           setRows((prev) =>
             prev.map((r) =>
               r.id === rowId
@@ -277,8 +394,13 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                     ...r,
                     asset_class: sug.asset_class ?? null,
                     sub_class: sug.sub_class ?? null,
-                    class_source: sug.source === "existing" ? "yaml_user" : "llm",
+                    class_source: isExisting ? "yaml_user" : "llm",
                     classification_dirty: false,
+                    suggestion_confidence: isExisting ? null : (sug.confidence ?? null),
+                    suggestion_reasoning:
+                      !isExisting && sug.reasoning?.trim() ? sug.reasoning.trim() : null,
+                    has_custom_buckets: false,
+                    commit_buckets: null,
                   }
                 : r
             )
@@ -297,6 +419,26 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           .filter((r) => r.include && r.status !== "removed")
           .map((r) => {
             const sendCls = shouldIncludeClassificationForCommit(r);
+            const classification =
+              sendCls && r.asset_class
+                ? (() => {
+                    const cls: InlineClassification = {
+                      asset_class: r.asset_class,
+                      sub_class: r.sub_class ?? null,
+                      auto_suffix: false,
+                    };
+                    if (r.suggestion_confidence != null) {
+                      cls.suggestion_confidence = r.suggestion_confidence;
+                    }
+                    if (r.suggestion_reasoning?.trim()) {
+                      cls.suggestion_reasoning = r.suggestion_reasoning.trim();
+                    }
+                    if (r.has_custom_buckets && r.commit_buckets?.length) {
+                      cls.buckets = r.commit_buckets.map((b) => ({ ...b }));
+                    }
+                    return cls;
+                  })()
+                : undefined;
             return {
               ticker: r.ticker,
               shares: r.shares,
@@ -304,14 +446,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
               market_value: r.market_value,
               confidence: r.confidence,
               source_span: r.source_span,
-              classification:
-                sendCls && r.asset_class
-                  ? {
-                      asset_class: r.asset_class,
-                      sub_class: r.sub_class ?? null,
-                      auto_suffix: false,
-                    }
-                  : undefined,
+              classification,
             };
           });
         await api.commit({
@@ -380,6 +515,48 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
     }
 
     // ── Row Details Popover (shared by table + cards) ─────────────────────────
+
+    function RowClassificationHints({ row }: { row: ReviewRow }) {
+      if (row.status === "removed") return null;
+      if (row.class_source === "llm") {
+        return (
+          <div className="flex flex-col gap-0.5">
+            <span
+              className="inline-flex w-fit shrink-0 rounded bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-warning"
+              title="Suggested by LLM — verify before committing"
+            >
+              LLM
+            </span>
+            {row.suggestion_reasoning?.trim() ? (
+              <p
+                className="line-clamp-2 text-[10px] text-muted-foreground"
+                title={row.suggestion_reasoning.trim()}
+              >
+                {row.suggestion_reasoning.trim()}
+              </p>
+            ) : null}
+          </div>
+        );
+      }
+      if (row.class_source === "yaml_user" && row.asset_class) {
+        return (
+          <span
+            className="inline-flex w-fit rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+            title="From bundled catalog or your saved classification"
+          >
+            Catalog
+          </span>
+        );
+      }
+      if (row.class_source === "none" && !row.asset_class) {
+        return (
+          <span className="inline-flex w-fit rounded bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            Unclassified
+          </span>
+        );
+      }
+      return null;
+    }
 
     function RowDetailsPopover({ row }: { row: ReviewRow }) {
       const noteworthy =
@@ -455,9 +632,16 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
               setRows((prev) =>
                 prev.map((r) =>
                   r.id === row.id
-                    ? { ...r, asset_class: ac, sub_class: null, classification_dirty: true }
-                    : r
-                )
+                    ? {
+                        ...r,
+                        asset_class: ac,
+                        sub_class: null,
+                        classification_dirty: true,
+                        has_custom_buckets: false,
+                        commit_buckets: null,
+                      }
+                    : r,
+                ),
               );
             }}
           >
@@ -608,7 +792,22 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
 
                   {/* Asset class */}
                   <td className="px-2 py-1 min-w-[160px]">
-                    <AssetClassField row={row} />
+                    <div className="flex flex-col gap-1">
+                      <RowClassificationHints row={row} />
+                      <AssetClassField row={row} />
+                      {row.status !== "removed" && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="self-start text-label"
+                          disabled={!taxonomy || committing}
+                          onClick={() => openBreakdown(row)}
+                        >
+                          Edit breakdown…
+                        </Button>
+                      )}
+                    </div>
                   </td>
 
                   {/* Shares */}
@@ -706,8 +905,20 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                 {/* Full card body for new/changed rows */}
                 {!isCompact && (
                   <div className="mt-2 flex flex-col gap-2 pl-6">
-                    {/* Asset class */}
+                    <RowClassificationHints row={row} />
                     <AssetClassField row={row} />
+                    {row.status !== "removed" && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="self-start text-label"
+                        disabled={!taxonomy || committing}
+                        onClick={() => openBreakdown(row)}
+                      >
+                        Edit breakdown…
+                      </Button>
+                    )}
                     {/* Shares + Cost */}
                     <div className="grid grid-cols-2 gap-2">
                       <div className="flex flex-col gap-0.5">
@@ -757,6 +968,47 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
             );
           })}
         </div>
+
+        <Dialog open={breakdownRowId !== null} onOpenChange={(o) => !o && closeBreakdown()}>
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="text-h3">
+                Breakdown ·{" "}
+                <span className="font-mono">
+                  {rows.find((r) => r.id === breakdownRowId)?.ticker ?? ""}
+                </span>
+              </DialogTitle>
+              <DialogDescription className="text-body-sm">
+                Adjust weights for this row before commit. Applies when you import; portfolio-wide
+                classification updates on commit.
+              </DialogDescription>
+            </DialogHeader>
+            {breakdownErr && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-body-sm text-destructive">
+                {breakdownErr}
+              </p>
+            )}
+            {taxonomy && (
+              <BucketEditor
+                buckets={breakdownBuckets}
+                taxonomy={taxonomy}
+                disabled={committing}
+                onChange={(next) => {
+                  setBreakdownBuckets(next);
+                  setBreakdownErr(null);
+                }}
+              />
+            )}
+            <DialogFooter className="gap-3 sm:justify-end">
+              <Button type="button" variant="outline" disabled={committing} onClick={closeBreakdown}>
+                Cancel
+              </Button>
+              <Button type="button" disabled={committing || !taxonomy} onClick={saveBreakdown}>
+                Save breakdown
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* R1 removal confirmation */}
         <AlertDialog open={showRemoveDialog} onOpenChange={setShowRemoveDialog}>
