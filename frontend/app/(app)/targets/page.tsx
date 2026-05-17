@@ -57,27 +57,27 @@ const PRESETS: Preset[] = [
   {
     id: "conservative",
     label: "Conservative",
-    values: { Cash: 20, Stocks: 30, Bonds: 50, "Real Estate": 0, Commodities: 0, Crypto: 0, Private: 0 },
+    values: { Stocks: 30, Bonds: 50, Cash: 20, "Real Estate": 0, Commodities: 0, Crypto: 0, Private: 0 },
   },
   {
     id: "60_40",
     label: "60/40",
-    values: { Cash: 0, Stocks: 60, Bonds: 40, "Real Estate": 0, Commodities: 0, Crypto: 0, Private: 0 },
+    values: { Stocks: 60, Bonds: 40, Cash: 0, "Real Estate": 0, Commodities: 0, Crypto: 0, Private: 0 },
   },
   {
     id: "aggressive",
     label: "Aggressive",
-    values: { Cash: 0, Stocks: 90, Bonds: 10, "Real Estate": 0, Commodities: 0, Crypto: 0, Private: 0 },
+    values: { Stocks: 90, Bonds: 10, Cash: 0, "Real Estate": 0, Commodities: 0, Crypto: 0, Private: 0 },
   },
   {
     id: "all_weather",
     label: "All-weather",
-    values: { Cash: 0, Stocks: 30, Bonds: 55, "Real Estate": 0, Commodities: 15, Crypto: 0, Private: 0 },
+    values: { Stocks: 30, Bonds: 55, Cash: 0, "Real Estate": 0, Commodities: 15, Crypto: 0, Private: 0 },
   },
   {
     id: "diversified",
     label: "Diversified",
-    values: { Cash: 5, Stocks: 50, Bonds: 20, "Real Estate": 10, Commodities: 5, Crypto: 5, Private: 5 },
+    values: { Stocks: 50, Bonds: 20, Cash: 5, "Real Estate": 10, Commodities: 5, Crypto: 5, Private: 5 },
   },
 ];
 

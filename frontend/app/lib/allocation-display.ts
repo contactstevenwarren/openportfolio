@@ -2,12 +2,12 @@ import type { AllocationResult, AllocationSlice, AssetClass } from "@/app/lib/ap
 
 /**
  * L1 order for legend / sort (matches backend TAXONOMY_L1_ORDER).
- * Cash is first; Private is the fallback in `toAssetClass` for unknown names.
+ * Stocks is first (risk-descent order); Private is the fallback in `toAssetClass` for unknown names.
  */
 export const CANONICAL_ORDER = [
-  "Cash",
   "Stocks",
   "Bonds",
+  "Cash",
   "Real Estate",
   "Commodities",
   "Crypto",
