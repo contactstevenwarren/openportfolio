@@ -12,6 +12,7 @@ import {
 } from "@/app/components/ui/sheet";
 import { Input } from "@/app/components/ui/input";
 import { Button } from "@/app/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/app/components/ui/toggle-group";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +32,13 @@ import {
 } from "@/app/lib/api";
 import { cn } from "@/app/lib/utils";
 import { formatPct, formatUsd } from "../mocks";
+import {
+  aggregatePositionsByTicker,
+  filterPositionsForTickerSearch,
+  sortAggregatedRows,
+  type AggregatedPositionRow,
+  type AggregatedSortKey,
+} from "@/app/lib/allocation-positions-aggregate";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,7 +54,9 @@ export type PanelScope = {
   isSimulating?: boolean;
 };
 
-type SortKey = "contributing_value" | "ticker" | "account_name" | "share_of_portfolio";
+type ViewMode = "ticker" | "account";
+
+type SortKey = "contributing_value" | "ticker" | "account_name" | "share_of_portfolio" | "share_of_slice";
 type SortDir = "asc" | "desc";
 
 // ---------------------------------------------------------------------------
@@ -76,15 +86,22 @@ export function DonutDrillPanel({
   );
 
   const [search, setSearch] = React.useState("");
+  const [viewMode, setViewMode] = React.useState<ViewMode>("ticker");
   const [sortKey, setSortKey] = React.useState<SortKey>("contributing_value");
   const [sortDir, setSortDir] = React.useState<SortDir>("desc");
 
-  // Reset search when scope changes.
+  // Reset view, search, and sort when slice scope changes.
   React.useEffect(() => {
+    setViewMode("ticker");
     setSearch("");
     setSortKey("contributing_value");
     setSortDir("desc");
   }, [scope?.assetClass, scope?.l2]);
+
+  // Default to By ticker every time the sheet opens.
+  React.useEffect(() => {
+    if (open) setViewMode("ticker");
+  }, [open]);
 
   // Debounced search filter.
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
@@ -161,7 +178,7 @@ export function DonutDrillPanel({
       : scope.assetClass
     : "";
 
-  const filtered = React.useMemo(() => {
+  const accountRows = React.useMemo(() => {
     if (!data?.positions) return [];
     const q = debouncedSearch.toLowerCase();
     let rows = q
@@ -170,10 +187,14 @@ export function DonutDrillPanel({
             p.ticker.toLowerCase().includes(q) ||
             p.account_name.toLowerCase().includes(q),
         )
-      : data.positions;
-    rows = [...rows].sort((a, b) => {
+      : [...data.positions];
+    rows.sort((a, b) => {
       let cmp = 0;
-      if (sortKey === "contributing_value" || sortKey === "share_of_portfolio") {
+      if (
+        sortKey === "contributing_value" ||
+        sortKey === "share_of_portfolio" ||
+        sortKey === "share_of_slice"
+      ) {
         cmp = a[sortKey] - b[sortKey];
       } else {
         cmp = a[sortKey].localeCompare(b[sortKey]);
@@ -183,13 +204,34 @@ export function DonutDrillPanel({
     return rows;
   }, [data?.positions, debouncedSearch, sortKey, sortDir]);
 
+  const tickerRows = React.useMemo(() => {
+    if (!data?.positions) return [];
+    const base = filterPositionsForTickerSearch(data.positions, debouncedSearch);
+    const agg = aggregatePositionsByTicker(base, data.total);
+    const tickerSortKey: AggregatedSortKey =
+      sortKey === "account_name" ? "contributing_value" : sortKey;
+    return sortAggregatedRows(agg, tickerSortKey, sortDir);
+  }, [data?.positions, data?.total, debouncedSearch, sortKey, sortDir]);
+
   function toggleSort(key: SortKey) {
+    if (viewMode === "ticker" && key === "account_name") return;
+    if (viewMode === "account" && key === "share_of_slice") return;
     if (sortKey === key) {
       setSortDir((d) => (d === "desc" ? "asc" : "desc"));
     } else {
       setSortKey(key);
-      setSortDir(key === "ticker" || key === "account_name" ? "asc" : "desc");
+      setSortDir(
+        key === "ticker" || key === "account_name"
+          ? "asc"
+          : "desc",
+      );
     }
+  }
+
+  function onViewModeChange(next: ViewMode) {
+    setViewMode(next);
+    setSortKey("contributing_value");
+    setSortDir("desc");
   }
 
   return (
@@ -207,29 +249,60 @@ export function DonutDrillPanel({
           onClose={onClose}
         />
 
-        {/* Search */}
-        <div className="px-6 pb-3 pt-0">
+        {/* Search + view mode */}
+        <div className="flex flex-col gap-2 px-6 pb-3 pt-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <Input
             placeholder="Search ticker or account…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-8 text-sm"
+            className="h-8 min-w-0 flex-1 text-sm"
           />
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">View</span>
+            <ToggleGroup
+              type="single"
+              value={viewMode}
+              onValueChange={(v) => {
+                if (v === "ticker" || v === "account") onViewModeChange(v);
+              }}
+              className="justify-start rounded-md border border-border bg-muted/40 p-0.5"
+              aria-label="Holdings view"
+            >
+              <ToggleGroupItem value="ticker" variant="outline" size="sm" className="flex-1 px-2.5 sm:flex-none">
+                By ticker
+              </ToggleGroupItem>
+              <ToggleGroupItem value="account" variant="outline" size="sm" className="flex-1 px-2.5 sm:flex-none">
+                By account
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
         </div>
 
         {/* Table */}
         <div className="flex-1 overflow-y-auto px-6">
           {isLoading && <LoadingBar />}
           {error && <ErrorState onRetry={() => revalidatePositions()} />}
-          {!isLoading && !error && data && (
-            <HoldingsTable
-              rows={filtered}
+          {!isLoading && !error && data && viewMode === "account" && (
+            <HoldingsTableByAccount
+              rows={accountRows}
               sortKey={sortKey}
               sortDir={sortDir}
               onSort={toggleSort}
               isFiltered={debouncedSearch.length > 0}
-              total={filtered.length}
-              isPartialPresent={filtered.some((p) => p.is_partial)}
+              isPartialPresent={accountRows.some((p) => p.is_partial)}
+              onEditTicker={openClassificationEditor}
+            />
+          )}
+          {!isLoading && !error && data && viewMode === "ticker" && (
+            <HoldingsTableByTicker
+              rows={tickerRows}
+              sortKey={
+                sortKey === "account_name" ? "contributing_value" : sortKey
+              }
+              sortDir={sortDir}
+              onSort={toggleSort}
+              isFiltered={debouncedSearch.length > 0}
+              isPartialPresent={tickerRows.some((p) => p.is_partial)}
               onEditTicker={openClassificationEditor}
             />
           )}
@@ -365,13 +438,12 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
   );
 }
 
-function HoldingsTable({
+function HoldingsTableByAccount({
   rows,
   sortKey,
   sortDir,
   onSort,
   isFiltered,
-  total,
   isPartialPresent,
   onEditTicker,
 }: {
@@ -380,7 +452,6 @@ function HoldingsTable({
   sortDir: SortDir;
   onSort: (k: SortKey) => void;
   isFiltered: boolean;
-  total: number;
   isPartialPresent: boolean;
   onEditTicker: (ticker: string) => void;
 }) {
@@ -455,6 +526,121 @@ function HoldingsTable({
             <span className="truncate text-muted-foreground">
               {p.account_name}
             </span>
+            <span className="w-20 text-right tabular-nums text-foreground">
+              {formatUsd(p.contributing_value, { compact: true })}
+              {p.is_partial && (
+                <span className="ml-0.5 text-[10px] text-muted-foreground">*</span>
+              )}
+            </span>
+            <span className="w-16 text-right tabular-nums text-muted-foreground">
+              {formatPct(p.share_of_slice, { digits: 1 })}
+            </span>
+            <span className="w-16 text-right tabular-nums text-muted-foreground">
+              {formatPct(p.share_of_portfolio, { digits: 1 })}
+            </span>
+            <span className="w-14 text-right">
+              <button
+                type="button"
+                className="text-[12px] font-medium text-foreground underline-offset-2 hover:underline"
+                onClick={() => onEditTicker(p.ticker)}
+              >
+                Edit
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {isPartialPresent && (
+        <p className="mt-3 text-[13px] leading-[18px] text-muted-foreground/70">
+          * partial — only the portion of this fund attributed to this slice.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function HoldingsTableByTicker({
+  rows,
+  sortKey,
+  sortDir,
+  onSort,
+  isFiltered,
+  isPartialPresent,
+  onEditTicker,
+}: {
+  rows: AggregatedPositionRow[];
+  sortKey: AggregatedSortKey;
+  sortDir: SortDir;
+  onSort: (k: SortKey) => void;
+  isFiltered: boolean;
+  isPartialPresent: boolean;
+  onEditTicker: (ticker: string) => void;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="py-8 text-center text-sm text-muted-foreground">
+        {isFiltered
+          ? "No holdings match your search."
+          : "No direct holdings in this slice."}
+      </div>
+    );
+  }
+
+  const thClass =
+    "py-2 text-[13px] leading-[18px] font-medium text-muted-foreground select-none cursor-pointer hover:text-foreground transition-colors";
+
+  return (
+    <div>
+      <div className="grid grid-cols-[1fr_1fr_auto_auto_auto_auto] items-center gap-x-3 border-b px-1 pb-1">
+        <button
+          type="button"
+          className={cn(thClass, "text-left")}
+          onClick={() => onSort("ticker")}
+        >
+          Ticker
+          <SortIcon active={sortKey === "ticker"} dir={sortDir} />
+        </button>
+        <span className={cn(thClass, "text-left cursor-default")}>Account</span>
+        <button
+          type="button"
+          className={cn(thClass, "text-right w-20")}
+          onClick={() => onSort("contributing_value")}
+        >
+          Value
+          <SortIcon active={sortKey === "contributing_value"} dir={sortDir} />
+        </button>
+        <button
+          type="button"
+          className={cn(thClass, "text-right w-16")}
+          onClick={() => onSort("share_of_slice")}
+        >
+          % Slice
+          <SortIcon active={sortKey === "share_of_slice"} dir={sortDir} />
+        </button>
+        <button
+          type="button"
+          className={cn(thClass, "text-right w-16")}
+          onClick={() => onSort("share_of_portfolio")}
+        >
+          % Port.
+          <SortIcon active={sortKey === "share_of_portfolio"} dir={sortDir} />
+        </button>
+        <span className={cn(thClass, "w-14 text-right text-[11px] cursor-default")}>
+          Class
+        </span>
+      </div>
+
+      <div className="divide-y">
+        {rows.map((p) => (
+          <div
+            key={p.ticker}
+            className="grid grid-cols-[1fr_1fr_auto_auto_auto_auto] items-center gap-x-3 px-1 py-2 text-[14px] leading-[20px]"
+          >
+            <span className="font-mono text-[13px] leading-[18px] font-medium text-foreground">
+              {p.ticker}
+            </span>
+            <span className="truncate text-muted-foreground">{p.accountLabel}</span>
             <span className="w-20 text-right tabular-nums text-foreground">
               {formatUsd(p.contributing_value, { compact: true })}
               {p.is_partial && (
