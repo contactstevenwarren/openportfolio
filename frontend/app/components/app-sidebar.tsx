@@ -39,7 +39,13 @@ export function AppSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <Link href="/">
+              <a
+                href="/"
+                onClick={(e) => {
+                  e.preventDefault();
+                  window.location.href = "/";
+                }}
+              >
                 <span
                   aria-hidden
                   className="bg-foreground text-background flex h-8 w-8 items-center justify-center rounded-md"
@@ -56,7 +62,7 @@ export function AppSidebar({
                     See what you own
                   </span>
                 </div>
-              </Link>
+              </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
