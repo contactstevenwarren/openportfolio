@@ -87,15 +87,15 @@ The system follows the user's OS preference via `prefers-color-scheme`. Tokens a
 
 | Token | Light | Dark | Category |
 | --- | --- | --- | --- |
-| `--viz-cash` | `#d97706` | `#fbbf24` | Cash |
 | `--viz-stocks` | `#2563eb` | `#60a5fa` | Stocks |
 | `--viz-bonds` | `#7c3aed` | `#a78bfa` | Bonds |
+| `--viz-cash` | `#d97706` | `#fbbf24` | Cash |
 | `--viz-real-estate` | `#ea580c` | `#fb923c` | Real Estate |
 | `--viz-commodities` | `#ca8a04` | `#facc15` | Commodities |
 | `--viz-crypto` | `#db2777` | `#f472b6` | Crypto |
 | `--viz-private` | `#71717a` | `#a1a1aa` | Private |
 
-The first five viz colors are also exposed as `--chart-1..--chart-5` for shadcn `<Chart>` consumers (Cash through Commodities).
+The first five viz colors are also exposed as `--chart-1..--chart-5` for shadcn `<Chart>` consumers (Stocks through Commodities).
 
 ## Typography
 
@@ -236,7 +236,7 @@ The donut (asset allocation) is the product hero.
 - **Hover.** Selected segment emphasized via stroke or weight; siblings drop opacity. Never spin, never bounce.
 - **Drill-down.** Selected segment expands; non-selected siblings fade. 300ms ease-out.
 - **Empty.** Three-ring outline in `--border` color with prompt: *"Add holdings to see your allocation."*
-- **Legend.** Below chart, single row, asset-category swatches in fixed canonical order (Cash · Stocks · Bonds · Real Estate · Commodities · Crypto · Private).
+- **Legend.** Below chart, single row, asset-category swatches in fixed canonical order (Stocks · Bonds · Cash · Real Estate · Commodities · Crypto · Private).
 
 ## Voice
 

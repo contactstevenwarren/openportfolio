@@ -25,6 +25,11 @@ TAXONOMY: dict[str, tuple[str, ...]] = {
         "International Bonds",
         "Emerging Markets Debt",
     ),
+    "Cash": (
+        "Cash & Savings",
+        "Money Market",
+        "CDs",
+    ),
     "Real Estate": (
         "REITs",
         "Primary Residence",
@@ -40,11 +45,6 @@ TAXONOMY: dict[str, tuple[str, ...]] = {
         "Bitcoin",
         "Ethereum",
         "Other Crypto",
-    ),
-    "Cash": (
-        "Cash & Savings",
-        "Money Market",
-        "CDs",
     ),
     "Private": (
         "Private Equity",

@@ -458,11 +458,11 @@ function DonutBody({
                         {formatUsd(s.value, { compact: true })}
                       </Provenance>
                     </span>
-                    <span className="w-12 text-right text-mono-sm tabular-nums text-muted-foreground">
-                      {s.targetPct != null ? formatPct(s.targetPct / 100, { digits: 0 }) : "—"}
+                    <span className={`w-12 text-right text-mono-sm tabular-nums ${s.targetPct != null ? "text-muted-foreground" : "text-muted-foreground/50"}`}>
+                      {formatPct((s.targetPct ?? s.pct) / 100, { digits: 0 })}
                     </span>
-                    <span className={`w-14 text-right text-mono-sm tabular-nums ${driftColor(s.driftBand)}`}>
-                      {s.driftPct != null ? formatPp(s.driftPct) : "—"}
+                    <span className={`w-14 text-right text-mono-sm tabular-nums ${s.driftPct != null ? driftColor(s.driftBand) : "text-muted-foreground/50"}`}>
+                      {formatPp(s.driftPct ?? 0)}
                     </span>
                   </button>
                 </div>

@@ -11,7 +11,6 @@ import {
 } from "@/app/components/ui/chart";
 
 const chartData = [
-  { category: "Cash", label: "Cash", value: 67791, fill: "var(--viz-cash)" },
   {
     category: "Stocks",
     label: "Stocks",
@@ -24,6 +23,7 @@ const chartData = [
     value: 152531,
     fill: "var(--viz-bonds)",
   },
+  { category: "Cash", label: "Cash", value: 67791, fill: "var(--viz-cash)" },
   {
     category: "Real Estate",
     label: "Real Estate",
@@ -34,9 +34,9 @@ const chartData = [
 
 const chartConfig = {
   value: { label: "Allocation" },
-  Cash: { label: "Cash", color: "var(--viz-cash)" },
   Stocks: { label: "Stocks", color: "var(--viz-stocks)" },
   Bonds: { label: "Bonds", color: "var(--viz-bonds)" },
+  Cash: { label: "Cash", color: "var(--viz-cash)" },
   "Real Estate": { label: "Real Estate", color: "var(--viz-real-estate)" },
 } satisfies ChartConfig;
 

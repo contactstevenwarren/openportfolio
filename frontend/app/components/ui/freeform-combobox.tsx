@@ -138,7 +138,7 @@ export function FreeformCombobox({
                 ))}
               </CommandGroup>
             )}
-              {showCreate && (
+            {showCreate && (
               <>
                 {filtered.length > 0 && <CommandSeparator />}
                 <CommandGroup>

@@ -94,9 +94,7 @@ function viewFor(kind: StateKind): View {
         pillClass: "bg-muted text-muted-foreground",
         pillLabel: "No targets",
         headline: "No targets set",
-        sub: "Set targets to track drift over time",
-        ctaLabel: "Set targets",
-        ctaHref: TARGETS_HREF,
+        sub: "Showing current allocation — set targets to track drift",
       };
     case "not_enough_data":
       return {

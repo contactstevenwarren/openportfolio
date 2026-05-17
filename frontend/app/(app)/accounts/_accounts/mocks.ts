@@ -6,14 +6,14 @@
 export type { Account, Institution, AssetClass, AccountClassBreakdown } from "@/app/lib/api";
 
 // ── Asset class lookup tables ──────────────────────────────────────────────────
-// Canonical order: Cash · Stocks · Bonds · Real Estate · Commodities · Crypto · Private (TAXONOMY_L1_ORDER)
+// Canonical order: Stocks · Bonds · Cash · Real Estate · Commodities · Crypto · Private (TAXONOMY_L1_ORDER)
 
 import type { AssetClass } from "@/app/lib/api";
 
 export const ASSET_CLASS_ORDER: AssetClass[] = [
-  "Cash",
   "Stocks",
   "Bonds",
+  "Cash",
   "Real Estate",
   "Commodities",
   "Crypto",
