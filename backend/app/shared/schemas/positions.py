@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.shared.schemas.classifications import ClassificationBucketPayload
 
 
 class InlineClassification(BaseModel):
@@ -13,6 +15,16 @@ class InlineClassification(BaseModel):
     auto_suffix: bool = True
     suggestion_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     suggestion_reasoning: str | None = None
+    buckets: list[ClassificationBucketPayload] | None = None
+
+    @model_validator(mode="after")
+    def bucket_weights_sum(self) -> InlineClassification:
+        if not self.buckets:
+            return self
+        s = sum(b.weight for b in self.buckets)
+        if abs(s - 1.0) > 0.02:
+            raise ValueError("bucket weights must sum to 1.0 (+/- 0.02)")
+        return self
 
 
 class CommitPosition(BaseModel):

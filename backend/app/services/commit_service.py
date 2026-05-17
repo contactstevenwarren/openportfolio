@@ -8,10 +8,11 @@ from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.classifications import load_classifications
+from app.classifications import ClassificationEntry, load_classifications
 from app.constants import VALID_ASSET_CLASSES
 from app.models import Account, Classification, Position, Provenance
 from app.shared.schemas.accounts import MANUAL_ACCOUNT_TYPES
+from app.shared.schemas.classifications import ClassificationBucketPayload
 from app.shared.schemas.positions import CommitPosition, CommitResult, PositionCommit
 from app.services.classification_rows import (
     replace_user_classification_buckets,
@@ -21,6 +22,56 @@ from app.services.classification_rows import (
 )
 from app.services.portfolio_snapshot import write_snapshot
 from app.taxonomy import TAXONOMY, is_allowed_pair
+
+
+def _validate_commit_buckets(buckets: list[ClassificationBucketPayload]) -> None:
+    for b in buckets:
+        if b.asset_class not in VALID_ASSET_CLASSES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"asset_class must be one of "
+                    f"{sorted(VALID_ASSET_CLASSES)}; got {b.asset_class!r}"
+                ),
+            )
+        if b.sub_class is None or not is_allowed_pair(b.asset_class, b.sub_class):
+            allowed = list(TAXONOMY.get(b.asset_class, ()))
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"sub_class for asset_class={b.asset_class!r} must be one of "
+                    f"{allowed}; got {b.sub_class!r}"
+                ),
+            )
+
+
+def yaml_matches_bucket_list(
+    yaml_hit: ClassificationEntry | None,
+    commit_buckets: list[ClassificationBucketPayload],
+) -> bool:
+    """True when commit buckets match the YAML seed (order-insensitive)."""
+    if yaml_hit is None or not yaml_hit.buckets:
+        return False
+    if len(yaml_hit.buckets) != len(commit_buckets):
+        return False
+
+    def norm_key(
+        asset_class: str, sub_class: str | None
+    ) -> tuple[str, str | None]:
+        return (asset_class, sub_class or None)
+
+    left = sorted(
+        ((norm_key(b.asset_class, b.sub_class), b.weight) for b in yaml_hit.buckets),
+        key=lambda x: x[0],
+    )
+    right = sorted(
+        ((norm_key(b.asset_class, b.sub_class), b.weight) for b in commit_buckets),
+        key=lambda x: x[0],
+    )
+    for (k1, w1), (k2, w2) in zip(left, right, strict=True):
+        if k1 != k2 or abs(w1 - w2) > 1e-5:
+            return False
+    return True
 
 
 def resolve_account(db: Session, account_id: int | None) -> Account:
@@ -71,21 +122,29 @@ def apply_commit_row_classification(
                     f"got {cls_in.asset_class!r}"
                 ),
             )
-        ac = cls_in.asset_class
-        sc = cls_in.sub_class
-        if sc is None:
-            sc = TAXONOMY[ac][0]
-        elif not is_allowed_pair(ac, sc):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"sub_class for {ac!r} must be one of {list(TAXONOMY[ac])}; "
-                    f"got {cls_in.sub_class!r}"
-                ),
-            )
-        commit_buckets = single_bucket(ac, sc)
+        buckets_in = cls_in.buckets
+        use_custom_buckets = bool(buckets_in)
+        if use_custom_buckets:
+            commit_buckets = list(buckets_in)
+            _validate_commit_buckets(commit_buckets)
+        else:
+            ac = cls_in.asset_class
+            sc = cls_in.sub_class
+            if sc is None:
+                sc = TAXONOMY[ac][0]
+            elif not is_allowed_pair(ac, sc):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"sub_class for {ac!r} must be one of {list(TAXONOMY[ac])}; "
+                        f"got {cls_in.sub_class!r}"
+                    ),
+                )
+            commit_buckets = single_bucket(ac, sc)
+
+        reasoning_raw = (cls_in.suggestion_reasoning or "").strip()
+        sr = reasoning_raw if reasoning_raw else None
         sc_conf = cls_in.suggestion_confidence
-        sr = cls_in.suggestion_reasoning if sc_conf is not None else None
         pconf = float(sc_conf) if sc_conf is not None else 1.0
         if cls_in.auto_suffix:
             ticker = resolve_ticker(db, ticker)
@@ -102,11 +161,14 @@ def apply_commit_row_classification(
             existing_c = db.get(Classification, ticker)
             yaml_entries = load_classifications()
             yaml_hit = yaml_entries.get(ticker)
-            same_as_yaml = yaml_matches_single_bucket(
-                yaml_hit, cls_in.asset_class, cls_in.sub_class
-            ) or yaml_asset_class_only_matches(
-                yaml_hit, cls_in.asset_class, cls_in.sub_class
-            )
+            if use_custom_buckets:
+                same_as_yaml = yaml_matches_bucket_list(yaml_hit, commit_buckets)
+            else:
+                same_as_yaml = yaml_matches_single_bucket(
+                    yaml_hit, cls_in.asset_class, cls_in.sub_class
+                ) or yaml_asset_class_only_matches(
+                    yaml_hit, cls_in.asset_class, cls_in.sub_class
+                )
             if existing_c is not None:
                 if existing_c.source == "user":
                     replace_user_classification_buckets(

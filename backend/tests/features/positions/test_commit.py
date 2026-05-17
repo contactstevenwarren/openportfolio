@@ -275,6 +275,10 @@ def test_manual_commit_writes_provenance_for_classification(
     for p in prov:
         assert p.source == "manual"
 
+    rows = client.get("/api/classifications", headers=auth_headers).json()
+    row = next(r for r in rows if r["ticker"] == "wine-bottle")
+    assert row["how_classified"] == "accounts_manual"
+
 
 def test_manual_commit_rejects_invalid_asset_class(
     client: TestClient, auth_headers: dict[str, str]
@@ -331,6 +335,129 @@ def test_paste_commit_with_classification_inserts_user_row_for_unknown_ticker(
         .one()
     )
     assert b0.asset_class == "Stocks"
+    prov = (
+        test_db.query(Provenance)
+        .filter(Provenance.entity_type == "classification")
+        .filter(Provenance.entity_key == "ZZUNKNOWN99")
+        .one()
+    )
+    assert prov.llm_span == "Test LLM line."
+
+
+def test_paste_commit_reasoning_only_stores_llm_span_without_confidence(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    body = {
+        "source": "paste:reason-only",
+        "positions": [
+            {
+                "ticker": "ZZREASON99",
+                "shares": 1.0,
+                "cost_basis": 1.0,
+                "market_value": 2.0,
+                "confidence": 0.95,
+                "source_span": "ZZREASON99",
+                "classification": {
+                    "asset_class": "Bonds",
+                    "sub_class": "US Corporate",
+                    "auto_suffix": False,
+                    "suggestion_reasoning": "Reasoning without confidence field.",
+                },
+            }
+        ],
+    }
+    r = client.post("/api/positions/commit", json=body, headers=auth_headers)
+    assert r.status_code == 201
+    prov = (
+        test_db.query(Provenance)
+        .filter(Provenance.entity_type == "classification")
+        .filter(Provenance.entity_key == "ZZREASON99")
+        .one()
+    )
+    assert prov.llm_span == "Reasoning without confidence field."
+    assert prov.confidence == 1.0
+
+
+def test_paste_commit_inline_multi_buckets(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    body = {
+        "source": "paste:multi",
+        "positions": [
+            {
+                "ticker": "ZZMULTI99",
+                "shares": 1.0,
+                "cost_basis": 1.0,
+                "market_value": 2.0,
+                "confidence": 0.95,
+                "source_span": "ZZMULTI99",
+                "classification": {
+                    "asset_class": "Stocks",
+                    "sub_class": "US Stocks",
+                    "auto_suffix": False,
+                    "buckets": [
+                        {
+                            "asset_class": "Stocks",
+                            "sub_class": "US Stocks",
+                            "weight": 0.6,
+                        },
+                        {
+                            "asset_class": "Stocks",
+                            "sub_class": "International Developed",
+                            "weight": 0.4,
+                        },
+                    ],
+                },
+            }
+        ],
+    }
+    r = client.post("/api/positions/commit", json=body, headers=auth_headers)
+    assert r.status_code == 201
+    buckets = (
+        test_db.query(ClassificationBucket)
+        .filter(ClassificationBucket.ticker == "ZZMULTI99")
+        .order_by(ClassificationBucket.sort_order)
+        .all()
+    )
+    assert len(buckets) == 2
+    assert abs(buckets[0].weight + buckets[1].weight - 1.0) < 1e-6
+
+
+def test_paste_commit_inline_buckets_rejects_bad_sum(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    body = {
+        "source": "paste:badsum",
+        "positions": [
+            {
+                "ticker": "ZZBADSUM",
+                "shares": 1.0,
+                "cost_basis": 1.0,
+                "market_value": 2.0,
+                "confidence": 0.95,
+                "source_span": "x",
+                "classification": {
+                    "asset_class": "Stocks",
+                    "sub_class": "US Stocks",
+                    "auto_suffix": False,
+                    "buckets": [
+                        {
+                            "asset_class": "Stocks",
+                            "sub_class": "US Stocks",
+                            "weight": 0.3,
+                        },
+                        {
+                            "asset_class": "Stocks",
+                            "sub_class": "International Developed",
+                            "weight": 0.3,
+                        },
+                    ],
+                },
+            }
+        ],
+    }
+    r = client.post("/api/positions/commit", json=body, headers=auth_headers)
+    assert r.status_code == 422
 
 
 def test_paste_commit_skips_classification_when_matches_yaml(
@@ -349,6 +476,40 @@ def test_paste_commit_skips_classification_when_matches_yaml(
                 "classification": {
                     "asset_class": "Stocks",
                     "auto_suffix": False,
+                },
+            }
+        ],
+    }
+    r = client.post("/api/positions/commit", json=body, headers=auth_headers)
+    assert r.status_code == 201
+    assert test_db.query(Classification).count() == 0
+
+
+def test_paste_commit_custom_buckets_matching_yaml_skips_user_row(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """Explicit buckets identical to YAML seed must not create a redundant DB row."""
+    body = {
+        "source": "paste:yaml-match-buckets",
+        "positions": [
+            {
+                "ticker": "VTI",
+                "shares": 1.0,
+                "cost_basis": 1.0,
+                "market_value": 2.0,
+                "confidence": 0.95,
+                "source_span": "VTI",
+                "classification": {
+                    "asset_class": "Stocks",
+                    "sub_class": "US Stocks",
+                    "auto_suffix": False,
+                    "buckets": [
+                        {
+                            "asset_class": "Stocks",
+                            "sub_class": "US Stocks",
+                            "weight": 1.0,
+                        },
+                    ],
                 },
             }
         ],

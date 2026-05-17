@@ -8,6 +8,15 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.taxonomy import TAXONOMY_L1_ORDER
 
+HowClassified = Literal[
+    "built_in",
+    "classifications_ui",
+    "accounts_manual",
+    "import_llm",
+    "import_manual",
+    "unknown",
+]
+
 
 class ClassificationBucketPayload(BaseModel):
     asset_class: str
@@ -21,6 +30,7 @@ class ClassificationRow(BaseModel):
     source: str
     overrides_yaml: bool = False
     has_breakdown: bool = False
+    how_classified: HowClassified
 
 
 class ClassificationPatch(BaseModel):
@@ -45,6 +55,7 @@ class ClassificationSuggestItem(BaseModel):
     sub_class: str | None = None
     confidence: float | None = None
     reasoning: str | None = None
+    buckets: list[ClassificationBucketPayload] | None = None
 
 
 class TaxonomyOption(BaseModel):

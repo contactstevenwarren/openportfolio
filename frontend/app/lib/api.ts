@@ -66,6 +66,14 @@ export type Account = {
   is_investable: boolean;
 };
 
+export type HowClassified =
+  | 'built_in'
+  | 'classifications_ui'
+  | 'accounts_manual'
+  | 'import_llm'
+  | 'import_manual'
+  | 'unknown';
+
 export type InlineClassification = {
   asset_class: string;
   sub_class?: string | null;
@@ -73,6 +81,7 @@ export type InlineClassification = {
   auto_suffix?: boolean;
   suggestion_confidence?: number | null;
   suggestion_reasoning?: string | null;
+  buckets?: ClassificationBucketPayload[] | null;
 };
 
 export type CommitPosition = {
@@ -227,6 +236,7 @@ export type ClassificationRow = {
   overrides_yaml: boolean;
   /** True when len(buckets) > 1 (marginal weights in the seed). */
   has_breakdown: boolean;
+  how_classified: HowClassified;
 };
 
 export type ClassificationPatch = {
@@ -269,6 +279,7 @@ export type ClassificationSuggestItem = {
   sub_class?: string | null;
   confidence?: number | null;
   reasoning?: string | null;
+  buckets?: ClassificationBucketPayload[] | null;
 };
 
 export type Position = {

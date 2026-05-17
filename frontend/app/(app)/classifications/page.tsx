@@ -27,10 +27,51 @@ import {
   classificationDominantBucket,
   type ClassificationBucketPayload,
   type ClassificationRow,
+  type HowClassified,
   type Position,
   type Taxonomy,
 } from "@/app/lib/api";
 import { cn } from "@/app/lib/utils";
+
+const HOW_CLASSIFIED_COPY: Record<
+  HowClassified,
+  { label: string; description: string }
+> = {
+  built_in: {
+    label: "Built-in catalog",
+    description: "From bundled data/classifications.yaml (no DB row).",
+  },
+  classifications_ui: {
+    label: "You edited",
+    description: "Saved from this Classifications page (portfolio-wide).",
+  },
+  accounts_manual: {
+    label: "From Accounts",
+    description: "Saved via manual account or grid flows.",
+  },
+  import_llm: {
+    label: "Import · LLM",
+    description:
+      "Paste/PDF import carried LLM suggestion metadata; check provenance for reasoning.",
+  },
+  import_manual: {
+    label: "Import",
+    description: "Paste/PDF import wrote this mapping without LLM reasoning on file.",
+  },
+  unknown: {
+    label: "Saved",
+    description: "Database override without matching provenance (older data).",
+  },
+};
+
+function howClassifiedBadgeClass(how: HowClassified): string {
+  if (how === "built_in") return "bg-muted/60 text-muted-foreground";
+  if (how === "import_llm") return "bg-warning-soft text-warning";
+  if (how === "unknown" || how === "import_manual") {
+    return "bg-muted/50 text-muted-foreground";
+  }
+  return "bg-warning-soft text-warning";
+}
 
 function formatBucketsBrief(r: ClassificationRow): string {
   if (r.buckets.length === 0) return "—";
@@ -286,9 +327,22 @@ function ClassificationsPageInner() {
                         </td>
                         <td className="max-w-[min(420px,50vw)] px-3 py-2">
                           <div className="flex flex-wrap items-center gap-2">
-                            {r.source === "user" && (
-                              <span className="shrink-0 rounded bg-warning-soft px-2 py-0.5 text-label text-warning">
-                                Adjusted
+                            {r.source === "yaml" ? (
+                              <span
+                                className="shrink-0 rounded bg-muted/60 px-2 py-0.5 text-label text-muted-foreground"
+                                title={HOW_CLASSIFIED_COPY.built_in.description}
+                              >
+                                {HOW_CLASSIFIED_COPY.built_in.label}
+                              </span>
+                            ) : (
+                              <span
+                                className={cn(
+                                  "shrink-0 rounded px-2 py-0.5 text-label",
+                                  howClassifiedBadgeClass(r.how_classified),
+                                )}
+                                title={HOW_CLASSIFIED_COPY[r.how_classified].description}
+                              >
+                                {HOW_CLASSIFIED_COPY[r.how_classified].label}
                               </span>
                             )}
                             <span

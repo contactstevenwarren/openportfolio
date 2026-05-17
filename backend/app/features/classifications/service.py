@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.classifications import (
@@ -14,7 +15,7 @@ from app.classifications import (
     primary_asset_class,
 )
 from app.constants import VALID_ASSET_CLASSES
-from app.models import Classification, Position
+from app.models import Classification, Position, Provenance
 from .schemas import (
     ClassificationPatch,
     ClassificationRow,
@@ -28,6 +29,33 @@ from app.services.classification_rows import (
     replace_user_classification_buckets,
 )
 from app.taxonomy import TAXONOMY, is_allowed_pair, taxonomy_options_for_api
+from app.shared.schemas.classifications import ClassificationBucketPayload, HowClassified
+
+
+def _latest_buckets_provenance(db: Session, ticker: str) -> Provenance | None:
+    return (
+        db.query(Provenance)
+        .filter(Provenance.entity_type == "classification")
+        .filter(Provenance.entity_key == ticker)
+        .filter(Provenance.field == "buckets")
+        .order_by(desc(Provenance.captured_at), desc(Provenance.id))
+        .first()
+    )
+
+
+def _how_classified_from_provenance(p: Provenance | None) -> HowClassified:
+    if p is None:
+        return "unknown"
+    src = (p.source or "").strip()
+    if src == "user":
+        return "classifications_ui"
+    if src == "manual":
+        return "accounts_manual"
+    if src.startswith("paste") or src.startswith("pdf"):
+        if (p.llm_span or "").strip():
+            return "import_llm"
+        return "import_manual"
+    return "unknown"
 
 
 def taxonomy_from_locked() -> Taxonomy:
@@ -49,6 +77,10 @@ def suggest_classifications(
     yaml_entries = load_classifications()
     user_entries = load_user_classifications(db)
     merged: dict[str, ClassificationEntry] = {**yaml_entries, **user_entries}
+    # Case-insensitive lookup so "vt" matches the YAML key "VT".
+    by_upper: dict[str, tuple[str, ClassificationEntry]] = {
+        t.upper(): (t, e) for t, e in merged.items()
+    }
     seen: set[str] = set()
     out: list[ClassificationSuggestItem] = []
     for raw in body.tickers:
@@ -56,18 +88,32 @@ def suggest_classifications(
         if not ticker or ticker in seen:
             continue
         seen.add(ticker)
-        if ticker in merged:
-            ent = merged[ticker]
+        hit = by_upper.get(ticker.upper())
+        if hit is not None:
+            canonical_ticker, ent = hit
             if not ent.buckets:
-                out.append(ClassificationSuggestItem(ticker=ticker, source="none"))
+                out.append(ClassificationSuggestItem(ticker=canonical_ticker, source="none"))
                 continue
             dominant = max(ent.buckets, key=lambda b: b.weight)
+            multi_buckets = (
+                [
+                    ClassificationBucketPayload(
+                        asset_class=b.asset_class,
+                        sub_class=b.sub_class,
+                        weight=b.weight,
+                    )
+                    for b in ent.buckets
+                ]
+                if len(ent.buckets) > 1
+                else None
+            )
             out.append(
                 ClassificationSuggestItem(
-                    ticker=ticker,
+                    ticker=canonical_ticker,
                     source="existing",
                     asset_class=primary_asset_class(ent),
                     sub_class=dominant.sub_class,
+                    buckets=multi_buckets,
                 )
             )
             continue
@@ -98,14 +144,22 @@ def list_classifications(db: Session) -> list[ClassificationRow]:
         user_ent = user_entries_full.get(ticker)
         if user_ent is not None:
             continue
-        merged.append(classification_row_from_entry(ticker, entry, overrides_yaml=False))
+        merged.append(
+            classification_row_from_entry(
+                ticker, entry, overrides_yaml=False, how_classified="built_in"
+            )
+        )
     for ticker, row in user_rows.items():
         user_ent = user_entries_full.get(ticker)
         if user_ent is None:
             continue
+        how = _how_classified_from_provenance(_latest_buckets_provenance(db, ticker))
         merged.append(
             classification_row_from_entry(
-                ticker, user_ent, overrides_yaml=ticker in yaml_entries
+                ticker,
+                user_ent,
+                overrides_yaml=ticker in yaml_entries,
+                how_classified=how,
             )
         )
     merged.sort(key=lambda r: r.ticker)
@@ -141,7 +195,10 @@ def patch_classification(
     yaml_entries = load_classifications()
     user_ent = load_user_classifications(db)[ticker]
     return classification_row_from_entry(
-        ticker, user_ent, overrides_yaml=ticker in yaml_entries
+        ticker,
+        user_ent,
+        overrides_yaml=ticker in yaml_entries,
+        how_classified="classifications_ui",
     )
 
 
