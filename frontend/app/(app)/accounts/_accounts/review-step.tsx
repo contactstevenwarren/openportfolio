@@ -53,8 +53,17 @@ type ReviewRow = {
   asset_class: string | null;
   sub_class: string | null;
   class_source: ClassSource;
-  showAdvanced: boolean;
+  /** True after user changes asset class in the review dropdown (not API-filled). */
+  classification_dirty: boolean;
 };
+
+/** When false for yaml_user rows, omit classification on commit so DB/YAML mappings are not rewritten. */
+function shouldIncludeClassificationForCommit(r: ReviewRow): boolean {
+  if (!r.asset_class) return false;
+  if (r.classification_dirty) return true;
+  if (r.class_source !== "yaml_user") return true;
+  return false;
+}
 
 export type ReviewStepHandle = {
   triggerCommit: () => void;
@@ -152,7 +161,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           asset_class: null,
           sub_class: null,
           class_source: "none",
-          showAdvanced: false,
+          classification_dirty: false,
         };
       });
 
@@ -175,7 +184,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           asset_class: null,
           sub_class: null,
           class_source: "none" as ClassSource,
-          showAdvanced: false,
+          classification_dirty: false,
         }));
 
       setRows([
@@ -209,6 +218,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                 asset_class: s.asset_class ?? null,
                 sub_class: s.sub_class ?? null,
                 class_source: classSource,
+                classification_dirty: false,
               };
             })
           );
@@ -254,7 +264,9 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
         if (!sug || sug.source === "none") {
           setRows((prev) =>
             prev.map((r) =>
-              r.id === rowId ? { ...r, asset_class: null, class_source: "none" } : r
+              r.id === rowId
+                ? { ...r, asset_class: null, sub_class: null, class_source: "none", classification_dirty: false }
+                : r
             )
           );
         } else {
@@ -266,6 +278,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                     asset_class: sug.asset_class ?? null,
                     sub_class: sug.sub_class ?? null,
                     class_source: sug.source === "existing" ? "yaml_user" : "llm",
+                    classification_dirty: false,
                   }
                 : r
             )
@@ -282,21 +295,25 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
       try {
         const positions = rows
           .filter((r) => r.include && r.status !== "removed")
-          .map((r) => ({
-            ticker: r.ticker,
-            shares: r.shares,
-            cost_basis: r.cost_basis,
-            market_value: r.market_value,
-            confidence: r.confidence,
-            source_span: r.source_span,
-            classification: r.asset_class
-              ? {
-                  asset_class: r.asset_class,
-                  sub_class: r.sub_class ?? null,
-                  auto_suffix: false,
-                }
-              : undefined,
-          }));
+          .map((r) => {
+            const sendCls = shouldIncludeClassificationForCommit(r);
+            return {
+              ticker: r.ticker,
+              shares: r.shares,
+              cost_basis: r.cost_basis,
+              market_value: r.market_value,
+              confidence: r.confidence,
+              source_span: r.source_span,
+              classification:
+                sendCls && r.asset_class
+                  ? {
+                      asset_class: r.asset_class,
+                      sub_class: r.sub_class ?? null,
+                      auto_suffix: false,
+                    }
+                  : undefined,
+            };
+          });
         await api.commit({
           account_id: account.id,
           source: source === "pdf" ? "pdf" : "paste",
@@ -425,7 +442,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
       );
     }
 
-    // ── Asset class + Advanced (shared by table + cards) ──────────────────────
+    // ── Asset class (shared by table + cards) ─────────────────────────────────
 
     function AssetClassField({ row }: { row: ReviewRow }) {
       return (
@@ -433,30 +450,22 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           <select
             className="w-full rounded border border-input bg-background px-1.5 py-0.5 text-body-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             value={row.asset_class ?? ""}
-            onChange={(e) => updateRow(row.id, "asset_class", e.target.value || null)}
+            onChange={(e) => {
+              const ac = e.target.value || null;
+              setRows((prev) =>
+                prev.map((r) =>
+                  r.id === row.id
+                    ? { ...r, asset_class: ac, sub_class: null, classification_dirty: true }
+                    : r
+                )
+              );
+            }}
           >
             <option value="">Unclassified</option>
             {ASSET_CLASS_ORDER.map((ac) => (
               <option key={ac} value={ac}>{ASSET_CLASS_LABEL[ac]}</option>
             ))}
           </select>
-          <button
-            type="button"
-            className="self-start text-xs text-muted-foreground underline-offset-2 hover:underline"
-            onClick={() => updateRow(row.id, "showAdvanced", !row.showAdvanced)}
-          >
-            {row.showAdvanced ? "Hide advanced" : "Advanced"}
-          </button>
-          {row.showAdvanced && (
-            <div className="flex flex-col gap-1 pl-1 border-l-2 border-border">
-              <input
-                className="rounded border border-input bg-background px-1.5 py-0.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="Sub-class (snake_case)"
-                value={row.sub_class ?? ""}
-                onChange={(e) => updateRow(row.id, "sub_class", e.target.value || null)}
-              />
-            </div>
-          )}
         </div>
       );
     }
@@ -597,7 +606,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                     />
                   </td>
 
-                  {/* Asset class + Advanced */}
+                  {/* Asset class */}
                   <td className="px-2 py-1 min-w-[160px]">
                     <AssetClassField row={row} />
                   </td>
