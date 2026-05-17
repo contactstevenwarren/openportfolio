@@ -363,6 +363,50 @@ def test_endpoint_l2_filter(
     assert abs(contrib_sum - sub["value"]) < 1.0
 
 
+def test_endpoint_l2_with_ampersand_in_name(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    # "Cash & Savings" contains an & — ensure properly-encoded requests succeed.
+    # Regression: the frontend SWR key previously interpolated l2 unencoded,
+    # causing the browser to split "?l2=Cash & Savings" at the & and send
+    # only l2="Cash " (trailing space), which triggered a 400.
+    account = Account(label="CashTest", type="bank")
+    test_db.add(account)
+    test_db.commit()
+
+    test_db.add(
+        Position(
+            account_id=account.id,
+            ticker="CASHPOS",
+            shares=1.0,
+            market_value=10000.0,
+            as_of=datetime.now(UTC),
+            source="paste",
+        )
+    )
+    c = Classification(ticker="CASHPOS", source="user")
+    test_db.add(c)
+    test_db.flush()
+    test_db.add(
+        ClassificationBucket(
+            ticker="CASHPOS", sort_order=0, asset_class="Cash", sub_class="Cash & Savings", weight=1.0
+        )
+    )
+    test_db.commit()
+
+    # TestClient / httpx encodes params correctly: ?l2=Cash+%26+Savings
+    r = client.get(
+        "/api/allocation/positions/Cash",
+        params={"l2": "Cash & Savings"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["l2"] == "Cash & Savings"
+    tickers = {p["ticker"] for p in body["positions"]}
+    assert "CASHPOS" in tickers
+
+
 def test_endpoint_requires_auth(client: TestClient) -> None:
     r = client.get("/api/allocation/positions/Stocks")
     assert r.status_code == 401
