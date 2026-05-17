@@ -62,23 +62,16 @@ export function DonutDrillPanel({
   open: boolean;
   onClose: () => void;
 }) {
-  // Key encodes the full scope so SWR always fetches the right slice.
-  // The fetcher receives the key and parses it — no closure over scope —
-  // which prevents stale-closure bugs when scope changes while the panel is open.
+  // Tuple key keeps assetClass/l2 as typed values so SWR caches per scope
+  // without any URL round-tripping. api.allocationPositions handles encoding.
   const swrKey = open && scope
-    ? scope.l2
-      ? `/api/allocation/positions/${scope.assetClass}?l2=${scope.l2}`
-      : `/api/allocation/positions/${scope.assetClass}`
+    ? (["allocation-positions", scope.assetClass, scope.l2 ?? null] as const)
     : null;
 
   const { data, error, isLoading, mutate: revalidatePositions } = useSWR<PositionContributionsResponse>(
     swrKey,
-    (url: string) => {
-      const [path, qs] = url.split("?");
-      const assetClass = path.split("/").pop()!;
-      const l2 = qs ? new URLSearchParams(qs).get("l2") ?? undefined : undefined;
-      return api.allocationPositions(assetClass, l2);
-    },
+    ([, assetClass, l2]: readonly ["allocation-positions", string, string | null]) =>
+      api.allocationPositions(assetClass, l2 ?? undefined),
     { revalidateOnFocus: false },
   );
 
