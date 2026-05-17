@@ -221,7 +221,7 @@ def extract_positions(
     content = response.choices[0].message.content
     raw = json.loads(content)
     positions_in = [ExtractedPosition(**p) for p in raw["positions"]]
-    positions_out = merge_duplicate_tickers(annotate(positions_in))
+    positions_out = annotate(merge_duplicate_tickers(positions_in))
 
     stmt_name = raw.get("statement_account_name")
     if stmt_name is not None and not isinstance(stmt_name, str):

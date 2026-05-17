@@ -13,13 +13,20 @@ def _sum_optional(values: list[float | None]) -> float | None:
     return float(sum(nums))
 
 
+def _normalize_ticker(raw: str) -> str:
+    return raw.strip().upper().replace("/", ".")
+
+
 def merge_duplicate_tickers(positions: list[ExtractedPosition]) -> list[ExtractedPosition]:
-    """Merge rows that share the same normalized ticker (strip + upper)."""
+    """Merge rows that share the same normalized ticker (strip + upper + slash→dot)."""
 
     groups: dict[str, list[ExtractedPosition]] = {}
     order: list[str] = []
+    positions = [
+        p.model_copy(update={"ticker": _normalize_ticker(p.ticker)}) for p in positions
+    ]
     for p in positions:
-        key = p.ticker.strip().upper()
+        key = p.ticker
         if key not in groups:
             order.append(key)
             groups[key] = []
