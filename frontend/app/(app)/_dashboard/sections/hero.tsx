@@ -55,9 +55,7 @@ function driftViewFor(kind: DriftStateKind): DriftView {
       return {
         pillClass: "bg-muted text-muted-foreground",
         pillLabel: "No targets",
-        sub: "Set targets to track drift",
-        ctaLabel: "Set targets",
-        ctaHref: TARGETS_HREF,
+        sub: "Showing current allocation — set targets to track drift",
       };
     case "not_enough_data":
       return {
