@@ -179,7 +179,7 @@ export function DonutDrillPanel({
     : "";
 
   const accountRows = React.useMemo(() => {
-    if (!data?.positions) return [];
+    if (viewMode !== "account" || !data?.positions) return [];
     const q = debouncedSearch.toLowerCase();
     let rows = q
       ? data.positions.filter(
@@ -189,29 +189,27 @@ export function DonutDrillPanel({
         )
       : [...data.positions];
     rows.sort((a, b) => {
+      const sk =
+        sortKey === "share_of_slice" ? "contributing_value" : sortKey;
       let cmp = 0;
-      if (
-        sortKey === "contributing_value" ||
-        sortKey === "share_of_portfolio" ||
-        sortKey === "share_of_slice"
-      ) {
-        cmp = a[sortKey] - b[sortKey];
+      if (sk === "contributing_value" || sk === "share_of_portfolio") {
+        cmp = a[sk] - b[sk];
       } else {
-        cmp = a[sortKey].localeCompare(b[sortKey]);
+        cmp = a[sk].localeCompare(b[sk]);
       }
       return sortDir === "desc" ? -cmp : cmp;
     });
     return rows;
-  }, [data?.positions, debouncedSearch, sortKey, sortDir]);
+  }, [viewMode, data?.positions, debouncedSearch, sortKey, sortDir]);
 
   const tickerRows = React.useMemo(() => {
-    if (!data?.positions) return [];
+    if (viewMode !== "ticker" || !data?.positions) return [];
     const base = filterPositionsForTickerSearch(data.positions, debouncedSearch);
     const agg = aggregatePositionsByTicker(base, data.total);
     const tickerSortKey: AggregatedSortKey =
       sortKey === "account_name" ? "contributing_value" : sortKey;
     return sortAggregatedRows(agg, tickerSortKey, sortDir);
-  }, [data?.positions, data?.total, debouncedSearch, sortKey, sortDir]);
+  }, [viewMode, data?.positions, data?.total, debouncedSearch, sortKey, sortDir]);
 
   function toggleSort(key: SortKey) {
     if (viewMode === "ticker" && key === "account_name") return;
