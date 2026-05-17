@@ -105,7 +105,7 @@ def test_extract_fixture(
     assert result.extracted_at is not None
 
 
-def test_extract_applies_validation(azure_configured: None) -> None:
+def test_extract_applies_normalization(azure_configured: None) -> None:
     text, llm_json = _load("fidelity")
     with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
         result = extract_positions(text)
