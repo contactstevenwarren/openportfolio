@@ -117,6 +117,35 @@ def test_extract_applies_normalization(azure_configured: None) -> None:
     assert by_ticker["BND"].validation_errors == []
 
 
+def test_extract_validation_errors_survive_normalization(azure_configured: None) -> None:
+    # A ticker that is too long (>10 chars) fails TICKER_RE even after
+    # normalization — verify the validation error is still surfaced.
+    payload = json.dumps({
+        "statement_account_name": None,
+        "statement_account_name_confidence": None,
+        "matched_account_id": None,
+        "matched_account_confidence": None,
+        "positions": [
+            {
+                "ticker": "toolongtickerxx",
+                "shares": 1.0,
+                "cost_basis": None,
+                "market_value": None,
+                "confidence": 0.9,
+                "source_span": "toolongtickerxx 1",
+            },
+        ],
+        "extraction_warnings": [],
+    })
+    with patch("app.llm.litellm.completion", return_value=_mock_response(payload)):
+        result = extract_positions("any text")
+    assert len(result.positions) == 1
+    p = result.positions[0]
+    assert p.ticker == "TOOLONGTICKERXX"
+    assert p.validation_errors
+    assert "does not match" in p.validation_errors[0]
+
+
 def test_extract_preserves_confidence_and_cost_basis(azure_configured: None) -> None:
     text, llm_json = _load("schwab")
     with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
