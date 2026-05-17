@@ -8,6 +8,7 @@ import { useState, Fragment, useMemo } from "react";
 import useSWR, { mutate } from "swr";
 import { PlusIcon, XIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
+import { FreeformCombobox } from "@/app/components/ui/freeform-combobox";
 import {
   Dialog,
   DialogContent,
@@ -90,6 +91,14 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
     return m;
   }, [classifications]);
 
+  const tickerSuggestions = useMemo(
+    () =>
+      (classifications ?? [])
+        .map((r) => r.ticker)
+        .sort((a, b) => a.localeCompare(b)),
+    [classifications],
+  );
+
   const [rows, setRows] = useState<GridRow[]>([emptyRow()]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -112,18 +121,6 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
   function updateRow(id: string, field: keyof Omit<GridRow, "id">, val: string) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: val } : r)));
     setSavedCount(null);
-  }
-
-  function applyTickerBlur(row: GridRow) {
-    const trimmed = row.ticker.trim();
-    if (trimmed === "") {
-      if (row.asset_class !== "") updateRow(row.id, "asset_class", "");
-      return;
-    }
-    if (row.asset_class !== "") return;
-    const found = classificationByTickerUpper.get(trimmed.toUpperCase());
-    const ac = classificationPrimaryAssetClass(found ?? null);
-    if (ac) updateRow(row.id, "asset_class", ac);
   }
 
   const filledRows = rows.filter(isRowFilled);
@@ -219,12 +216,28 @@ export function ManualGrid({ account, onSuccess }: ManualGridProps) {
       <div className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.8fr_auto] gap-x-2 gap-y-1.5 items-center">
         {rows.map((row) => (
           <Fragment key={row.id}>
-            <input
-              className={inputCls}
-              placeholder="VTI"
+            <FreeformCombobox
               value={row.ticker}
-              onChange={(e) => updateRow(row.id, "ticker", e.target.value)}
-              onBlur={() => applyTickerBlur(row)}
+              onChange={(v) => {
+                const trimmed = v.trim();
+                const ac =
+                  trimmed && !row.asset_class
+                    ? classificationPrimaryAssetClass(
+                        classificationByTickerUpper.get(trimmed.toUpperCase()) ?? null,
+                      )
+                    : null;
+                setRows((prev) =>
+                  prev.map((r) =>
+                    r.id === row.id
+                      ? { ...r, ticker: v, ...(ac ? { asset_class: ac } : {}) }
+                      : r,
+                  ),
+                );
+                setSavedCount(null);
+              }}
+              suggestions={tickerSuggestions}
+              placeholder="VTI"
+              createLabel="new ticker"
             />
             <select
               className={cn(inputCls, "bg-background")}
