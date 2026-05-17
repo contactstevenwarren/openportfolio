@@ -70,11 +70,20 @@ export function FreeformCombobox({
   const selectedLabel = allOptions.find((o) => o.value === value)?.label ?? value;
 
   const q = search.trim().toLowerCase();
-  const filtered = q
+  const matchingAll = q
     ? allOptions.filter(
         (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
       )
     : allOptions;
+  // When there's no query and the list is large, cap to what fits without
+  // scrolling (≈ 8 rows at 36px in the 300px CommandList). Users in a Sheet
+  // or Dialog can't reliably scroll portaled popovers; typing filters instead.
+  const MAX_UNFILTERED = 8;
+  const filtered = !q && matchingAll.length > MAX_UNFILTERED
+    ? matchingAll.slice(0, MAX_UNFILTERED)
+    : matchingAll;
+  const hiddenCount = !q ? matchingAll.length - filtered.length : 0;
+
   const hasExactMatch = allOptions.some(
     (o) => o.label.toLowerCase() === q || o.value.toLowerCase() === q,
   );
@@ -136,6 +145,11 @@ export function FreeformCombobox({
                   </CommandItem>
                 ))}
               </CommandGroup>
+            )}
+            {hiddenCount > 0 && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                {hiddenCount} more — type to filter
+              </p>
             )}
             {showCreate && (
               <>
