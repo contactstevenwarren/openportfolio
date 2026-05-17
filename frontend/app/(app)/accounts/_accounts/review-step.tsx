@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import useSWR, { mutate } from "swr";
-import { ArrowLeftIcon, InfoIcon } from "lucide-react";
+import { ArrowLeftIcon, InfoIcon, PencilIcon } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -538,16 +538,6 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
           </div>
         );
       }
-      if (row.class_source === "yaml_user" && row.asset_class) {
-        return (
-          <span
-            className="inline-flex w-fit rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-            title="From bundled catalog or your saved classification"
-          >
-            Catalog
-          </span>
-        );
-      }
       if (row.class_source === "none" && !row.asset_class) {
         return (
           <span className="inline-flex w-fit rounded bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -556,6 +546,21 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
         );
       }
       return null;
+    }
+
+    function BreakdownButton({ row }: { row: ReviewRow }) {
+      if (row.status === "removed" || !taxonomy || committing) return null;
+      return (
+        <button
+          type="button"
+          className="flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50"
+          aria-label="Edit breakdown"
+          title="Edit breakdown"
+          onClick={() => openBreakdown(row)}
+        >
+          <PencilIcon className="size-3.5" />
+        </button>
+      );
     }
 
     function RowDetailsPopover({ row }: { row: ReviewRow }) {
@@ -747,7 +752,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                 <th className="px-2 py-1.5 text-right">Shares</th>
                 <th className="px-2 py-1.5 text-right">Cost basis</th>
                 <th className="px-2 py-1.5 text-right">Mkt value</th>
-                <th className="px-2 py-1.5 w-8" />
+                <th className="px-2 py-1.5 w-14" />
               </tr>
             </thead>
             <tbody>
@@ -795,18 +800,6 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                     <div className="flex flex-col gap-1">
                       <RowClassificationHints row={row} />
                       <AssetClassField row={row} />
-                      {row.status !== "removed" && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="self-start text-label"
-                          disabled={!taxonomy || committing}
-                          onClick={() => openBreakdown(row)}
-                        >
-                          Edit breakdown…
-                        </Button>
-                      )}
                     </div>
                   </td>
 
@@ -855,9 +848,12 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                     />
                   </td>
 
-                  {/* Info popover */}
+                  {/* Breakdown + Info popover */}
                   <td className="px-2 py-1 text-center">
-                    <RowDetailsPopover row={row} />
+                    <div className="flex items-center justify-center gap-1">
+                      <BreakdownButton row={row} />
+                      <RowDetailsPopover row={row} />
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -899,7 +895,10 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                       onBlur={(e) => void handleTickerBlur(row.id, e.target.value)}
                     />
                   )}
-                  <RowDetailsPopover row={row} />
+                  <div className="flex items-center gap-1">
+                    <BreakdownButton row={row} />
+                    <RowDetailsPopover row={row} />
+                  </div>
                 </div>
 
                 {/* Full card body for new/changed rows */}
@@ -907,18 +906,6 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                   <div className="mt-2 flex flex-col gap-2 pl-6">
                     <RowClassificationHints row={row} />
                     <AssetClassField row={row} />
-                    {row.status !== "removed" && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="self-start text-label"
-                        disabled={!taxonomy || committing}
-                        onClick={() => openBreakdown(row)}
-                      >
-                        Edit breakdown…
-                      </Button>
-                    )}
                     {/* Shares + Cost */}
                     <div className="grid grid-cols-2 gap-2">
                       <div className="flex flex-col gap-0.5">

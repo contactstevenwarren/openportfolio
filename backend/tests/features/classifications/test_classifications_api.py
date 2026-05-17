@@ -466,3 +466,25 @@ def test_list_how_classified_import_manual_when_no_llm_span(
     rows = client.get("/api/classifications", headers=auth_headers).json()
     row = next(r for r in rows if r["ticker"] == "HOWMAN1")
     assert row["how_classified"] == "import_manual"
+
+
+# --- suggest case-sensitivity -----------------------------------------------
+
+
+def test_suggest_matches_yaml_case_insensitively(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """Lowercase ticker 'vt' must still match the YAML key 'VT', not fall through to LLM."""
+    with patch("app.llm.classify_ticker") as mock_llm:
+        r = client.post(
+            "/api/classifications/suggest",
+            json={"tickers": ["vt"]},
+            headers=auth_headers,
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    item = body[0]
+    assert item["source"] == "existing"
+    assert item["asset_class"] == "Stocks"
+    mock_llm.assert_not_called()

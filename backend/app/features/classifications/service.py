@@ -77,6 +77,10 @@ def suggest_classifications(
     yaml_entries = load_classifications()
     user_entries = load_user_classifications(db)
     merged: dict[str, ClassificationEntry] = {**yaml_entries, **user_entries}
+    # Case-insensitive lookup so "vt" matches the YAML key "VT".
+    by_upper: dict[str, tuple[str, ClassificationEntry]] = {
+        t.upper(): (t, e) for t, e in merged.items()
+    }
     seen: set[str] = set()
     out: list[ClassificationSuggestItem] = []
     for raw in body.tickers:
@@ -84,15 +88,16 @@ def suggest_classifications(
         if not ticker or ticker in seen:
             continue
         seen.add(ticker)
-        if ticker in merged:
-            ent = merged[ticker]
+        hit = by_upper.get(ticker.upper())
+        if hit is not None:
+            canonical_ticker, ent = hit
             if not ent.buckets:
-                out.append(ClassificationSuggestItem(ticker=ticker, source="none"))
+                out.append(ClassificationSuggestItem(ticker=canonical_ticker, source="none"))
                 continue
             dominant = max(ent.buckets, key=lambda b: b.weight)
             out.append(
                 ClassificationSuggestItem(
-                    ticker=ticker,
+                    ticker=canonical_ticker,
                     source="existing",
                     asset_class=primary_asset_class(ent),
                     sub_class=dominant.sub_class,
