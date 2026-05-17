@@ -29,7 +29,7 @@ from app.services.classification_rows import (
     replace_user_classification_buckets,
 )
 from app.taxonomy import TAXONOMY, is_allowed_pair, taxonomy_options_for_api
-from app.shared.schemas.classifications import HowClassified
+from app.shared.schemas.classifications import ClassificationBucketPayload, HowClassified
 
 
 def _latest_buckets_provenance(db: Session, ticker: str) -> Provenance | None:
@@ -95,12 +95,25 @@ def suggest_classifications(
                 out.append(ClassificationSuggestItem(ticker=canonical_ticker, source="none"))
                 continue
             dominant = max(ent.buckets, key=lambda b: b.weight)
+            multi_buckets = (
+                [
+                    ClassificationBucketPayload(
+                        asset_class=b.asset_class,
+                        sub_class=b.sub_class,
+                        weight=b.weight,
+                    )
+                    for b in ent.buckets
+                ]
+                if len(ent.buckets) > 1
+                else None
+            )
             out.append(
                 ClassificationSuggestItem(
                     ticker=canonical_ticker,
                     source="existing",
                     asset_class=primary_asset_class(ent),
                     sub_class=dominant.sub_class,
+                    buckets=multi_buckets,
                 )
             )
             continue

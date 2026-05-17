@@ -55,6 +55,7 @@ class ClassificationSuggestItem(BaseModel):
     sub_class: str | None = None
     confidence: float | None = None
     reasoning: str | None = None
+    buckets: list[ClassificationBucketPayload] | None = None
 
 
 class TaxonomyOption(BaseModel):

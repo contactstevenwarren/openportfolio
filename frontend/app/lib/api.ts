@@ -279,6 +279,7 @@ export type ClassificationSuggestItem = {
   sub_class?: string | null;
   confidence?: number | null;
   reasoning?: string | null;
+  buckets?: ClassificationBucketPayload[] | null;
 };
 
 export type Position = {

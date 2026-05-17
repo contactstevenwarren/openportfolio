@@ -471,6 +471,26 @@ def test_list_how_classified_import_manual_when_no_llm_span(
 # --- suggest case-sensitivity -----------------------------------------------
 
 
+def test_suggest_returns_full_buckets_for_multi_bucket_ticker(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """Multi-bucket catalog tickers (VT) must return all buckets in suggest response."""
+    r = client.post(
+        "/api/classifications/suggest",
+        json={"tickers": ["VT"]},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    item = body[0]
+    assert item["source"] == "existing"
+    assert item["asset_class"] == "Stocks"
+    assert item["buckets"] is not None
+    assert len(item["buckets"]) == 3
+    assert abs(sum(b["weight"] for b in item["buckets"]) - 1.0) < 1e-6
+
+
 def test_suggest_matches_yaml_case_insensitively(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

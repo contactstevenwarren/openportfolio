@@ -262,7 +262,7 @@ export const ReviewStep = forwardRef<ReviewStepHandle, ReviewStepProps>(
                 suggestion_confidence: isLlm ? (s.confidence ?? null) : null,
                 suggestion_reasoning: isLlm && s.reasoning?.trim() ? s.reasoning.trim() : null,
                 has_custom_buckets: false,
-                commit_buckets: null,
+                commit_buckets: (!isLlm && s.buckets && s.buckets.length > 1) ? s.buckets : null,
               };
             })
           );
