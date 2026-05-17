@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useReset } from "@/app/lib/reset-context";
 import { Home, Landmark, Settings, Target, TrendingDown, Tags } from "lucide-react";
 
 import * as React from "react";
@@ -32,6 +33,8 @@ export function AppSidebar({
   ...props
 }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { reset } = useReset();
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -39,7 +42,14 @@ export function AppSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <Link href="/">
+              <a
+                href="/"
+                onClick={(e) => {
+                  e.preventDefault();
+                  reset();
+                  router.push("/");
+                }}
+              >
                 <span
                   aria-hidden
                   className="bg-foreground text-background flex h-8 w-8 items-center justify-center rounded-md"
@@ -56,7 +66,7 @@ export function AppSidebar({
                     See what you own
                   </span>
                 </div>
-              </Link>
+              </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
