@@ -25,6 +25,7 @@ from app.services.classification_rows import (
     single_bucket,
     slug,
 )
+from app.services.portfolio_snapshot import write_snapshot
 
 
 def validate_tax_treatment(account_type: str, tax_treatment: str) -> None:
@@ -183,12 +184,16 @@ def patch_account(db: Session, account_id: int, body: AccountPatch) -> AccountRe
     account = db.get(Account, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    old_archived = account.is_archived
+    old_investable = account.is_investable
     patch_fields = body.model_dump(exclude_unset=True)
     for field, value in patch_fields.items():
         setattr(account, field, value)
     validate_tax_treatment(account.type, account.tax_treatment)
     db.commit()
     db.refresh(account)
+    if (account.is_archived, account.is_investable) != (old_archived, old_investable):
+        write_snapshot(db)
     classifications = {**load_classifications(), **load_user_classifications(db)}
     return enrich_account(account, classifications, db)
 

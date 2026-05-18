@@ -18,7 +18,14 @@ router = APIRouter(
 )
 
 
-@router.get("", summary="List positions (optionally filtered by account)")
+@router.get(
+    "",
+    summary="List positions (optionally by account)",
+    description=(
+        "Without account_id: positions on archived accounts are omitted (live portfolio). "
+        "With account_id: returns all positions for that account even if archived."
+    ),
+)
 def list_positions(
     account_id: int | None = Query(None),
     db: Session = Depends(get_db),

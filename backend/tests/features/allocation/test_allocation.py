@@ -179,6 +179,20 @@ def test_aggregate_assets_total_includes_non_investable() -> None:
     assert result.total == 10000.0
 
 
+def test_aggregate_excludes_archived_accounts_from_assets_and_total() -> None:
+    p1 = _position("VTI", market_value=10000.0)
+    p1.account_id = 1
+    p2 = _position("BND", market_value=5000.0)
+    p2.account_id = 2
+    result = aggregate(
+        [p1, p2],
+        _classifications(),
+        archived_account_ids=frozenset({2}),
+    )
+    assert result.assets_total == 10000.0
+    assert result.total == 10000.0
+
+
 def test_aggregate_unflushed_position_treated_as_investable() -> None:
     # An unflushed ORM Position has investable=None until INSERT. The
     # filter uses ``is False`` so None still counts toward total.

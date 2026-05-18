@@ -9,7 +9,7 @@ from app.allocation import aggregate
 from app.classifications import load_classifications, load_user_classifications
 from app.models import Position, Target
 from .schemas import TargetsPayload
-from app.services.portfolio_snapshot import non_investable_account_ids
+from app.services.portfolio_snapshot import archived_account_ids, non_investable_account_ids
 from app.services.targets_validation import (
     get_targets_payload,
     validate_put_targets,
@@ -28,6 +28,7 @@ def put_targets(db: Session, body: TargetsPayload) -> dict[str, object]:
         classifications,
         db=db,
         non_investable_account_ids=non_investable_account_ids(db),
+        archived_account_ids=archived_account_ids(db),
     )
     validate_put_targets(body, result)
 

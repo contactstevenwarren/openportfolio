@@ -100,6 +100,45 @@ def test_list_positions_filter_by_account_id(
     assert body[0]["account_id"] == a1.id
 
 
+def test_list_positions_hides_archived_accounts_globally(
+    client: TestClient, auth_headers: dict[str, str], test_db: Session
+) -> None:
+    """GET /api/positions omits archived accounts; scoped query still returns them."""
+    a_open = Account(label="Open", type="brokerage", is_archived=False)
+    a_arch = Account(label="Archived", type="brokerage", is_archived=True)
+    test_db.add_all([a_open, a_arch])
+    test_db.commit()
+    p_open = Position(
+        account_id=a_open.id,
+        ticker="VTI",
+        shares=1.0,
+        cost_basis=1.0,
+        market_value=2.0,
+        as_of=datetime.now(UTC),
+        source="paste",
+    )
+    p_arch = Position(
+        account_id=a_arch.id,
+        ticker="QQQ",
+        shares=2.0,
+        cost_basis=2.0,
+        market_value=3.0,
+        as_of=datetime.now(UTC),
+        source="paste",
+    )
+    test_db.add_all([p_open, p_arch])
+    test_db.commit()
+
+    r_all = client.get("/api/positions", headers=auth_headers)
+    assert r_all.status_code == 200
+    assert [p["ticker"] for p in r_all.json()] == ["VTI"]
+
+    r_scoped = client.get(f"/api/positions?account_id={a_arch.id}", headers=auth_headers)
+    assert r_scoped.status_code == 200
+    assert len(r_scoped.json()) == 1
+    assert r_scoped.json()[0]["ticker"] == "QQQ"
+
+
 def test_list_positions_unknown_account_404(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

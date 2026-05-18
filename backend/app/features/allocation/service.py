@@ -17,17 +17,24 @@ from app.shared.schemas.allocation import (
     PositionContribution,
     PositionContributionsResponse,
 )
-from app.services.portfolio_snapshot import liabilities_total, non_investable_account_ids
+from app.services.portfolio_snapshot import (
+    archived_account_ids,
+    liabilities_total,
+    non_investable_account_ids,
+)
 
 
 def get_allocation(db: Session) -> AllocationResult:
     positions = db.query(Position).all()
     classifications = {**load_classifications(), **load_user_classifications(db)}
+    non_inv = non_investable_account_ids(db)
+    arch = archived_account_ids(db)
     result = aggregate(
         positions,
         classifications,
         db=db,
-        non_investable_account_ids=non_investable_account_ids(db),
+        non_investable_account_ids=non_inv,
+        archived_account_ids=arch,
     )
     liabilities = liabilities_total(db)
     result = result.model_copy(
@@ -66,6 +73,7 @@ def get_allocation_positions(
     positions = db.query(Position).all()
     classifications = {**load_classifications(), **load_user_classifications(db)}
     non_investable_ids = non_investable_account_ids(db)
+    archived_ids = archived_account_ids(db)
 
     if l2 is not None:
         result = aggregate(
@@ -73,6 +81,7 @@ def get_allocation_positions(
             classifications,
             db=db,
             non_investable_account_ids=non_investable_ids,
+            archived_account_ids=archived_ids,
         )
         slice_obj = next((s for s in result.by_asset_class if s.name == asset_class), None)
         if slice_obj is None:
@@ -92,6 +101,7 @@ def get_allocation_positions(
             classifications,
             db=db,
             non_investable_account_ids=non_investable_ids,
+            archived_account_ids=archived_ids,
         )
         portfolio_total = result.total
 
@@ -105,6 +115,7 @@ def get_allocation_positions(
         l2=l2,
         db=db,
         non_investable_account_ids=non_investable_ids,
+        archived_account_ids=archived_ids,
         account_names=account_names,
         portfolio_total=portfolio_total,
     )

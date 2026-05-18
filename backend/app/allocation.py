@@ -66,9 +66,12 @@ def _per_position_contributions(
     classifications: dict[str, ClassificationEntry],
     db: Session | None = None,
     non_investable_account_ids: frozenset[int] | None = None,
+    archived_account_ids: frozenset[int] | None = None,
 ) -> Generator[_Contribution, None, None]:
     del db  # reserved for API parity with callers
     for p in positions:
+        if archived_account_ids and p.account_id in archived_account_ids:
+            continue
         entry = classify(p.ticker, classifications)
         if entry is None:
             continue
@@ -153,6 +156,7 @@ def positions_for_slice(
     l2: str | None = None,
     db: Session | None = None,
     non_investable_account_ids: frozenset[int] | None = None,
+    archived_account_ids: frozenset[int] | None = None,
     account_names: dict[int, str] | None = None,
     portfolio_total: float = 0.0,
 ) -> SlicePositionsResult:
@@ -160,7 +164,10 @@ def positions_for_slice(
     rows: dict[tuple[int, str], dict] = {}
 
     unclassified_count = sum(
-        1 for p in positions if classify(p.ticker, classifications) is None
+        1
+        for p in positions
+        if not (archived_account_ids and p.account_id in archived_account_ids)
+        and classify(p.ticker, classifications) is None
     )
     source_counts: dict[str, int] = defaultdict(int)
 
@@ -169,6 +176,7 @@ def positions_for_slice(
         classifications,
         db=db,
         non_investable_account_ids=non_investable_account_ids,
+        archived_account_ids=archived_account_ids,
     ):
         if contrib.ac_bucket != asset_class:
             continue
@@ -223,6 +231,7 @@ def aggregate(
     classifications: dict[str, ClassificationEntry],
     db: Session | None = None,
     non_investable_account_ids: frozenset[int] | None = None,
+    archived_account_ids: frozenset[int] | None = None,
 ) -> AllocationResult:
     del db
     # [asset_class][sub_class] -> dollars
@@ -235,6 +244,8 @@ def aggregate(
     assets_total = 0.0
 
     for p in positions:
+        if archived_account_ids and p.account_id in archived_account_ids:
+            continue
         entry = classify(p.ticker, classifications)
         if entry is None:
             unclassified.append(p.ticker)
