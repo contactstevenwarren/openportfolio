@@ -77,7 +77,7 @@ export function InstitutionCombobox({ institutions, value, onChange }: InstCombo
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal={true}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -183,7 +183,7 @@ export function AccountKindCombobox({ value, onChange }: KindComboboxProps) {
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal={true}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"

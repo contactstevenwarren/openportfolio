@@ -65,9 +65,9 @@ const semanticColors: Array<{
 ];
 
 const vizPalette = [
-  { name: "Cash", cssVar: "--viz-cash", light: "#d97706", dark: "#fbbf24" },
   { name: "Stocks", cssVar: "--viz-stocks", light: "#2563eb", dark: "#60a5fa" },
   { name: "Bonds", cssVar: "--viz-bonds", light: "#7c3aed", dark: "#a78bfa" },
+  { name: "Cash", cssVar: "--viz-cash", light: "#d97706", dark: "#fbbf24" },
   { name: "Real Estate", cssVar: "--viz-real-estate", light: "#ea580c", dark: "#fb923c" },
   { name: "Commodities", cssVar: "--viz-commodities", light: "#ca8a04", dark: "#facc15" },
   { name: "Crypto", cssVar: "--viz-crypto", light: "#db2777", dark: "#f472b6" },
@@ -228,9 +228,9 @@ export default function BrandPage() {
           <CardContent className="flex flex-col items-center gap-6 py-8">
             <BrandDonut />
             <div className="text-body-sm text-muted-foreground flex flex-wrap justify-center gap-3">
-              <LegendDot color="var(--viz-cash)" label="Cash" />
               <LegendDot color="var(--viz-stocks)" label="Stocks" />
               <LegendDot color="var(--viz-bonds)" label="Bonds" />
+              <LegendDot color="var(--viz-cash)" label="Cash" />
               <LegendDot color="var(--viz-real-estate)" label="Real Estate" />
             </div>
           </CardContent>

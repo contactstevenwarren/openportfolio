@@ -108,3 +108,37 @@ def test_preserves_order_first_occurrence_groups() -> None:
     out = merge_duplicate_tickers([a, b, c])
     assert [p.ticker for p in out] == ["B", "A"]
     assert out[0].shares == 2.0
+
+
+def test_normalize_single_row_slash_to_dot() -> None:
+    row = ExtractedPosition(ticker="BRK/B", shares=10, confidence=0.9, source_span="x")
+    out = merge_duplicate_tickers([row])
+    assert len(out) == 1
+    assert out[0].ticker == "BRK.B"
+
+
+def test_merge_duplicate_tickers_normalizes_slash_to_dot() -> None:
+    rows = [
+        ExtractedPosition(
+            ticker="BRK/B",
+            shares=10,
+            cost_basis=None,
+            market_value=None,
+            confidence=0.9,
+            source_span="BRK/B 10",
+            validation_errors=[],
+        ),
+        ExtractedPosition(
+            ticker="BRK.B",
+            shares=5,
+            cost_basis=None,
+            market_value=None,
+            confidence=0.9,
+            source_span="BRK.B 5",
+            validation_errors=[],
+        ),
+    ]
+    merged = merge_duplicate_tickers(rows)
+    assert len(merged) == 1
+    assert merged[0].ticker == "BRK.B"
+    assert merged[0].shares == 15

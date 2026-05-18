@@ -75,6 +75,7 @@ export function FreeformCombobox({
         (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
       )
     : allOptions;
+
   const hasExactMatch = allOptions.some(
     (o) => o.label.toLowerCase() === q || o.value.toLowerCase() === q,
   );
@@ -93,7 +94,7 @@ export function FreeformCombobox({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen} modal={true}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"

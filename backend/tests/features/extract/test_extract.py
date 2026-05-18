@@ -88,7 +88,7 @@ def test_ollama_model_string_and_api_base() -> None:
 @pytest.mark.parametrize(
     "fixture,expected_tickers",
     [
-        ("fidelity", ["VTI", "VXUS", "BND", "aapl"]),
+        ("fidelity", ["VTI", "VXUS", "BND", "AAPL"]),
         ("vanguard", ["VTI", "BND", "VXUS"]),
         ("schwab", ["SPY", "QQQ", "GLD", "BTC-USD", "SNOXX", "U12TEST99", "CASH"]),
     ],
@@ -105,18 +105,45 @@ def test_extract_fixture(
     assert result.extracted_at is not None
 
 
-def test_extract_applies_validation(azure_configured: None) -> None:
+def test_extract_applies_normalization(azure_configured: None) -> None:
     text, llm_json = _load("fidelity")
     with patch("app.llm.litellm.completion", return_value=_mock_response(llm_json)):
         result = extract_positions(text)
 
     by_ticker = {p.ticker: p for p in result.positions}
-    # Lowercase 'aapl' fails the ticker regex and is annotated.
-    assert by_ticker["aapl"].validation_errors
-    assert "does not match" in by_ticker["aapl"].validation_errors[0]
-    # Well-formed rows stay clean.
+    # Normalization uppercases tickers before validation, so all rows are clean.
+    assert by_ticker["AAPL"].validation_errors == []
     assert by_ticker["VTI"].validation_errors == []
     assert by_ticker["BND"].validation_errors == []
+
+
+def test_extract_validation_errors_survive_normalization(azure_configured: None) -> None:
+    # A ticker that is too long (>10 chars) fails TICKER_RE even after
+    # normalization — verify the validation error is still surfaced.
+    payload = json.dumps({
+        "statement_account_name": None,
+        "statement_account_name_confidence": None,
+        "matched_account_id": None,
+        "matched_account_confidence": None,
+        "positions": [
+            {
+                "ticker": "toolongtickerxx",
+                "shares": 1.0,
+                "cost_basis": None,
+                "market_value": None,
+                "confidence": 0.9,
+                "source_span": "toolongtickerxx 1",
+            },
+        ],
+        "extraction_warnings": [],
+    })
+    with patch("app.llm.litellm.completion", return_value=_mock_response(payload)):
+        result = extract_positions("any text")
+    assert len(result.positions) == 1
+    p = result.positions[0]
+    assert p.ticker == "TOOLONGTICKERXX"
+    assert p.validation_errors
+    assert "does not match" in p.validation_errors[0]
 
 
 def test_extract_preserves_confidence_and_cost_basis(azure_configured: None) -> None:
@@ -189,10 +216,10 @@ def test_extract_endpoint_returns_annotated_positions(
     assert r.status_code == 200
     body = r.json()
     tickers = [p["ticker"] for p in body["positions"]]
-    assert tickers == ["VTI", "VXUS", "BND", "aapl"]
-    # Validation errors surface in the response body (review UI consumes them).
-    aapl = next(p for p in body["positions"] if p["ticker"] == "aapl")
-    assert aapl["validation_errors"]
+    assert tickers == ["VTI", "VXUS", "BND", "AAPL"]
+    # Normalization uppercases tickers before validation so AAPL is clean.
+    aapl = next(p for p in body["positions"] if p["ticker"] == "AAPL")
+    assert aapl["validation_errors"] == []
     assert body.get("extraction_warnings") == []
     assert body.get("matched_account_id") is None
 
@@ -248,7 +275,7 @@ def test_extract_pdf_ok_mocked(
         )
     assert r.status_code == 200
     out = r.json()
-    assert [p["ticker"] for p in out["positions"]] == ["VTI", "VXUS", "BND", "aapl"]
+    assert [p["ticker"] for p in out["positions"]] == ["VTI", "VXUS", "BND", "AAPL"]
 
 
 def test_extract_pdf_422_on_bad_magic(
