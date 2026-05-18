@@ -15,7 +15,7 @@ from app.drift import apply_drift
 from app.models import Position, Target
 from app.rebalance import compute_new_money, compute_rebalance
 from .schemas import RebalanceResult
-from app.services.portfolio_snapshot import non_investable_account_ids
+from app.services.portfolio_snapshot import archived_account_ids, non_investable_account_ids
 
 
 def get_rebalance(
@@ -30,6 +30,7 @@ def get_rebalance(
         classifications,
         db=db,
         non_investable_account_ids=non_investable_account_ids(db),
+        archived_account_ids=archived_account_ids(db),
     )
     targets = {t.path: float(t.pct) for t in db.query(Target).all()}
     result = apply_drift(

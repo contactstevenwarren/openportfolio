@@ -50,7 +50,9 @@ class Account(Base):
     staleness_threshold_days: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("30"), default=30
     )
-    # Archived accounts are hidden from the active list by default.
+    # Archived: hidden from default account list; excluded from live portfolio
+    # aggregates, allocation drill-downs, global GET /api/positions, and new
+    # snapshots (rows retained for unarchive / audit).
     is_archived: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("0"), default=False
     )

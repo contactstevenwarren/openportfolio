@@ -31,7 +31,13 @@ def list_positions(db: Session, account_id: int | None) -> list[PositionRead]:
             .all()
         )
     else:
-        rows = db.query(Position).order_by(Position.id).all()
+        rows = (
+            db.query(Position)
+            .join(Account, Position.account_id == Account.id)
+            .filter(Account.is_archived.is_(False))
+            .order_by(Position.id)
+            .all()
+        )
     return [PositionRead.model_validate(p) for p in rows]
 
 

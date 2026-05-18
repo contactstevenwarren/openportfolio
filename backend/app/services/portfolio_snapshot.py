@@ -20,6 +20,13 @@ def non_investable_account_ids(db: Session) -> frozenset[int]:
     )
 
 
+def archived_account_ids(db: Session) -> frozenset[int]:
+    """Account IDs excluded from live portfolio aggregates and global position lists."""
+    return frozenset(
+        a.id for a in db.query(Account).filter(Account.is_archived.is_(True)).all()
+    )
+
+
 def liabilities_total(db: Session) -> float:
     """Sum of all liability balances (0.0 when no rows exist)."""
     result = db.query(sqlfunc.sum(Liability.balance)).scalar()
@@ -31,11 +38,13 @@ def write_snapshot(db: Session) -> None:
     positions = db.query(Position).all()
     classifications = {**load_classifications(), **load_user_classifications(db)}
     non_inv = non_investable_account_ids(db)
+    arch = archived_account_ids(db)
     result = aggregate(
         positions,
         classifications,
         db=db,
         non_investable_account_ids=non_inv,
+        archived_account_ids=arch,
     )
     liabilities = liabilities_total(db)
     net_worth = result.assets_total - liabilities

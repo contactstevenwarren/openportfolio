@@ -682,3 +682,46 @@ def test_non_investable_account_excluded_from_allocation_total(
     assert abs(allocation["total"] - 100_000.0) < 1.0
     # Net Worth should include both: $600k
     assert abs(allocation["net_worth"] - 600_000.0) < 1.0
+
+
+def test_archived_account_excluded_from_allocation_and_net_worth(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """Archived accounts drop out of investable total and net worth (unlike is_investable)."""
+    active = client.post(
+        "/api/accounts",
+        json={
+            "label": "Rental Property",
+            "type": "real_estate",
+            "initial_position": {"market_value": 100_000.0},
+        },
+        headers=auth_headers,
+    ).json()
+    assert active.get("id")
+
+    dormant = client.post(
+        "/api/accounts",
+        json={
+            "label": "Old Property",
+            "type": "real_estate",
+            "initial_position": {"market_value": 400_000.0},
+        },
+        headers=auth_headers,
+    ).json()
+    assert dormant.get("id")
+
+    before = client.get("/api/allocation", headers=auth_headers).json()
+    assert abs(before["total"] - 500_000.0) < 1.0
+    assert abs(before["net_worth"] - 500_000.0) < 1.0
+
+    patch_r = client.patch(
+        f"/api/accounts/{dormant['id']}",
+        json={"is_archived": True},
+        headers=auth_headers,
+    )
+    assert patch_r.status_code == 200
+
+    allocation = client.get("/api/allocation", headers=auth_headers).json()
+    assert abs(allocation["total"] - 100_000.0) < 1.0
+    assert abs(allocation["assets_total"] - 100_000.0) < 1.0
+    assert abs(allocation["net_worth"] - 100_000.0) < 1.0

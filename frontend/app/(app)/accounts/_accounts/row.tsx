@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import useSWR, { mutate } from "swr";
+import { invalidatePortfolioCaches } from "@/app/lib/invalidate-portfolio-caches";
 import { ChevronRightIcon, ChevronDownIcon, UploadIcon, Pencil, X } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -193,6 +194,7 @@ function DangerZone({
     try {
       await api.patchAccount(account.id, { is_archived: !account.is_archived });
       await mutate("/api/accounts");
+      await invalidatePortfolioCaches();
       onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed.");
@@ -207,6 +209,7 @@ function DangerZone({
     try {
       await api.deleteAccount(account.id);
       await mutate("/api/accounts");
+      await invalidatePortfolioCaches();
       onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed.");
@@ -382,6 +385,7 @@ function EditSheet({ account, institutions, open: controlledOpen, onOpenChange }
         is_investable: isInvestable,
       });
       await mutate("/api/accounts");
+      await invalidatePortfolioCaches();
       setOpen(false);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Failed to save changes.");
@@ -1051,6 +1055,7 @@ export function Row({
                   onClick={async () => {
                     await api.patchAccount(account.id, { is_archived: false });
                     await mutate("/api/accounts");
+                    await invalidatePortfolioCaches();
                   }}
                 >
                   Unarchive
