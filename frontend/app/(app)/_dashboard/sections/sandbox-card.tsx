@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * Deploy / rebalance sandbox card: plan math in `computePlan`; whole-dollar display via
+ * `sandboxUsd` / `amountForSandboxInput`. `roundPlanToWholeDollars` (see `sandbox-plan-round.ts`)
+ * keeps table actions and headline totals aligned after rounding.
+ */
+
 import { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -16,6 +22,11 @@ import {
 import { api, type AllocationResult } from "@/app/lib/api";
 import { useSandbox } from "@/app/lib/sandbox-context";
 import { formatPct, formatUsd } from "../mocks";
+import {
+  roundPlanToWholeDollars,
+  type SandboxPlan as Plan,
+  type SandboxPlanAsset as AssetPlan,
+} from "./sandbox-plan-round";
 
 type Mode = "deploy" | "rebalance";
 
@@ -36,16 +47,6 @@ type AssetHolding = {
   value: number;
   pct: number;       // 0–100 scale from API
   targetPct: number; // 0–100 scale from API
-};
-
-type AssetPlan = AssetHolding & { action: number };
-
-type Plan = {
-  assets: AssetPlan[];
-  cashExcess: number;
-  buyTotal: number;
-  sellTotal: number;
-  gapsClosed: boolean;
 };
 
 function computePlan(
@@ -120,26 +121,6 @@ function computePlan(
     Math.max(0, cashAsset?.action ?? 0);
 
   return { assets, cashExcess, buyTotal, sellTotal: 0, gapsClosed: totalAvailable >= totalDeficit };
-}
-
-/** Whole-dollar actions and totals so UI matches `sandboxUsd` without float drift. */
-function roundPlanToWholeDollars(plan: Plan, mode: Mode, cashName: string | null): Plan {
-  const assets = plan.assets.map((a) => ({
-    ...a,
-    action: Math.round(a.action),
-  }));
-  if (mode === "rebalance") {
-    const buyTotal = assets.reduce((s, a) => s + Math.max(0, a.action), 0);
-    const sellTotal = assets.reduce((s, a) => s + Math.max(0, -a.action), 0);
-    return { ...plan, assets, buyTotal, sellTotal };
-  }
-  const cashAsset = assets.find((a) => a.name === cashName);
-  const buyTotal =
-    assets
-      .filter((a) => a.name !== cashName)
-      .reduce((s, a) => s + Math.max(0, a.action), 0) +
-    Math.max(0, cashAsset?.action ?? 0);
-  return { ...plan, assets, buyTotal, sellTotal: 0 };
 }
 
 function getHero(
