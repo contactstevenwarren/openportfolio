@@ -19,12 +19,10 @@ import { formatPct, formatUsd } from "../mocks";
 
 type Mode = "deploy" | "rebalance";
 
-/** Value for sandbox money inputs: cent precision, no float noise, no spurious decimals. */
+/** Whole dollars for sandbox money inputs (no cents in UI). */
 function amountForSandboxInput(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return "";
-  const cents = Math.round(n * 100) / 100;
-  const s = cents.toFixed(2);
-  return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
+  return String(Math.round(n));
 }
 
 type AssetHolding = {
