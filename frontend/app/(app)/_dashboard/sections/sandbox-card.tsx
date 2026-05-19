@@ -270,12 +270,18 @@ function SandboxCardInner() {
   }, [mode, allocationData, setRebalanceDeltas]);
 
   const cashHolding = holdings.find((h) => h.name === cashName);
+  // Must match computePlan deploy: cash target uses currentTotal + newCash, not currentTotal alone.
+  const scenarioTotalForCash =
+    mode === "deploy" ? currentTotal + parsedNewCash : currentTotal;
+  const cashTargetAtScenario =
+    cashHolding != null ? (cashHolding.targetPct / 100) * scenarioTotalForCash : 0;
   const cashOverweight = cashHolding
-    ? cashHolding.value > (cashHolding.targetPct / 100) * currentTotal
+    ? cashHolding.value > cashTargetAtScenario
     : false;
-  const excessCap = cashHolding && cashOverweight
-    ? Math.max(0, cashHolding.value - (cashHolding.targetPct / 100) * currentTotal)
-    : 0;
+  const excessCap =
+    cashHolding && cashOverweight
+      ? Math.max(0, cashHolding.value - cashTargetAtScenario)
+      : 0;
 
   // Plan computed from the last committed context values (via useSandbox newCash / excessCashRedeploy)
   // For display we use parsedNewCash / parsedExcessCash only after Build is clicked — but
