@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+/**
+ * Deploy / rebalance sandbox card: plan math in `computePlan`; whole-dollar display via
+ * `sandboxUsd` / `amountForSandboxInput`. `roundPlanToWholeDollars` (see `sandbox-plan-round.ts`)
+ * keeps table actions and headline totals aligned after rounding.
+ */
+
+import { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
@@ -16,8 +22,24 @@ import {
 import { api, type AllocationResult } from "@/app/lib/api";
 import { useSandbox } from "@/app/lib/sandbox-context";
 import { formatPct, formatUsd } from "../mocks";
+import {
+  roundPlanToWholeDollars,
+  type SandboxPlan as Plan,
+  type SandboxPlanAsset as AssetPlan,
+} from "./sandbox-plan-round";
 
 type Mode = "deploy" | "rebalance";
+
+/** Whole dollars for sandbox money inputs (no cents in UI). */
+function amountForSandboxInput(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return String(Math.round(n));
+}
+
+/** Whole dollars for all dollar amounts in this card (plan, hero, table). */
+function sandboxUsd(value: number): string {
+  return formatUsd(value, { wholeDollars: true });
+}
 
 type AssetHolding = {
   name: string;
@@ -25,16 +47,6 @@ type AssetHolding = {
   value: number;
   pct: number;       // 0–100 scale from API
   targetPct: number; // 0–100 scale from API
-};
-
-type AssetPlan = AssetHolding & { action: number };
-
-type Plan = {
-  assets: AssetPlan[];
-  cashExcess: number;
-  buyTotal: number;
-  sellTotal: number;
-  gapsClosed: boolean;
 };
 
 function computePlan(
@@ -127,10 +139,10 @@ function getHero(
       return { headline: "No moves needed", sub: "Portfolio matches target allocation." };
     const headline =
       buyTotal >= 1 && sellTotal >= 1
-        ? `Buy ${formatUsd(buyTotal)}, sell ${formatUsd(sellTotal)}`
+        ? `Buy ${sandboxUsd(buyTotal)}, sell ${sandboxUsd(sellTotal)}`
         : buyTotal >= 1
-          ? `Buy ${formatUsd(buyTotal)}`
-          : `Sell ${formatUsd(sellTotal)}`;
+          ? `Buy ${sandboxUsd(buyTotal)}`
+          : `Sell ${sandboxUsd(sellTotal)}`;
     return { headline, sub: "Brings every asset class to target." };
   }
 
@@ -139,22 +151,22 @@ function getHero(
   }
   if (newCash > 0 && usedCash > 0.5)
     return {
-      headline: `Deploy ${formatUsd(newCash + usedCash)}`,
-      sub: `${formatUsd(newCash)} new + ${formatUsd(usedCash)} from cash.`,
+      headline: `Deploy ${sandboxUsd(newCash + usedCash)}`,
+      sub: `${sandboxUsd(newCash)} new + ${sandboxUsd(usedCash)} from cash.`,
     };
   if (newCash > 0)
     return {
-      headline: `Deploy ${formatUsd(newCash)}`,
+      headline: `Deploy ${sandboxUsd(newCash)}`,
       sub: "Distributed across underweight assets.",
     };
   if (usedCash > 0.5)
     return {
-      headline: `Rebalance ${formatUsd(usedCash)} from cash`,
+      headline: `Rebalance ${sandboxUsd(usedCash)} from cash`,
       sub: plan.gapsClosed
         ? "No new money needed — your existing excess cash closes the gaps."
         : "Deploys available excess cash toward underweight assets.",
     };
-  return { headline: `Buy ${formatUsd(buyTotal)}`, sub: "" };
+  return { headline: `Buy ${sandboxUsd(buyTotal)}`, sub: "" };
 }
 
 function getWhyText(
@@ -170,7 +182,7 @@ function getWhyText(
   if (newCash === 0 && !usingCash && cashExcess > 0)
     return "In buy-only mode, fixing a cash overweight requires diluting it with new buys. Without new cash and without permission to draw down existing cash, there is nothing to deploy.";
   if (usingCash && newCash === 0)
-    return `Cash above target (${formatUsd(Math.min(excessCashAmount, cashExcess))}) is redirected to underweight assets. The portfolio total stays the same — only the mix changes.`;
+    return `Cash above target (${sandboxUsd(Math.min(excessCashAmount, cashExcess))}) is redirected to underweight assets. The portfolio total stays the same — only the mix changes.`;
   return "Available funds first close any underweight gaps. Any leftover is distributed by target weight so the portfolio remains balanced.";
 }
 
@@ -185,6 +197,7 @@ function SandboxCardInner() {
   const [isPlanBuilt, setIsPlanBuilt] = useState(false);
   const [isPlanStale, setIsPlanStale] = useState(false);
   const [whyOpen, setWhyOpen] = useState(false);
+  const excessCashInputRef = useRef<HTMLInputElement>(null);
 
   // React to ?tab=rebalance being added/changed after initial mount
   useEffect(() => {
@@ -220,6 +233,9 @@ function SandboxCardInner() {
       targetPct: s.target_pct ?? 0,
     }));
 
+  const cashName =
+    holdings.find((h) => h.name.toLowerCase() === "cash")?.name ?? null;
+
   // Keep the donut in sync: push full-rebalance deltas to context when in rebalance
   // mode (cleared when switching to deploy). Depends on allocationData (stable SWR
   // reference) rather than the derived holdings array to avoid re-firing every render.
@@ -240,21 +256,32 @@ function SandboxCardInner() {
         pct: s.pct,
         targetPct: s.target_pct ?? 0,
       }));
-    const plan = computePlan(h, total, "rebalance", 0, 0);
+    const cashNm = h.find((x) => x.name.toLowerCase() === "cash")?.name ?? null;
+    const plan = roundPlanToWholeDollars(
+      computePlan(h, total, "rebalance", 0, 0),
+      "rebalance",
+      cashNm,
+    );
     const deltaMap: Record<string, number> = {};
-    plan.assets.forEach((a) => { deltaMap[a.name] = a.action; });
+    plan.assets.forEach((a) => {
+      deltaMap[a.name] = a.action;
+    });
     setRebalanceDeltas(deltaMap);
   }, [mode, allocationData, setRebalanceDeltas]);
 
-  const cashName =
-    holdings.find((h) => h.name.toLowerCase() === "cash")?.name ?? null;
   const cashHolding = holdings.find((h) => h.name === cashName);
+  // Must match computePlan deploy: cash target uses currentTotal + newCash, not currentTotal alone.
+  const scenarioTotalForCash =
+    mode === "deploy" ? currentTotal + parsedNewCash : currentTotal;
+  const cashTargetAtScenario =
+    cashHolding != null ? (cashHolding.targetPct / 100) * scenarioTotalForCash : 0;
   const cashOverweight = cashHolding
-    ? cashHolding.value > (cashHolding.targetPct / 100) * currentTotal
+    ? cashHolding.value > cashTargetAtScenario
     : false;
-  const excessCap = cashHolding && cashOverweight
-    ? Math.max(0, cashHolding.value - (cashHolding.targetPct / 100) * currentTotal)
-    : 0;
+  const excessCap =
+    cashHolding && cashOverweight
+      ? Math.max(0, cashHolding.value - cashTargetAtScenario)
+      : 0;
 
   // Plan computed from the last committed context values (via useSandbox newCash / excessCashRedeploy)
   // For display we use parsedNewCash / parsedExcessCash only after Build is clicked — but
@@ -263,15 +290,19 @@ function SandboxCardInner() {
   const [committedNewCash, setCommittedNewCash] = useState(0);
   const [committedExcess, setCommittedExcess] = useState(0);
 
-  const plan = computePlan(holdings, currentTotal, mode, committedNewCash, committedExcess);
+  const planRaw = computePlan(holdings, currentTotal, mode, committedNewCash, committedExcess);
+  const plan = roundPlanToWholeDollars(planRaw, mode, cashName);
   const hero = getHero(mode, plan, committedNewCash, cashName, committedExcess);
 
   const inEmptyState = parsedNewCash === 0 && parsedExcessCash === 0;
   const showPlan = mode === "rebalance" || (isPlanBuilt && !inEmptyState);
 
   // For rebalance mode, compute plan directly from current (no committed values needed)
-  const rebalancePlan = mode === "rebalance"
+  const rebalancePlanRaw = mode === "rebalance"
     ? computePlan(holdings, currentTotal, "rebalance", 0, 0)
+    : null;
+  const rebalancePlan = rebalancePlanRaw
+    ? roundPlanToWholeDollars(rebalancePlanRaw, "rebalance", cashName)
     : null;
   const rebalanceHero = rebalancePlan
     ? getHero("rebalance", rebalancePlan, 0, cashName, 0)
@@ -306,8 +337,15 @@ function SandboxCardInner() {
 
   function handleExcessCashBlur() {
     if (parsedExcessCash > excessCap) {
-      setExcessCashInput(excessCap.toFixed(0));
+      setExcessCashInput(amountForSandboxInput(excessCap));
     }
+  }
+
+  function applyMaxExcessCash() {
+    if (!cashOverweight || excessCap <= 0) return;
+    setExcessCashInput(amountForSandboxInput(excessCap));
+    if (isPlanBuilt) setIsPlanStale(true);
+    queueMicrotask(() => excessCashInputRef.current?.focus());
   }
 
   function handleBuildPlan() {
@@ -334,7 +372,7 @@ function SandboxCardInner() {
               {mode === "deploy" ? "Deploy cash" : "Full rebalance"}
             </CardTitle>
             <CardDescription className="tabular-nums">
-              Portfolio: {formatUsd(currentTotal)}
+              Portfolio: {sandboxUsd(currentTotal)}
               {mode === "rebalance" && " · Sells allowed across all assets"}
             </CardDescription>
           </div>
@@ -417,6 +455,7 @@ function SandboxCardInner() {
                 </span>
                 <input
                   id="sandbox-excess"
+                  ref={excessCashInputRef}
                   type="text"
                   inputMode="decimal"
                   placeholder="0"
@@ -428,9 +467,22 @@ function SandboxCardInner() {
                 />
               </div>
               <p className="mt-1.5 text-xs text-muted-foreground">
-                {cashOverweight
-                  ? `up to ${formatUsd(excessCap)} above target`
-                  : "No excess cash currently"}
+                {cashOverweight && excessCap > 0 ? (
+                  <>
+                    up to{" "}
+                    <button
+                      type="button"
+                      onClick={applyMaxExcessCash}
+                      className="font-medium text-foreground underline decoration-muted-foreground/60 underline-offset-2 hover:decoration-foreground tabular-nums"
+                      aria-label="Fill excess cash to redeploy with maximum amount above target"
+                    >
+                      {sandboxUsd(excessCap)}
+                    </button>{" "}
+                    above target
+                  </>
+                ) : (
+                  "No excess cash currently"
+                )}
               </p>
             </div>
           </div>
@@ -508,31 +560,31 @@ function SandboxCardInner() {
                           if (action > 0)
                             actionNode = (
                               <span className="font-medium text-muted-foreground">
-                                Add {formatUsd(action)}
+                                Add {sandboxUsd(action)}
                               </span>
                             );
                           else if (mode === "rebalance")
                             actionNode = (
                               <span className="font-medium text-destructive">
-                                Sell {formatUsd(-action)}
+                                Sell {sandboxUsd(-action)}
                               </span>
                             );
                           else
                             actionNode = (
                               <span className="font-medium text-muted-foreground">
-                                Use {formatUsd(-action)}
+                                Use {sandboxUsd(-action)}
                               </span>
                             );
                         } else if (action > 0) {
                           actionNode = (
                             <span className="font-medium text-foreground">
-                              Buy {formatUsd(action)}
+                              Buy {sandboxUsd(action)}
                             </span>
                           );
                         } else {
                           actionNode = (
                             <span className="font-medium text-destructive">
-                              Sell {formatUsd(-action)}
+                              Sell {sandboxUsd(-action)}
                             </span>
                           );
                         }

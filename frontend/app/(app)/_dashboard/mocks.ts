@@ -221,8 +221,11 @@ export const ASSET_CLASS_COLOR: Record<AssetClass, string> = {
   Private: "var(--viz-private)",
 };
 
-export function formatUsd(value: number, opts: { compact?: boolean; signed?: boolean } = {}) {
-  const { compact, signed } = opts;
+export function formatUsd(
+  value: number,
+  opts: { compact?: boolean; signed?: boolean; wholeDollars?: boolean } = {},
+) {
+  const { compact, signed, wholeDollars } = opts;
   const posSign = signed && value > 0 ? "+" : "";
   const abs = Math.abs(value);
   const negSign = value < 0 ? "\u2212" : "";
@@ -233,6 +236,14 @@ export function formatUsd(value: number, opts: { compact?: boolean; signed?: boo
       notation: "compact",
       maximumFractionDigits: 1,
     }).format(abs);
+  }
+  if (wholeDollars) {
+    return posSign + negSign + new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    }).format(Math.round(abs));
   }
   // ≥$10k: no cents; <$10k: show 2 decimal places (brand rule)
   const decimals = abs >= 10_000 ? 0 : 2;
