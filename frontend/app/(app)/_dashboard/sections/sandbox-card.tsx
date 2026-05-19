@@ -19,6 +19,14 @@ import { formatPct, formatUsd } from "../mocks";
 
 type Mode = "deploy" | "rebalance";
 
+/** Value for sandbox money inputs: cent precision, no float noise, no spurious decimals. */
+function amountForSandboxInput(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const cents = Math.round(n * 100) / 100;
+  const s = cents.toFixed(2);
+  return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
+}
+
 type AssetHolding = {
   name: string;
   label: string;
@@ -307,13 +315,13 @@ function SandboxCardInner() {
 
   function handleExcessCashBlur() {
     if (parsedExcessCash > excessCap) {
-      setExcessCashInput(excessCap.toFixed(0));
+      setExcessCashInput(amountForSandboxInput(excessCap));
     }
   }
 
   function applyMaxExcessCash() {
     if (!cashOverweight || excessCap <= 0) return;
-    setExcessCashInput(excessCap.toFixed(0));
+    setExcessCashInput(amountForSandboxInput(excessCap));
     if (isPlanBuilt) setIsPlanStale(true);
     queueMicrotask(() => excessCashInputRef.current?.focus());
   }
