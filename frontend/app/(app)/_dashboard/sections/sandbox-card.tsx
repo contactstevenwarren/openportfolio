@@ -122,6 +122,26 @@ function computePlan(
   return { assets, cashExcess, buyTotal, sellTotal: 0, gapsClosed: totalAvailable >= totalDeficit };
 }
 
+/** Whole-dollar actions and totals so UI matches `sandboxUsd` without float drift. */
+function roundPlanToWholeDollars(plan: Plan, mode: Mode, cashName: string | null): Plan {
+  const assets = plan.assets.map((a) => ({
+    ...a,
+    action: Math.round(a.action),
+  }));
+  if (mode === "rebalance") {
+    const buyTotal = assets.reduce((s, a) => s + Math.max(0, a.action), 0);
+    const sellTotal = assets.reduce((s, a) => s + Math.max(0, -a.action), 0);
+    return { ...plan, assets, buyTotal, sellTotal };
+  }
+  const cashAsset = assets.find((a) => a.name === cashName);
+  const buyTotal =
+    assets
+      .filter((a) => a.name !== cashName)
+      .reduce((s, a) => s + Math.max(0, a.action), 0) +
+    Math.max(0, cashAsset?.action ?? 0);
+  return { ...plan, assets, buyTotal, sellTotal: 0 };
+}
+
 function getHero(
   mode: Mode,
   plan: Plan,
@@ -232,6 +252,9 @@ function SandboxCardInner() {
       targetPct: s.target_pct ?? 0,
     }));
 
+  const cashName =
+    holdings.find((h) => h.name.toLowerCase() === "cash")?.name ?? null;
+
   // Keep the donut in sync: push full-rebalance deltas to context when in rebalance
   // mode (cleared when switching to deploy). Depends on allocationData (stable SWR
   // reference) rather than the derived holdings array to avoid re-firing every render.
@@ -252,14 +275,19 @@ function SandboxCardInner() {
         pct: s.pct,
         targetPct: s.target_pct ?? 0,
       }));
-    const plan = computePlan(h, total, "rebalance", 0, 0);
+    const cashNm = h.find((x) => x.name.toLowerCase() === "cash")?.name ?? null;
+    const plan = roundPlanToWholeDollars(
+      computePlan(h, total, "rebalance", 0, 0),
+      "rebalance",
+      cashNm,
+    );
     const deltaMap: Record<string, number> = {};
-    plan.assets.forEach((a) => { deltaMap[a.name] = a.action; });
+    plan.assets.forEach((a) => {
+      deltaMap[a.name] = a.action;
+    });
     setRebalanceDeltas(deltaMap);
   }, [mode, allocationData, setRebalanceDeltas]);
 
-  const cashName =
-    holdings.find((h) => h.name.toLowerCase() === "cash")?.name ?? null;
   const cashHolding = holdings.find((h) => h.name === cashName);
   const cashOverweight = cashHolding
     ? cashHolding.value > (cashHolding.targetPct / 100) * currentTotal
@@ -275,15 +303,19 @@ function SandboxCardInner() {
   const [committedNewCash, setCommittedNewCash] = useState(0);
   const [committedExcess, setCommittedExcess] = useState(0);
 
-  const plan = computePlan(holdings, currentTotal, mode, committedNewCash, committedExcess);
+  const planRaw = computePlan(holdings, currentTotal, mode, committedNewCash, committedExcess);
+  const plan = roundPlanToWholeDollars(planRaw, mode, cashName);
   const hero = getHero(mode, plan, committedNewCash, cashName, committedExcess);
 
   const inEmptyState = parsedNewCash === 0 && parsedExcessCash === 0;
   const showPlan = mode === "rebalance" || (isPlanBuilt && !inEmptyState);
 
   // For rebalance mode, compute plan directly from current (no committed values needed)
-  const rebalancePlan = mode === "rebalance"
+  const rebalancePlanRaw = mode === "rebalance"
     ? computePlan(holdings, currentTotal, "rebalance", 0, 0)
+    : null;
+  const rebalancePlan = rebalancePlanRaw
+    ? roundPlanToWholeDollars(rebalancePlanRaw, "rebalance", cashName)
     : null;
   const rebalanceHero = rebalancePlan
     ? getHero("rebalance", rebalancePlan, 0, cashName, 0)
