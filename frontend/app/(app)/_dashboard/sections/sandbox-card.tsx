@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
@@ -185,6 +185,7 @@ function SandboxCardInner() {
   const [isPlanBuilt, setIsPlanBuilt] = useState(false);
   const [isPlanStale, setIsPlanStale] = useState(false);
   const [whyOpen, setWhyOpen] = useState(false);
+  const excessCashInputRef = useRef<HTMLInputElement>(null);
 
   // React to ?tab=rebalance being added/changed after initial mount
   useEffect(() => {
@@ -310,6 +311,13 @@ function SandboxCardInner() {
     }
   }
 
+  function applyMaxExcessCash() {
+    if (!cashOverweight || excessCap <= 0) return;
+    setExcessCashInput(excessCap.toFixed(0));
+    if (isPlanBuilt) setIsPlanStale(true);
+    queueMicrotask(() => excessCashInputRef.current?.focus());
+  }
+
   function handleBuildPlan() {
     const clampedExcess = Math.min(parsedExcessCash, excessCap);
     setCommittedNewCash(parsedNewCash);
@@ -417,6 +425,7 @@ function SandboxCardInner() {
                 </span>
                 <input
                   id="sandbox-excess"
+                  ref={excessCashInputRef}
                   type="text"
                   inputMode="decimal"
                   placeholder="0"
@@ -428,9 +437,22 @@ function SandboxCardInner() {
                 />
               </div>
               <p className="mt-1.5 text-xs text-muted-foreground">
-                {cashOverweight
-                  ? `up to ${formatUsd(excessCap)} above target`
-                  : "No excess cash currently"}
+                {cashOverweight && excessCap > 0 ? (
+                  <>
+                    up to{" "}
+                    <button
+                      type="button"
+                      onClick={applyMaxExcessCash}
+                      className="font-medium text-foreground underline decoration-muted-foreground/60 underline-offset-2 hover:decoration-foreground tabular-nums"
+                      aria-label="Fill excess cash to redeploy with maximum amount above target"
+                    >
+                      {formatUsd(excessCap)}
+                    </button>{" "}
+                    above target
+                  </>
+                ) : (
+                  "No excess cash currently"
+                )}
               </p>
             </div>
           </div>
