@@ -25,6 +25,11 @@ function amountForSandboxInput(n: number): string {
   return String(Math.round(n));
 }
 
+/** Whole dollars for all dollar amounts in this card (plan, hero, table). */
+function sandboxUsd(value: number): string {
+  return formatUsd(value, { wholeDollars: true });
+}
+
 type AssetHolding = {
   name: string;
   label: string;
@@ -133,10 +138,10 @@ function getHero(
       return { headline: "No moves needed", sub: "Portfolio matches target allocation." };
     const headline =
       buyTotal >= 1 && sellTotal >= 1
-        ? `Buy ${formatUsd(buyTotal)}, sell ${formatUsd(sellTotal)}`
+        ? `Buy ${sandboxUsd(buyTotal)}, sell ${sandboxUsd(sellTotal)}`
         : buyTotal >= 1
-          ? `Buy ${formatUsd(buyTotal)}`
-          : `Sell ${formatUsd(sellTotal)}`;
+          ? `Buy ${sandboxUsd(buyTotal)}`
+          : `Sell ${sandboxUsd(sellTotal)}`;
     return { headline, sub: "Brings every asset class to target." };
   }
 
@@ -145,22 +150,22 @@ function getHero(
   }
   if (newCash > 0 && usedCash > 0.5)
     return {
-      headline: `Deploy ${formatUsd(newCash + usedCash)}`,
-      sub: `${formatUsd(newCash)} new + ${formatUsd(usedCash)} from cash.`,
+      headline: `Deploy ${sandboxUsd(newCash + usedCash)}`,
+      sub: `${sandboxUsd(newCash)} new + ${sandboxUsd(usedCash)} from cash.`,
     };
   if (newCash > 0)
     return {
-      headline: `Deploy ${formatUsd(newCash)}`,
+      headline: `Deploy ${sandboxUsd(newCash)}`,
       sub: "Distributed across underweight assets.",
     };
   if (usedCash > 0.5)
     return {
-      headline: `Rebalance ${formatUsd(usedCash)} from cash`,
+      headline: `Rebalance ${sandboxUsd(usedCash)} from cash`,
       sub: plan.gapsClosed
         ? "No new money needed — your existing excess cash closes the gaps."
         : "Deploys available excess cash toward underweight assets.",
     };
-  return { headline: `Buy ${formatUsd(buyTotal)}`, sub: "" };
+  return { headline: `Buy ${sandboxUsd(buyTotal)}`, sub: "" };
 }
 
 function getWhyText(
@@ -176,7 +181,7 @@ function getWhyText(
   if (newCash === 0 && !usingCash && cashExcess > 0)
     return "In buy-only mode, fixing a cash overweight requires diluting it with new buys. Without new cash and without permission to draw down existing cash, there is nothing to deploy.";
   if (usingCash && newCash === 0)
-    return `Cash above target (${formatUsd(Math.min(excessCashAmount, cashExcess), { wholeDollars: true })}) is redirected to underweight assets. The portfolio total stays the same — only the mix changes.`;
+    return `Cash above target (${sandboxUsd(Math.min(excessCashAmount, cashExcess))}) is redirected to underweight assets. The portfolio total stays the same — only the mix changes.`;
   return "Available funds first close any underweight gaps. Any leftover is distributed by target weight so the portfolio remains balanced.";
 }
 
@@ -348,7 +353,7 @@ function SandboxCardInner() {
               {mode === "deploy" ? "Deploy cash" : "Full rebalance"}
             </CardTitle>
             <CardDescription className="tabular-nums">
-              Portfolio: {formatUsd(currentTotal)}
+              Portfolio: {sandboxUsd(currentTotal)}
               {mode === "rebalance" && " · Sells allowed across all assets"}
             </CardDescription>
           </div>
@@ -452,7 +457,7 @@ function SandboxCardInner() {
                       className="font-medium text-foreground underline decoration-muted-foreground/60 underline-offset-2 hover:decoration-foreground tabular-nums"
                       aria-label="Fill excess cash to redeploy with maximum amount above target"
                     >
-                      {formatUsd(excessCap, { wholeDollars: true })}
+                      {sandboxUsd(excessCap)}
                     </button>{" "}
                     above target
                   </>
@@ -536,31 +541,31 @@ function SandboxCardInner() {
                           if (action > 0)
                             actionNode = (
                               <span className="font-medium text-muted-foreground">
-                                Add {formatUsd(action)}
+                                Add {sandboxUsd(action)}
                               </span>
                             );
                           else if (mode === "rebalance")
                             actionNode = (
                               <span className="font-medium text-destructive">
-                                Sell {formatUsd(-action)}
+                                Sell {sandboxUsd(-action)}
                               </span>
                             );
                           else
                             actionNode = (
                               <span className="font-medium text-muted-foreground">
-                                Use {formatUsd(-action)}
+                                Use {sandboxUsd(-action)}
                               </span>
                             );
                         } else if (action > 0) {
                           actionNode = (
                             <span className="font-medium text-foreground">
-                              Buy {formatUsd(action)}
+                              Buy {sandboxUsd(action)}
                             </span>
                           );
                         } else {
                           actionNode = (
                             <span className="font-medium text-destructive">
-                              Sell {formatUsd(-action)}
+                              Sell {sandboxUsd(-action)}
                             </span>
                           );
                         }
