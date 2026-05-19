@@ -176,7 +176,7 @@ function getWhyText(
   if (newCash === 0 && !usingCash && cashExcess > 0)
     return "In buy-only mode, fixing a cash overweight requires diluting it with new buys. Without new cash and without permission to draw down existing cash, there is nothing to deploy.";
   if (usingCash && newCash === 0)
-    return `Cash above target (${formatUsd(Math.min(excessCashAmount, cashExcess))}) is redirected to underweight assets. The portfolio total stays the same — only the mix changes.`;
+    return `Cash above target (${formatUsd(Math.min(excessCashAmount, cashExcess), { wholeDollars: true })}) is redirected to underweight assets. The portfolio total stays the same — only the mix changes.`;
   return "Available funds first close any underweight gaps. Any leftover is distributed by target weight so the portfolio remains balanced.";
 }
 
@@ -452,7 +452,7 @@ function SandboxCardInner() {
                       className="font-medium text-foreground underline decoration-muted-foreground/60 underline-offset-2 hover:decoration-foreground tabular-nums"
                       aria-label="Fill excess cash to redeploy with maximum amount above target"
                     >
-                      {formatUsd(excessCap)}
+                      {formatUsd(excessCap, { wholeDollars: true })}
                     </button>{" "}
                     above target
                   </>
